@@ -1,0 +1,108 @@
+@import 'tailwindcss';
+
+@layer base {
+  /* Mori Font declarations with high-craft geometric neo-grotesque fallbacks */
+  :root {
+    --font-mori:
+      'Mori', 'Pangram Mori', 'Outfit', 'Plus Jakarta Sans', -apple-system,
+      BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+    /* Nocturnal System Palette */
+    --color-bg-base: #090a0f;
+    --color-bg-surface: #11131c;
+    --color-bg-elevated: #181b26;
+    --color-bg-card: #141622;
+    --color-border: rgba(255, 255, 255, 0.08);
+    --color-border-subtle: rgba(255, 255, 255, 0.05);
+    --color-border-hover: rgba(255, 255, 255, 0.16);
+    --color-accent-primary: #f3f4f6;
+    --color-accent-indigo: #6366f1;
+    --color-accent-blue: #3b82f6;
+    --color-accent-emerald: #10b981;
+    --color-text-primary: #f3f4f6;
+    --color-text-secondary: #9ca3af;
+    --color-text-muted: #6b7280;
+  }
+
+  * {
+    font-family: var(--font-mori);
+  }
+
+  body {
+    font-family: var(--font-mori);
+    background-color: #090a0f;
+    color: #f3f4f6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    letter-spacing: -0.015em;
+  }
+
+  .font-mori {
+    font-family: var(--font-mori);
+  }
+
+  code,
+  pre,
+  kbd,
+  .font-mono,
+  .mono-label {
+    font-family:
+      'JetBrains Mono', 'Roboto Mono', ui-monospace, SFMono-Regular, Menlo,
+      Monaco, Consolas, monospace;
+  }
+}
+
+/* Custom sleek subtle scrollbars */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: #090a0f;
+}
+::-webkit-scrollbar-thumb {
+  background: #1f2333;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2d334a;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* System subtle glows and accents */
+.bg-nocturnal-radial {
+  background: radial-gradient(
+    circle at 50% 0%,
+    rgba(99, 102, 241, 0.12) 0%,
+    rgba(9, 10, 15, 0) 70%
+  );
+}
+
+.glow-active {
+  box-shadow: 0 0 24px -4px rgba(255, 255, 255, 0.35);
+}
+
+.glow-indigo {
+  box-shadow: 0 0 24px -4px rgba(99, 102, 241, 0.45);
+}
+
+.glow-lock-active {
+  box-shadow: 0 0 28px -2px rgba(16, 185, 129, 0.5);
+}
+
+.tracked-caps {
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.tracked-mono {
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}

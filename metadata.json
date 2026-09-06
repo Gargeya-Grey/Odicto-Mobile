@@ -1,10 +1,6 @@
 {
   "name": "Odicto Mobile",
   "description": "Mobile AI Voice Dictation app powered by Groq Whisper STT with Gemini, OpenRouter, and Meta AI providers",
-  "requestFramePermissions": [
-    "microphone"
-  ],
-  "majorCapabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
-  ]
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
