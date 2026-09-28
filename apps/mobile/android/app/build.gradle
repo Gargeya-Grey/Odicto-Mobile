@@ -23,23 +23,6 @@ android {
             noCompress 'ttf'
         }
     }
-    flavorDimensions "distribution"
-    productFlavors {
-        // The Play release. Carries no AccessibilityService and no floating overlay, so protected
-        // apps such as banking apps have nothing to flag.
-        store {
-            dimension "distribution"
-            buildConfigField "boolean", "LEGACY_EXTRAS", "false"
-        }
-        // The pre-Play build, kept so the existing sideloaded install and its overlay/accessibility
-        // path stay testable side by side with the store build. Never published.
-        legacy {
-            dimension "distribution"
-            applicationIdSuffix ".legacy"
-            versionNameSuffix "-legacy"
-            buildConfigField "boolean", "LEGACY_EXTRAS", "true"
-        }
-    }
     buildTypes {
         release {
             minifyEnabled false

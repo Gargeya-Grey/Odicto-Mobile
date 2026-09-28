@@ -6,9 +6,9 @@ Install Android Studio, its JDK 21 runtime (required by Capacitor 7), Android SD
 
 ## Activation test
 
-Test the store flavor first; it is what ships. This checklist describes required checks, not passed results. Record actual evidence separately in [S24 Ultra testing](s24-ultra-testing.md); source changes and automated coverage alone do not establish that X insertion is fixed or physical interaction checks passed. Use synthetic content and never publish a test post. Verify visible output or an honest unverified/rejected state with Copy/history recovery, without automatic retries.
+Test the debug build on a physical device first; it is what ships. This checklist describes required checks, not passed results. Record actual evidence separately in [S24 Ultra testing](s24-ultra-testing.md); source changes and automated coverage alone do not establish that X insertion is fixed or physical interaction checks passed. Use synthetic content and never publish a test post. Verify visible output or an honest unverified/rejected state with Copy/history recovery, without automatic retries.
 
-1. Install the store debug APK on a physical device.
+1. Install the debug APK on a physical device.
 2. Grant microphone and notification permission.
 3. Enable Odicto under system keyboard settings, then select it as the current keyboard.
 4. Focus a normal text field. Type a sentence, then dictate with the keyboard microphone.
@@ -17,8 +17,8 @@ Test the store flavor first; it is what ships. This checklist describes required
 7. Test a password field and a numeric field: typing works, while the microphone, emoji, and clipboard are refused with a visible reason.
 8. Type a sentence without tapping Polish; verify no correction request is made. Set an OpenRouter key in Odicto settings, then tap the top-right Polish button in a normal field. Test selected-only and no-selection whole-field correction, unchanged surrounding text, reversed selections, proper names, cursor placement, and exactly one replacement. Exercise completed-result Copy/dismiss recovery and its 120-second expiry. Repeat while typing, moving the cursor, or switching fields during processing: the old field must not be overwritten. An unreadable/oversized field should show an in-keyboard refusal without sending text.
 9. Check narrow one-handed/floating and >=600dp usable-width split layouts, rotation, inert center gap, both space halves, mic/Polish adjacency, compact Copy/stop/cancel access, and actual navigation insets. Test haptic timing, TalkBack, and scaled fonts on a real device.
-10. Open the bank app that previously warned about an unknown accessibility app and record the result.
-11. Test the legacy flavor separately: overlay, pause tile, and accessibility insertion while Samsung Keyboard is active.
+10. Open the bank app that previously warned about an unknown accessibility app and record the result; the pause tile and in-app pause switch are the documented answer when it still warns.
+11. Test the overlay, pause tile, and accessibility insertion while Samsung Keyboard is active.
 
 Test Android 12, 14, and the current Play target on Pixel, Samsung, and Xiaomi hardware. Exercise denied permissions, offline requests, timeouts, keyboard switching, screen lock, process death, restart, and OEM battery restrictions.
 
@@ -34,7 +34,7 @@ The top-right IME Polish button uses the same device-encrypted OpenRouter key bu
 npm run build --workspace @odicto/mobile
 npm run android:sync
 cd apps/mobile/android
-.\gradlew.bat :app:testStoreDebugUnitTest :app:assembleStoreDebug :app:testLegacyDebugUnitTest :app:assembleLegacyDebug
+.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug
 ```
 
 The keyboard microphone is the approved fallback if OEM restrictions make background overlay recording unreliable.
@@ -73,36 +73,20 @@ Use the standalone permissionless `tools/keyboard-interaction-host/` (`app.odict
 
 Measurement bounds are separate: **IME API return ≠ host text application ≠ host draw ≠ screen presentation**. The host's `apply` series times wrapped editor-method execution; text-watcher changes establish local mutation, deletion intervals measure mutation gaps, and `changeToDraw` spans the first pending change to the next active editor `onDraw`, potentially coalescing changes. Batch depth/lifetime and Choreographer frame opportunities are not presentation evidence or end-to-end event correlation. Haptic API timing is not physical vibration onset. Report presentation and motor onset as unmeasured without independent instrumentation; distributions alone do not prove improved feel or a fixed stall.
 
-## Build flavors
+## What ships in the APK
 
-Two flavors ship from one source tree, selected by the `distribution` dimension:
-
-- `store` — the published build. It declares the IME, the microphone capture service, and the activity. It registers no floating overlay, overlay permission, or AccessibilityService; use the keyboard microphone. Its `BuildConfig.LEGACY_EXTRAS` is `false`.
-- `legacy` — the pre-Play build, `applicationIdSuffix ".legacy"` so it installs beside the store build. Its launcher and keyboard label are `Odicto`; its manifest adds the floating overlay, pause tile, and `OdictoAccessibilityService`. The bubble requires the Android display-over-other-apps permission. It is never published.
-
-`BuildCapability.overlaySupported` / `accessibilitySupported` expose this to shared code. Shared code must consult them instead of assuming a service exists; `VoiceOverlayController` returns without starting anything when the flavor does not ship the overlay.
+There is a single build — no product flavors. `app.odicto.mobile` ships the IME, the microphone capture service, the floating overlay with its `specialUse` foreground service, the Quick Settings pause tile, and `OdictoAccessibilityService`. The bubble requires the Android display-over-other-apps permission. `BuildCapability.overlaySupported` / `accessibilitySupported` are both `true`; shared code must still consult them instead of assuming a service exists, and `VoiceOverlayController` returns without starting anything when a future build flips them off.
 
 ```powershell
-.\gradlew.bat :app:testStoreDebugUnitTest :app:assembleStoreDebug
-.\gradlew.bat :app:testLegacyDebugUnitTest :app:assembleLegacyDebug
+.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug
 ```
 
-Verify the store APK carries no protected-app signal:
-
-```powershell
-aapt2 dump badging apps/mobile/android/app/build/outputs/apk/store/debug/app-store-debug.apk
-```
-
-Expect no `SYSTEM_ALERT_WINDOW`, no `FOREGROUND_SERVICE_SPECIAL_USE`, and no `OdictoAccessibilityService` in the manifest tree.
-
-`OdictoAccessibilityService` in the legacy flavor is the insertion channel while a non-Odicto keyboard is active. Keep it limited to focus tracking and insertion; it must never navigate, gesture, or collect screen content, and it must stand down when the Odicto IME owns the editor. Android 13+ blocks enabling accessibility for sideloaded builds until the tester allows restricted settings; the Android setup card points at App info → ⋮ → Allow restricted settings when the toggle stays off. Pausing (the in-app switch or `PauseTileService` in the shade) stops the overlay and calls `disableSelf()` on the service.
+`OdictoAccessibilityService` is the insertion channel while a non-Odicto keyboard is active. Keep it limited to focus tracking and insertion; it must never navigate, gesture, or collect screen content, and it must stand down when the Odicto IME owns the editor. Android 13+ blocks enabling accessibility for sideloaded builds until the tester allows restricted settings; the Android setup card points at App info → ⋮ → Allow restricted settings when the toggle stays off. Pausing (the in-app switch or `PauseTileService` in the shade) stops the overlay and calls `disableSelf()` on the service.
 
 `VoiceOverlayService` runs as a `specialUse` foreground service while the bubble is enabled, so OEM freezers cannot suspend the process behind an unresponsive overlay. It stops itself when the bubble is disabled, paused, or the overlay permission is missing; the persistent notification is minimal importance and opens the app when tapped.
 
 ## Play readiness
 
-- The store flavor ships no AccessibilityService, so Play's AccessibilityService declaration and its demo video do not apply to the published build. The legacy flavor is not submitted.
-- Still required: the data safety form (microphone, network processing by the selected AI providers, device-only history, optional BYOK), the `FOREGROUND_SERVICE_MICROPHONE` declaration, and a target API check before the first upload. The project targets 35 and the test device runs Android 16 (API 36).
-- Lead with the keyboard: the IME needs no overlay or accessibility permission, and the microphone lives inside it.
-- Migration is not implemented yet, because Play distribution is not current. When it happens: the Play build will be signed with a release key the sideloaded debug build does not have, so it cannot upgrade that install, and Android leaves a previously enabled accessibility service registered after an update removes it. The uninstall, the loss of keys and history, and switching the old service off will all need to be communicated then.
-- The pause control exists in the legacy flavor because banks and other protected apps refuse to run with an overlay drawn or an accessibility service enabled. It is not a way to bypass those checks and should never be described as one.
+- Play distribution is not current. The single build ships the AccessibilityService and the overlay, so a future Play release would need the AccessibilityService declaration, its demo video, and disclosures for the `specialUse` overlay — or a reintroduced capability-free flavor at that point.
+- Still required before an upload: the data safety form (microphone, network processing by the selected AI providers, device-only history, optional BYOK), the `FOREGROUND_SERVICE_MICROPHONE` and `FOREGROUND_SERVICE_SPECIAL_USE` declarations, and a target API check. The project targets 35 and the test device runs Android 16 (API 36).
+- The pause control exists because banks and other protected apps refuse to run with an overlay drawn or an accessibility service enabled. It is not a way to bypass those checks and should never be described as one.

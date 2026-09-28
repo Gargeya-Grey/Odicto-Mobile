@@ -38,8 +38,7 @@ object DictationCoordinator {
     fun setImeAttached(value: Boolean) { imeAttached = value }
 
     // The IME wins while it owns the editor so selection context and Live composing stay native.
-    // The published store build never registers an accessibility target, so this resolves to the IME
-    // in every case; only the legacy build has a second channel while another keyboard is active.
+    // The accessibility target is the second channel that answers while another keyboard is active.
     private fun target(): DictationTarget? =
         if (imeAttached) targets[DictationTarget.IME]
         else targets[DictationTarget.ACCESSIBILITY] ?: targets[DictationTarget.IME]

@@ -272,14 +272,19 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
             } else row.take((row.size + 1) / 2) to row.drop((row.size + 1) / 2)
             val leftMargins = halves.first.size * gapPx() * 2
             val rightMargins = halves.second.size * gapPx() * 2
-            val sideWidth = ((geometryWidth - paddingLeft - paddingRight - 48f * density) / 2f)
+            val sideWidth = ((geometryWidth - paddingLeft - paddingRight - SPLIT_GAP_DP * density) / 2f)
+            // Thumb-reach inset on each outer edge, one key wide for the five-key halves, so the
+            // outermost columns sit inside a comfortable thumb arc instead of at the screen edge.
+            val edgeMargin = (sideWidth / 6f).toInt()
             fun addHalf(half: List<KeySpec>, margins: Int) {
                 val total = half.sumOf { it.weight.toDouble() }.toFloat()
-                half.forEach { addKey(it, it.weight / total * (sideWidth - margins).coerceAtLeast(1f)) }
+                half.forEach { addKey(it, it.weight / total * (sideWidth - edgeMargin - margins).coerceAtLeast(1f)) }
             }
+            line.addView(gapView(), LayoutParams(edgeMargin, LayoutParams.MATCH_PARENT))
             addHalf(halves.first, leftMargins)
-            line.addView(gapView(), LayoutParams((48f * density).toInt(), LayoutParams.MATCH_PARENT))
+            line.addView(gapView(), LayoutParams((SPLIT_GAP_DP * density).toInt(), LayoutParams.MATCH_PARENT))
             addHalf(halves.second, rightMargins)
+            line.addView(gapView(), LayoutParams(edgeMargin, LayoutParams.MATCH_PARENT))
         } else {
             if (centeredNine) line.addView(gapView(), keyParams(0.5f))
             row.forEach { addKey(it) }
@@ -1074,6 +1079,9 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
         private const val ROW_HEIGHT_WEIGHT = 0f
         private const val SHIFT_DOUBLE_MS = 400L
         private const val KEY_GAP_DP = 2f
+
+        /** Center gap of the split keyboard, wide enough that both thumbs stay on their own half. */
+        private const val SPLIT_GAP_DP = 375f
         private const val PUNCT_SHOW_MS = 170L
         private const val PUNCT_SLIDE_DP = 28f
         private const val PUNCT_CELL_DP = 34f

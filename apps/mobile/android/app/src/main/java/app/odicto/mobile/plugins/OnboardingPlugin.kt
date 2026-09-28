@@ -32,7 +32,7 @@ class OnboardingPlugin : Plugin() {
         } catch (_: SecurityException) { false }
         val microphone = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         val notifications = android.os.Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-        // The store build ships neither service, so never query for a capability it does not have.
+        // Ask BuildCapability rather than probing for a service the build may not ship.
         val overlay = BuildCapability.overlaySupported && Settings.canDrawOverlays(context)
         val accessibility = if (BuildCapability.accessibilitySupported) AccessibilityState.enabled(context) else false
         call.resolve(JSObject()
