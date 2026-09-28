@@ -391,12 +391,42 @@ html.voice-settings-scrolling {
   flex-direction: column;
   gap: 16px;
 }
+.voice-api-key {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 16px;
+  border-top: 1px solid #ffffff12;
+}
+.voice-api-key:first-of-type {
+  padding-top: 0;
+  border-top: 0;
+}
+.voice-api-key > p {
+  margin: 0;
+}
+.voice-api-key .voice-text-button {
+  align-self: flex-start;
+  min-height: 36px;
+  padding: 0;
+}
+.voice-field-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
 .voice-form label {
   font-size: 12px;
   color: #c3bbcf;
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: 6px;
+  row-gap: 9px;
+}
+.voice-form label > :is(input, textarea, select) {
+  grid-column: 1 / -1;
 }
 .voice-form input,
 .voice-form textarea,
@@ -409,6 +439,33 @@ html.voice-settings-scrolling {
   font-size: 16px;
   min-width: 0;
   width: 100%;
+}
+.voice-model-picker {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+}
+.voice-model-picker input[type='search'] {
+  background: #24242d;
+  border-color: #ffffff18;
+  color: #eee8f4;
+}
+.voice-model-picker input[type='search']::placeholder {
+  color: #817b8d;
+}
+.voice-model-picker select optgroup {
+  color: #c5b3ff;
+  background: #1b1b23;
+  font-weight: 600;
+}
+.voice-model-picker select option {
+  color: #eee8f4;
+  background: #111116;
+}
+.voice-model-empty {
+  color: #aaa5b7;
+  font-size: 12px;
+  padding: 4px 2px;
 }
 .voice-form .voice-separator {
   margin: 4px 0;
@@ -432,6 +489,47 @@ html.voice-settings-scrolling {
 .voice-empty {
   padding: 36px 24px;
   text-align: center;
+}
+/* A four-stop control, so a choice replaces a toggle: "how strong" is not a yes/no question. */
+.voice-row-stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+.voice-segmented {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: #0d0e15;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.voice-segmented button {
+  flex: 1;
+  min-height: 44px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: #9ca3af;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+.voice-segmented button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  color: #e6dfef;
+}
+.voice-segmented button[aria-checked='true'] {
+  background: #6d28d9;
+  color: #ffffff;
+}
+.voice-segmented button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .voice-empty svg {
   margin: 0 auto 16px;

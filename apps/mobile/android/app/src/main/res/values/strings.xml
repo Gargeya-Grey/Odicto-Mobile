@@ -4,4 +4,10 @@
     <string name="title_activity_main">Odicto</string>
     <string name="package_name">app.odicto.mobile</string>
     <string name="custom_url_scheme">app.odicto.mobile</string>
+    <string name="accessibility_service_label">Odicto voice typing</string>
+    <string name="accessibility_service_summary">Type with the floating microphone while another keyboard is active</string>
+    <string name="accessibility_service_description">Odicto uses this permission only to insert your dictated text into the focused field while a keyboard other than Odicto is selected. It reads the focused field to place the text and to skip password, phone, and numeric fields. It does not read or store the screen&#8217;s content.</string>
+    <string name="pause_tile_active">Odicto active</string>
+    <string name="pause_tile_paused">Odicto paused</string>
+    <string name="pause_tile_subtitle">Pause voice typing for banking and other protected apps</string>
 </resources>

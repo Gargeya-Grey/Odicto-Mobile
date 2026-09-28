@@ -1,19 +1,25 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
 
-type Status = {
+export type OnboardingStatus = {
   microphone: boolean;
   imeEnabled: boolean;
   imeSelected: boolean;
   overlay: boolean;
   notifications: boolean;
+  accessibility: boolean;
+  /** Whether this build ships the floating microphone at all. */
+  overlaySupported: boolean;
+  /** Whether this build ships an accessibility service at all. */
+  accessibilitySupported: boolean;
 };
 const plugin = registerPlugin<{
-  status(): Promise<Status>;
+  status(): Promise<OnboardingStatus>;
   requestMicrophone(): Promise<void>;
   requestNotifications(): Promise<void>;
   openKeyboardSettings(): Promise<void>;
   showKeyboardPicker(): Promise<void>;
   openOverlaySettings(): Promise<void>;
+  openAccessibilitySettings(): Promise<void>;
 }>('OdictoOnboarding');
 export const onboarding = {
   supported: Capacitor.getPlatform() === 'android',
@@ -23,4 +29,5 @@ export const onboarding = {
   openKeyboardSettings: () => plugin.openKeyboardSettings(),
   showKeyboardPicker: () => plugin.showKeyboardPicker(),
   openOverlaySettings: () => plugin.openOverlaySettings(),
+  openAccessibilitySettings: () => plugin.openAccessibilitySettings(),
 };

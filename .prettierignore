@@ -1,4 +1,6 @@
 node_modules
 dist
 apps/mobile/android
+tools/keyboard-interaction-host/build
+tools/keyboard-interaction-host/.gradle
 .commandcode

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -11,14 +11,26 @@ import {
   History,
   MoveUpRight,
 } from 'lucide-react';
-import { voice, type VoiceSettings, type HistoryItem } from '../native/voice';
+import {
+  voice,
+  type VoiceSettings,
+  type HistoryItem,
+  type OpenRouterModel,
+} from '../native/voice';
 import { AndroidOnboarding } from './AndroidOnboarding';
+import { onboarding } from '../native/onboarding';
 import { copyToClipboard } from '../lib/clipboard';
 import '../voice.css';
 
 export function VoiceHome() {
   const [settings, setSettings] = useState<VoiceSettings | null>(null);
+  const [capabilities, setCapabilities] = useState<{
+    overlay: boolean;
+    accessibility: boolean;
+  } | null>(null);
   const [page, setPage] = useState<'home' | 'settings' | 'history'>('home');
+  const overlaySupported = capabilities?.overlay ?? false;
+  const accessibilitySupported = capabilities?.accessibility ?? false;
   useEffect(() => {
     const root = document.documentElement;
     root.classList.toggle('voice-settings-scrolling', page === 'settings');
@@ -30,6 +42,37 @@ export function VoiceHome() {
   const [geminiKey, setGeminiKey] = useState('');
   const [groqKey, setGroqKey] = useState('');
   const [openrouterKey, setOpenrouterKey] = useState('');
+  const [openRouterModels, setOpenRouterModels] = useState<OpenRouterModel[]>(
+    [],
+  );
+  const [loadingOpenRouterModels, setLoadingOpenRouterModels] = useState(false);
+  const [openRouterModelSearch, setOpenRouterModelSearch] = useState('');
+  const openRouterModelGroups = useMemo(() => {
+    const search = openRouterModelSearch.trim().toLowerCase();
+    const models = openRouterModels
+      .filter(
+        (model) =>
+          model.id !== 'poolside/laguna-xs-2.1:free' &&
+          !model.name.toLowerCase().includes('(batch)'),
+      )
+      .filter(
+        (model) =>
+          !search ||
+          model.name.toLowerCase().includes(search) ||
+          model.id.toLowerCase().includes(search),
+      )
+      .sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
+      );
+    const groups = new Map<string, OpenRouterModel[]>();
+    models.forEach((model) => {
+      const letter = model.name.charAt(0).toUpperCase() || '#';
+      const group = groups.get(letter) ?? [];
+      group.push(model);
+      groups.set(letter, group);
+    });
+    return [...groups.entries()];
+  }, [openRouterModels, openRouterModelSearch]);
   const refresh = useCallback(async () => {
     try {
       const value = await voice.status();
@@ -38,7 +81,47 @@ export function VoiceHome() {
     } catch {
       setNotice('Could not load settings. Reopen Odicto to try again.');
     }
+    if (onboarding.supported) {
+      try {
+        const status = await onboarding.status();
+        setCapabilities({
+          overlay: status.overlaySupported,
+          accessibility: status.accessibilitySupported,
+        });
+      } catch {
+        setCapabilities(null);
+      }
+    }
   }, []);
+  useEffect(() => {
+    if (!settings?.openrouterKeySet) {
+      setOpenRouterModels([]);
+      return;
+    }
+    setSettings((current) =>
+      current?.provider === 'openrouter' &&
+      (current.model === 'openrouter/free' ||
+        current.model.toLowerCase().includes('muse-spark'))
+        ? { ...current, model: 'poolside/laguna-xs-2.1:free' }
+        : current,
+    );
+    let current = true;
+    setLoadingOpenRouterModels(true);
+    void voice
+      .openrouterModels()
+      .then(({ models }) => {
+        if (current) setOpenRouterModels(models);
+      })
+      .catch(() => {
+        if (current) setOpenRouterModels([]);
+      })
+      .finally(() => {
+        if (current) setLoadingOpenRouterModels(false);
+      });
+    return () => {
+      current = false;
+    };
+  }, [settings?.openrouterKeySet]);
   useEffect(() => {
     void refresh();
     const open = () => {
@@ -79,6 +162,38 @@ export function VoiceHome() {
     } finally {
       setSaving(false);
     }
+  };
+  const togglePause = async () => {
+    const pausing = !settings?.paused;
+    if (!(await save({ paused: pausing }))) return;
+    if (!pausing && accessibilitySupported && onboarding.supported) {
+      try {
+        const status = await onboarding.status();
+        if (!status.accessibility) await onboarding.openAccessibilitySettings();
+      } catch {
+        // Pause is saved either way; the Android setup card still shows the accessibility row.
+      }
+    }
+  };
+  const toggleOverlay = async () => {
+    if (settings?.enabled) {
+      await save({ enabled: false });
+      return;
+    }
+    try {
+      const status = await onboarding.status();
+      if (!status.overlay) {
+        await onboarding.openOverlaySettings();
+        setNotice(
+          'Allow display over other apps, then return and turn on the floating microphone.',
+        );
+        return;
+      }
+    } catch {
+      setNotice('Could not check overlay permission. Use Android setup below.');
+      return;
+    }
+    await save({ enabled: true, paused: false });
   };
   const navigate = async (next: typeof page) => {
     setPage(next);
@@ -156,27 +271,54 @@ export function VoiceHome() {
               </span>
             </div>
             <section className="voice-card">
-              <div className="voice-row">
-                <div>
-                  <h2>Floating microphone</h2>
-                  <p>
-                    {settings?.enabled
-                      ? 'Enabled · ready in supported text fields'
-                      : 'Keep your voice controls within reach'}
-                  </p>
-                </div>
-                <button
-                  className="voice-switch"
-                  role="switch"
-                  aria-checked={settings?.enabled ?? false}
-                  aria-label="Floating microphone"
-                  disabled={!settings || saving}
-                  onClick={() => void save({ enabled: !settings?.enabled })}
-                >
-                  <span />
-                </button>
-              </div>
-              <div className="voice-separator" />
+              {overlaySupported && (
+                <>
+                  <div className="voice-row">
+                    <div>
+                      <h2>Floating microphone</h2>
+                      <p>
+                        {settings?.paused
+                          ? 'Paused, so the bubble is hidden'
+                          : settings?.enabled
+                            ? 'On screen over other apps'
+                            : 'Keep your voice controls within reach'}
+                      </p>
+                    </div>
+                    <button
+                      className="voice-switch"
+                      role="switch"
+                      aria-checked={settings?.enabled ?? false}
+                      aria-label="Floating microphone"
+                      disabled={!settings || saving}
+                      onClick={() => void toggleOverlay()}
+                    >
+                      <span />
+                    </button>
+                  </div>
+                  <div className="voice-separator" />
+                  <div className="voice-row">
+                    <div>
+                      <h2>Pause Odicto</h2>
+                      <p>
+                        {settings?.paused
+                          ? 'Paused · banking and other protected apps see nothing'
+                          : 'Stops the floating mic and voice typing in other keyboards'}
+                      </p>
+                    </div>
+                    <button
+                      className="voice-switch"
+                      role="switch"
+                      aria-checked={settings?.paused ?? false}
+                      aria-label="Pause Odicto"
+                      disabled={!settings || saving}
+                      onClick={() => void togglePause()}
+                    >
+                      <span />
+                    </button>
+                  </div>
+                  <div className="voice-separator" />
+                </>
+              )}
               <p className="voice-label">START IN</p>
               <div
                 className="voice-segment"
@@ -270,6 +412,7 @@ export function VoiceHome() {
               <a href="#voice-controls">Controls</a>
               <a href="#voice-connections">Connections</a>
               <a href="#voice-ai">AI answers</a>
+              <a href="#voice-polish">Text polish</a>
               <a href="#voice-live">Live</a>
               <a href="#voice-setup">Android setup</a>
             </nav>
@@ -285,21 +428,100 @@ export function VoiceHome() {
                 </p>
               </header>
               <div className="voice-separator" />
-              <div className="voice-row">
+              <div className="voice-row voice-row-stacked">
                 <div>
                   <h3>Touch feedback</h3>
-                  <p>Haptics for keyboard buttons and voice controls.</p>
+                  <p>How strongly each key and control vibrates.</p>
                 </div>
-                <button
-                  className="voice-switch"
-                  role="switch"
-                  aria-checked={settings?.haptics ?? true}
-                  aria-label="Touch feedback"
-                  disabled={!settings || saving}
-                  onClick={() => void save({ haptics: !settings?.haptics })}
+                <div
+                  className="voice-segmented"
+                  role="radiogroup"
+                  aria-label="Touch feedback strength"
                 >
-                  <span />
-                </button>
+                  {(
+                    [
+                      [0, 'Off'],
+                      [1, 'Light'],
+                      [2, 'Medium'],
+                      [3, 'Strong'],
+                    ] as const
+                  ).map(([level, label]) => (
+                    <button
+                      key={level}
+                      type="button"
+                      role="radio"
+                      aria-checked={(settings?.hapticLevel ?? 2) === level}
+                      disabled={!settings || saving}
+                      onClick={() => void save({ hapticLevel: level })}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="voice-separator" />
+              <div className="voice-row voice-row-stacked">
+                <div>
+                  <h3>Key size</h3>
+                  <p>Height of the keys and the letters on them.</p>
+                </div>
+                <div
+                  className="voice-segmented"
+                  role="radiogroup"
+                  aria-label="Key size"
+                >
+                  {(
+                    [
+                      ['small', 'S'],
+                      ['medium', 'M'],
+                      ['large', 'L'],
+                    ] as const
+                  ).map(([size, label]) => (
+                    <button
+                      key={size}
+                      type="button"
+                      role="radio"
+                      aria-checked={(settings?.keySize ?? 'medium') === size}
+                      disabled={!settings || saving}
+                      onClick={() => void save({ keySize: size })}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="voice-separator" />
+              <div className="voice-row voice-row-stacked">
+                <div>
+                  <h3>Key font</h3>
+                  <p>
+                    System is the Android default. Google Sans Flex is the face
+                    used on the keys.
+                  </p>
+                </div>
+                <div
+                  className="voice-segmented"
+                  role="radiogroup"
+                  aria-label="Key font"
+                >
+                  {(
+                    [
+                      ['system', 'System'],
+                      ['sansflex', 'Sans Flex'],
+                    ] as const
+                  ).map(([font, label]) => (
+                    <button
+                      key={font}
+                      type="button"
+                      role="radio"
+                      aria-checked={(settings?.keyFont ?? 'sansflex') === font}
+                      disabled={!settings || saving}
+                      onClick={() => void save({ keyFont: font })}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
               <div className="voice-separator" />
               <div className="voice-row">
@@ -335,6 +557,8 @@ export function VoiceHome() {
                   model: settings?.model,
                   liveModel: settings?.liveModel,
                   systemPrompt: settings?.systemPrompt,
+                  polishModel: settings?.polishModel,
+                  polishSystemPrompt: settings?.polishSystemPrompt,
                   ...(groqKey.trim() ? { groqKey: groqKey.trim() } : {}),
                   ...(geminiKey.trim() ? { geminiKey: geminiKey.trim() } : {}),
                   ...(openrouterKey.trim()
@@ -358,102 +582,119 @@ export function VoiceHome() {
                   <h2 id="voice-connections-title">API connections</h2>
                   <p>
                     Your phone connects directly to Groq, Gemini, and
-                    OpenRouter. No computer or Odicto server is needed.
+                    OpenRouter. Add a key once, then leave its field empty to
+                    keep it saved. No computer or Odicto server is needed.
                   </p>
                 </header>
-                <label>
-                  Groq key{' '}
+                <div className="voice-api-key">
+                  <label>
+                    <span className="voice-field-title">
+                      Groq key
+                      {settings?.groqKeySet && (
+                        <span className="voice-key-status">Saved securely</span>
+                      )}
+                    </span>
+                    <input
+                      type="password"
+                      value={groqKey}
+                      onChange={(e) => setGroqKey(e.target.value)}
+                      placeholder={
+                        settings?.groqKeySet
+                          ? 'Enter a new key to replace saved key'
+                          : 'Required for Raw and AI speech'
+                      }
+                      autoComplete="off"
+                      autoCapitalize="none"
+                      spellCheck={false}
+                    />
+                  </label>
                   {settings?.groqKeySet && (
-                    <span className="voice-key-status">· Saved securely</span>
+                    <button
+                      type="button"
+                      className="voice-text-button"
+                      disabled={saving}
+                      onClick={() => void save({ groqKey: '' })}
+                    >
+                      Remove saved Groq key
+                    </button>
                   )}
-                  <input
-                    type="password"
-                    value={groqKey}
-                    onChange={(e) => setGroqKey(e.target.value)}
-                    placeholder="Required for Raw and AI speech"
-                    autoComplete="off"
-                    autoCapitalize="none"
-                    spellCheck={false}
-                  />
-                </label>
-                {settings?.groqKeySet && (
-                  <button
-                    type="button"
-                    className="voice-text-button"
-                    disabled={saving}
-                    onClick={() => void save({ groqKey: '' })}
-                  >
-                    Remove saved Groq key
-                  </button>
-                )}
-                <p>
-                  Raw uses Groq Whisper. AI uses Groq for speech, then your
-                  selected answer provider.
-                </p>
-                <label>
-                  Gemini key
+                  <p>
+                    Raw uses Groq Whisper. AI uses Groq for speech, then your
+                    selected answer provider.
+                  </p>
+                </div>
+                <div className="voice-api-key">
+                  <label>
+                    <span className="voice-field-title">
+                      Gemini key
+                      {settings?.geminiKeySet && (
+                        <span className="voice-key-status">Saved securely</span>
+                      )}
+                    </span>
+                    <input
+                      type="password"
+                      value={geminiKey}
+                      onChange={(e) => setGeminiKey(e.target.value)}
+                      placeholder={
+                        settings?.geminiKeySet
+                          ? 'Enter a new key to replace saved key'
+                          : 'Required for Live and Gemini AI'
+                      }
+                      autoComplete="off"
+                      autoCapitalize="none"
+                      spellCheck={false}
+                    />
+                  </label>
                   {settings?.geminiKeySet && (
-                    <span className="voice-key-status">Saved securely</span>
+                    <button
+                      type="button"
+                      className="voice-text-button"
+                      disabled={saving}
+                      onClick={() => void save({ geminiKey: '' })}
+                    >
+                      Remove saved Gemini key
+                    </button>
                   )}
-                  <input
-                    type="password"
-                    value={geminiKey}
-                    onChange={(e) => setGeminiKey(e.target.value)}
-                    placeholder={
-                      settings?.geminiKeySet
-                        ? 'Leave empty to keep saved key'
-                        : 'Required for Live and Gemini AI'
-                    }
-                    autoComplete="off"
-                    autoCapitalize="none"
-                    spellCheck={false}
-                  />
-                </label>
-                {settings?.geminiKeySet && (
-                  <button
-                    type="button"
-                    className="voice-text-button"
-                    disabled={saving}
-                    onClick={() => void save({ geminiKey: '' })}
-                  >
-                    Remove saved Gemini key
-                  </button>
-                )}
-                <p>Gemini powers Live transcription and Gemini AI answers.</p>
-                <label>
-                  OpenRouter key
+                  <p>Gemini powers Live transcription and Gemini AI answers.</p>
+                </div>
+                <div className="voice-api-key">
+                  <label>
+                    <span className="voice-field-title">
+                      OpenRouter key
+                      {settings?.openrouterKeySet && (
+                        <span className="voice-key-status">Saved securely</span>
+                      )}
+                    </span>
+                    <input
+                      type="password"
+                      value={openrouterKey}
+                      onChange={(e) => setOpenrouterKey(e.target.value)}
+                      placeholder={
+                        settings?.openrouterKeySet
+                          ? 'Enter a new key to replace saved key'
+                          : 'Only needed for OpenRouter AI'
+                      }
+                      autoComplete="off"
+                      autoCapitalize="none"
+                      spellCheck={false}
+                    />
+                  </label>
                   {settings?.openrouterKeySet && (
-                    <span className="voice-key-status">Saved securely</span>
+                    <button
+                      type="button"
+                      className="voice-text-button"
+                      disabled={saving}
+                      onClick={() => void save({ openrouterKey: '' })}
+                    >
+                      Remove saved OpenRouter key
+                    </button>
                   )}
-                  <input
-                    type="password"
-                    value={openrouterKey}
-                    onChange={(e) => setOpenrouterKey(e.target.value)}
-                    placeholder={
-                      settings?.openrouterKeySet
-                        ? 'Leave empty to keep saved key'
-                        : 'Only needed for OpenRouter AI'
-                    }
-                    autoComplete="off"
-                    autoCapitalize="none"
-                    spellCheck={false}
-                  />
-                </label>
-                {settings?.openrouterKeySet && (
-                  <button
-                    type="button"
-                    className="voice-text-button"
-                    disabled={saving}
-                    onClick={() => void save({ openrouterKey: '' })}
-                  >
-                    Remove saved OpenRouter key
-                  </button>
-                )}
-                <p className="voice-footnote">
-                  Keys are stored using Android Keystore and sent only for your
-                  selected provider over HTTPS. Audio stays only for the current
-                  request.
-                </p>
+                  <p className="voice-footnote">
+                    Keys are stored using Android Keystore and sent only for
+                    your selected provider over HTTPS. Audio stays only for the
+                    current request.
+                  </p>
+                </div>
               </section>
               <section
                 className="voice-card voice-form"
@@ -463,10 +704,10 @@ export function VoiceHome() {
                 <header className="voice-section-heading">
                   <h2 id="voice-ai-title">AI answers</h2>
                   <p>
-                    Select text before holding the mic to edit it with your
-                    spoken instruction. Only that selection is sent to your AI
-                    provider. Keep the selection unchanged until the result
-                    replaces it; otherwise the result is saved for you to copy.
+                    AI selects the whole field unless you have chosen a range.
+                    That selected text is sent to your AI provider with your
+                    spoken instruction. Keep the selection unchanged until the
+                    result replaces it; otherwise the result is saved to copy.
                   </p>
                 </header>
                 <label>
@@ -500,7 +741,10 @@ export function VoiceHome() {
                               ...s,
                               provider: e.target
                                 .value as VoiceSettings['provider'],
-                              model: '',
+                              model:
+                                e.target.value === 'openrouter'
+                                  ? 'poolside/laguna-xs-2.1:free'
+                                  : '',
                             }
                           : s,
                       )
@@ -512,22 +756,162 @@ export function VoiceHome() {
                 </label>
                 <label>
                   Model
+                  {settings?.provider === 'openrouter' ? (
+                    <div className="voice-model-picker">
+                      <input
+                        type="search"
+                        value={openRouterModelSearch}
+                        disabled={!settings || loadingOpenRouterModels}
+                        onChange={(e) =>
+                          setOpenRouterModelSearch(e.target.value)
+                        }
+                        placeholder="Search models"
+                        aria-label="Search OpenRouter models"
+                        autoCapitalize="none"
+                        spellCheck={false}
+                      />
+                      <select
+                        value={settings.model || 'poolside/laguna-xs-2.1:free'}
+                        disabled={!settings || loadingOpenRouterModels}
+                        onChange={(e) =>
+                          setSettings((s) =>
+                            s ? { ...s, model: e.target.value } : s,
+                          )
+                        }
+                      >
+                        <option value="poolside/laguna-xs-2.1:free">
+                          Auto · Laguna XS (free)
+                        </option>
+                        {openRouterModelGroups.map(([letter, models]) => (
+                          <optgroup key={letter} label={letter}>
+                            {models.map((model) => (
+                              <option key={model.id} value={model.id}>
+                                {model.name}
+                                {model.free ? ' · free' : ''}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                      {!loadingOpenRouterModels &&
+                        openRouterModelSearch.trim() &&
+                        openRouterModelGroups.length === 0 && (
+                          <span className="voice-model-empty">
+                            No matching models
+                          </span>
+                        )}
+                    </div>
+                  ) : (
+                    <input
+                      value={settings?.model ?? ''}
+                      onChange={(e) =>
+                        setSettings((s) =>
+                          s ? { ...s, model: e.target.value } : s,
+                        )
+                      }
+                      placeholder="gemini-3.5-flash-lite"
+                      autoCapitalize="none"
+                      spellCheck={false}
+                    />
+                  )}
+                </label>
+                {settings?.provider === 'openrouter' && (
+                  <p>
+                    {loadingOpenRouterModels
+                      ? 'Loading the current OpenRouter model catalog…'
+                      : openRouterModels.length > 0
+                        ? 'Models are loaded from OpenRouter. Requests prefer the lowest-latency provider with low thinking enabled.'
+                        : settings.openrouterKeySet
+                          ? 'Could not load OpenRouter models. Save a valid key and try again.'
+                          : 'Save your OpenRouter key to load its live model catalog.'}
+                  </p>
+                )}
+              </section>
+              <section
+                className="voice-card voice-form"
+                id="voice-polish"
+                aria-labelledby="voice-polish-title"
+              >
+                <header className="voice-section-heading">
+                  <h2 id="voice-polish-title">Text polish</h2>
+                  <p>
+                    Tap Polish beside the keyboard mic to correct the whole text
+                    field with OpenRouter. Typing alone sends nothing. Password
+                    and protected fields are refused.
+                  </p>
+                </header>
+                <p>
+                  {settings?.openrouterKeySet
+                    ? 'Your OpenRouter key is saved securely above.'
+                    : 'Save an OpenRouter key in API connections above to use text polish.'}
+                </p>
+                <label>
+                  OpenRouter model ID
                   <input
-                    value={settings?.model ?? ''}
+                    value={settings?.polishModel ?? 'poolside/laguna-xs-2.1'}
                     onChange={(e) =>
                       setSettings((s) =>
-                        s ? { ...s, model: e.target.value } : s,
+                        s ? { ...s, polishModel: e.target.value } : s,
                       )
                     }
-                    placeholder={
-                      settings?.provider === 'openrouter'
-                        ? 'Enter an OpenRouter model ID'
-                        : 'gemini-3.5-flash-lite'
-                    }
+                    maxLength={200}
+                    placeholder="poolside/laguna-xs-2.1"
                     autoCapitalize="none"
                     spellCheck={false}
                   />
                 </label>
+                <label>
+                  Choose from OpenRouter catalog
+                  <select
+                    value={
+                      openRouterModels.some(
+                        (model) => model.id === settings?.polishModel,
+                      )
+                        ? settings?.polishModel
+                        : ''
+                    }
+                    disabled={
+                      !settings ||
+                      loadingOpenRouterModels ||
+                      openRouterModels.length === 0
+                    }
+                    onChange={(e) =>
+                      setSettings((s) =>
+                        s ? { ...s, polishModel: e.target.value } : s,
+                      )
+                    }
+                  >
+                    <option value="" disabled>
+                      Enter a model ID above
+                    </option>
+                    {openRouterModels.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.name}
+                        {model.free ? ' · free' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Text polish system prompt
+                  <textarea
+                    value={settings?.polishSystemPrompt ?? ''}
+                    onChange={(e) =>
+                      setSettings((s) =>
+                        s ? { ...s, polishSystemPrompt: e.target.value } : s,
+                      )
+                    }
+                    maxLength={8000}
+                    rows={5}
+                    placeholder="Blank uses the built-in grammar, spelling, and capitalization instruction."
+                  />
+                </label>
+                <p>
+                  Leave the prompt blank to preserve the built-in correction
+                  rules, including names as written. A model can still make
+                  mistakes; review its result. Fields over 20,000 characters are
+                  refused rather than partially rewritten.
+                </p>
               </section>
               <section
                 className="voice-card voice-form"

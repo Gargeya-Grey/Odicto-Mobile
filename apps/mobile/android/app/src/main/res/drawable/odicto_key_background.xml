@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Key surface matching the existing Odicto keyboard palette. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="#55466F" />
+            <corners android:radius="10dp" />
+            <stroke android:width="1dp" android:color="#6E5C8F" />
+        </shape>
+    </item>
+    <item android:state_enabled="false">
+        <shape android:shape="rectangle">
+            <solid android:color="#19171F" />
+            <corners android:radius="10dp" />
+            <stroke android:width="1dp" android:color="#2A2632" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#292530" />
+            <corners android:radius="10dp" />
+            <stroke android:width="1dp" android:color="#403A4C" />
+        </shape>
+    </item>
+</selector>

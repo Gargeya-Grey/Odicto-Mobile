@@ -1,7 +1,7 @@
 @import 'tailwindcss';
 
 @layer base {
-  /* Mori Font declarations with high-craft geometric neo-grotesque fallbacks */
+  /* Mori, with geometric sans fallbacks. The keyboard uses Google Sans Flex. */
   :root {
     --font-mori:
       'Mori', 'Pangram Mori', 'Outfit', 'Plus Jakarta Sans', -apple-system,

@@ -10,7 +10,7 @@ export const DEFAULT_SETTINGS: AppConfig = {
   GEMINI_THINKING_LEVEL: 'minimal',
   GEMINI_MAX_OUTPUT_TOKENS: 2048,
   OPENROUTER_API_KEY: '',
-  OPENROUTER_MODEL: 'meta-llama/llama-3.3-70b-instruct',
+  OPENROUTER_MODEL: 'poolside/laguna-xs-2.1:free',
   OPENROUTER_API_BASE: 'https://openrouter.ai/api/v1',
   META_API_KEY: '',
   META_MODEL: 'muse-spark-1.2-contributor',

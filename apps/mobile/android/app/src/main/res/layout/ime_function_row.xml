@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Slim tool row under the keys: voice (only when the voice strip is hidden), emoji, clipboard, switch. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/function_row"
+    android:layout_width="match_parent"
+    android:layout_height="48dp"
+    android:background="@android:color/transparent"
+    android:baselineAligned="false"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="8dp"
+    android:paddingEnd="8dp">
+
+    <ImageButton
+        android:id="@+id/function_mic"
+        android:layout_width="0dp"
+        android:layout_height="48dp"
+        android:layout_weight="1"
+        android:background="@android:color/transparent"
+        android:contentDescription="Hold to speak. Double tap for voice options."
+        android:padding="12dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/odicto_ic_mic"
+        android:tint="#F3EFFB" />
+
+    <ImageButton
+        android:id="@+id/function_emoji"
+        android:layout_width="0dp"
+        android:layout_height="48dp"
+        android:layout_weight="1"
+        android:background="@android:color/transparent"
+        android:contentDescription="Emoji"
+        android:padding="12dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/odicto_ic_emoji"
+        android:tint="#F3EFFB" />
+
+    <ImageButton
+        android:id="@+id/function_clipboard"
+        android:layout_width="0dp"
+        android:layout_height="48dp"
+        android:layout_weight="1"
+        android:background="@android:color/transparent"
+        android:contentDescription="Clipboard"
+        android:padding="12dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/odicto_ic_clipboard"
+        android:tint="#F3EFFB" />
+
+    <View
+        android:id="@+id/function_grip"
+        android:layout_width="16dp"
+        android:layout_height="48dp"
+        android:background="#33FFFFFF"
+        android:contentDescription="Drag the keyboard"
+        android:visibility="gone" />
+
+    <ImageButton
+        android:id="@+id/function_layout"
+        android:layout_width="0dp"
+        android:layout_height="48dp"
+        android:layout_weight="1"
+        android:background="@android:color/transparent"
+        android:contentDescription="One-handed or floating keyboard"
+        android:padding="12dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/odicto_ic_layout"
+        android:tint="#F3EFFB" />
+
+    <ImageButton
+        android:id="@+id/function_switch"
+        android:layout_width="0dp"
+        android:layout_height="48dp"
+        android:layout_weight="1"
+        android:background="@android:color/transparent"
+        android:contentDescription="Switch to the next keyboard"
+        android:padding="12dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/odicto_ic_switch_keyboard"
+        android:tint="#F3EFFB" />
+</LinearLayout>

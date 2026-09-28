@@ -29,14 +29,8 @@ export const PROVIDERS: Record<LlmProvider, ProviderMeta> = {
     badge: 'Multi-Model Hub',
     description:
       'Access hundreds of frontier models (Claude, Llama, Gemini, DeepSeek) through a single unified endpoint.',
-    defaultModel: 'google/gemini-2.0-flash-001',
-    popularModels: [
-      'google/gemini-2.0-flash-001',
-      'anthropic/claude-3.5-sonnet',
-      'meta-llama/llama-3.3-70b-instruct',
-      'deepseek/deepseek-chat',
-      'openai/gpt-4o-mini',
-    ],
+    defaultModel: 'poolside/laguna-xs-2.1:free',
+    popularModels: [],
   },
   meta: {
     id: 'meta',

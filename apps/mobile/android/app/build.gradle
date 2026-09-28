@@ -4,23 +4,51 @@ apply plugin: 'org.jetbrains.kotlin.android'
 android {
     namespace "app.odicto.mobile"
     compileSdk rootProject.ext.compileSdkVersion
+    buildFeatures {
+        buildConfig true
+    }
     defaultConfig {
         applicationId "app.odicto.mobile"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode 2
+        versionName "1.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+            // A font kept as a file descriptor is what lets Typeface.Builder resolve the variable
+            // axes in Lora[wght].ttf. Compressed, Android substitutes a system face without error.
+            noCompress 'ttf'
+        }
+    }
+    flavorDimensions "distribution"
+    productFlavors {
+        // The Play release. Carries no AccessibilityService and no floating overlay, so protected
+        // apps such as banking apps have nothing to flag.
+        store {
+            dimension "distribution"
+            buildConfigField "boolean", "LEGACY_EXTRAS", "false"
+        }
+        // The pre-Play build, kept so the existing sideloaded install and its overlay/accessibility
+        // path stay testable side by side with the store build. Never published.
+        legacy {
+            dimension "distribution"
+            applicationIdSuffix ".legacy"
+            versionNameSuffix "-legacy"
+            buildConfigField "boolean", "LEGACY_EXTRAS", "true"
         }
     }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+    testOptions {
+        unitTests {
+            includeAndroidResources = true
         }
     }
 }
@@ -46,6 +74,8 @@ dependencies {
     annotationProcessor "androidx.room:room-compiler:2.6.1"
     testImplementation "junit:junit:$junitVersion"
     testImplementation "org.json:json:20240303"
+    testImplementation "androidx.test:core:1.6.1"
+    testImplementation "org.robolectric:robolectric:4.14.1"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')

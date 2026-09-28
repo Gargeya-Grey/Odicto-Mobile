@@ -427,7 +427,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
                     onChange={(e) =>
                       handleChange('OPENROUTER_MODEL', e.target.value)
                     }
-                    placeholder="google/gemini-2.0-flash-001"
+                    placeholder="Select a model from the live catalog"
                     className="w-full px-3 py-2 text-xs bg-[#0d0e15] border border-[rgba(255,255,255,0.08)] rounded-xl text-[#f3f4f6] font-mono focus:outline-none focus:border-[#f3f4f6]"
                   />
                 </div>
@@ -484,7 +484,9 @@ export const SetupForm: React.FC<SetupFormProps> = ({
                             : 'bg-[#181b26] text-[#9ca3af] border-[rgba(255,255,255,0.08)] hover:text-[#f3f4f6]'
                         }`}
                       >
-                        {m}
+                        {m === 'poolside/laguna-xs-2.1:free'
+                          ? 'Auto (general purpose)'
+                          : m}
                       </button>
                     ))}
                   </div>
@@ -493,7 +495,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
                     id="input-meta-model"
                     value={formData.META_MODEL}
                     onChange={(e) => handleChange('META_MODEL', e.target.value)}
-                    placeholder="muse-spark-1.2-contributor"
+                    placeholder="poolside/laguna-xs-2.1:free"
                     className="w-full px-3 py-2 text-xs bg-[#0d0e15] border border-[rgba(255,255,255,0.08)] rounded-xl text-[#f3f4f6] font-mono focus:outline-none focus:border-[#f3f4f6]"
                   />
                 </div>

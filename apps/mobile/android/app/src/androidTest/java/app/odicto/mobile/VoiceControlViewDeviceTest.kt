@@ -22,6 +22,26 @@ import org.junit.runner.RunWith
 /** Synthetic UI states only: no microphone, provider calls, or history writes. */
 @RunWith(AndroidJUnit4::class)
 class VoiceControlViewDeviceTest {
+    @Test fun keyboardKeepsSixSlotsAcrossSyntheticStates() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.runOnMainSync {
+            for (compact in listOf(false, true)) {
+                val view = VoiceControlView(instrumentation.targetContext, true)
+                view.setKeyboardCompact(compact)
+                val width = view.requiredWidth
+                var resizes = 0
+                view.resize = { _, _ -> resizes++ }
+                for (phase in listOf("idle", "connecting", "recording", "processing", "done", "error", "idle")) {
+                    view.render(VoiceUi(phase = phase, finalText = if (phase == "done") "Synthetic result" else ""))
+                    assertEquals(view.dp(if (compact) 240 else 288), view.requiredWidth)
+                    assertEquals(width, view.requiredWidth)
+                    assertEquals(view.dp(48), view.requiredHeight)
+                }
+                assertEquals(0, resizes)
+            }
+        }
+    }
+
     @Test fun previewToggleAvoidsHiddenTextWorkAndKeepsStatusCompact() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
@@ -40,7 +60,8 @@ class VoiceControlViewDeviceTest {
         try {
             previewEnabled(false)
             instrumentation.runOnMainSync {
-                view = VoiceControlView(context, true)
+                view = VoiceControlView(context)
+                view.render(recording) // Establish overlay geometry before counting meter updates.
                 preview = (view.getChildAt(1) as LinearLayout).getChildAt(1) as TextView
                 preview.addTextChangedListener(object : TextWatcher {
                     override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}

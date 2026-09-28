@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application android:usesCleartextTraffic="true" />
+    <application android:usesCleartextTraffic="true">
+        <activity
+            android:name="app.odicto.mobile.ime.ClipboardPreviewActivity"
+            android:exported="true"
+            android:permission="android.permission.DUMP"
+            android:theme="@android:style/Theme.Material.NoActionBar"
+            android:label="Synthetic clipboard preview" />
+    </application>
 </manifest>

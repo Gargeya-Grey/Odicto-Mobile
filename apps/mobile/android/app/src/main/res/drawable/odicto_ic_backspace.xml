@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Backspace: delete-key outline with an ×, not a plain left arrow. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M8,5.2 H19.2 A2,2 0 0 1 21.2,7.2 V16.8 A2,2 0 0 1 19.2,18.8 H8 L3,12 Z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineJoin="round"
+        android:strokeWidth="1.7" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M10.2,9.2 L16.2,14.8 M16.2,9.2 L10.2,14.8"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.7" />
+</vector>
