@@ -29,6 +29,13 @@ class VoiceFirstKeyboardTest {
     private fun visible(view: View): Boolean = view.visibility == View.VISIBLE &&
         ((view.parent as? View)?.let { visible(it) } ?: true)
 
+    /** The window keeps one height; the keyboard the user sees is what lies below the inset line. */
+    private fun shown(service: OdictoImeService, root: View): Int {
+        val expansion = service.javaClass.getDeclaredField("expansion").apply { isAccessible = true }.get(service)
+            as app.odicto.mobile.ime.KeyboardExpansion
+        return root.height - expansion.contentTop()
+    }
+
     private fun measure(view: View, width: Int = 412) {
         repeat(3) {
             // These service roots are detached: there is no ViewRootImpl to propagate layout
@@ -47,7 +54,7 @@ class VoiceFirstKeyboardTest {
             val root = service.onCreateInputView()
             service.onStartInput(EditorInfo().apply { inputType = InputType.TYPE_CLASS_TEXT }, false)
             measure(root)
-            val collapsedHeight = root.height
+            val collapsedHeight = shown(service, root)
             assertFalse("letter grid must start hidden", visible(root.findViewById<View>(R.id.ime_keyboard)))
             val toggle = descendants(root).single { it.contentDescription == "Show keyboard" }
             assertTrue(visible(toggle))
@@ -55,11 +62,11 @@ class VoiceFirstKeyboardTest {
             shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(400))
             measure(root)
             assertTrue(visible(root.findViewById<View>(R.id.ime_keyboard)))
-            assertTrue(root.height > collapsedHeight + 100)
+            assertTrue(shown(service, root) > collapsedHeight + 100)
             assertEquals("Hide keyboard", toggle.contentDescription)
             service.onStartInput(EditorInfo().apply { inputType = InputType.TYPE_CLASS_PHONE }, false)
             measure(root)
-            assertEquals(collapsedHeight, root.height)
+            assertEquals(collapsedHeight, shown(service, root))
             assertEquals("Show keyboard", toggle.contentDescription)
             toggle.performClick()
             shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(400))
@@ -68,7 +75,7 @@ class VoiceFirstKeyboardTest {
             toggle.performClick()
             shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(400))
             measure(root)
-            assertEquals(collapsedHeight, root.height)
+            assertEquals(collapsedHeight, shown(service, root))
         } finally { owner.destroy() }
     }
 
@@ -126,7 +133,7 @@ class VoiceFirstKeyboardTest {
             val root = service.onCreateInputView()
             service.onWindowShown()
             measure(root)
-            val collapsedHeight = root.height
+            val collapsedHeight = shown(service, root)
             val coordinator = service.javaClass.getDeclaredField("polish").apply { isAccessible = true }.get(service)
                 as app.odicto.mobile.ime.FieldPolishCoordinator
             coordinator.javaClass.getDeclaredMethod("retain", Long::class.javaPrimitiveType, String::class.java)
@@ -135,12 +142,12 @@ class VoiceFirstKeyboardTest {
             measure(root)
             val copy = descendants(root).filterIsInstance<android.widget.Button>().single { it.text == "Copy completed result" }
             assertTrue(visible(copy))
-            assertTrue(root.height > collapsedHeight)
+            assertTrue(shown(service, root) > collapsedHeight)
             assertFalse(visible(root.findViewById<View>(R.id.ime_keyboard)))
             descendants(root).filterIsInstance<android.widget.Button>().single { it.text == "Dismiss" }.performClick()
             shadowOf(Looper.getMainLooper()).idle()
             measure(root)
-            assertEquals(collapsedHeight, root.height)
+            assertEquals(collapsedHeight, shown(service, root))
             assertEquals("Show keyboard", root.findViewById<View>(R.id.ime_keyboard_toggle).contentDescription)
         } finally { owner.destroy() }
     }

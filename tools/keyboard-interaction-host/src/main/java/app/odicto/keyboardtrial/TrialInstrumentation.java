@@ -90,9 +90,9 @@ public final class TrialInstrumentation extends Instrumentation {
         if (enabled) {
             typeLowercase("hello");
             SystemClock.sleep(300);
-            if (!voiceCheck(result, "correctWordHasNoSuggestions", awaitFixtureEquals("seed hello") && suggestionsHidden())) return;
+            if (!voiceCheck(result, "correctWordUnchanged", awaitFixtureEquals("seed hello") && !hasStatus("Undo autocorrect"))) return;
             tap(locate("Space"));
-            if (!voiceCheck(result, "ordinarySpaceLeavesRowHidden", awaitFixtureEquals("seed hello ") && suggestionsHidden())) return;
+            if (!voiceCheck(result, "ordinarySpaceLeavesWordUnchanged", awaitFixtureEquals("seed hello ") && !hasStatus("Undo autocorrect"))) return;
             runOnMainSync(() -> host.prepare(""));
             SystemClock.sleep(400);
             expandKeyboardIfCollapsed();
@@ -138,13 +138,13 @@ public final class TrialInstrumentation extends Instrumentation {
         if (!voiceCheck(result, "uncommittedTypoUnchanged", awaitFixtureEquals("seed teh receive becuase"))) return;
         if (!voiceCheck(result, "suggestionOffered", awaitDescription("Suggestion because"))) return;
         tap(locate("Suggestion because"));
-        if (!voiceCheck(result, "suggestionExactWithoutSpace", awaitFixtureEquals("seed teh receive because"))) return;
+        if (!voiceCheck(result, "suggestionEndsWord", awaitFixtureEquals("seed teh receive because "))) return;
         tap(locate("Hide keyboard"));
         SystemClock.sleep(400);
         if (!voiceCheck(result, "collapsedSuggestionsHidden", collapsed() && suggestionsHidden())) return;
         tap(locate("Show keyboard")); SystemClock.sleep(400);
         if (!voiceCheck(result, "reexpandedEmptySuggestionsHidden", awaitDescription("q") && suggestionsHidden())) return;
-        typeLowercase(" teh ");
+        typeLowercase("teh ");
         if (!voiceCheck(result, "repeatCorrectionExact", awaitFixtureEquals("seed teh receive because the "))) return;
         if (!voiceCheck(result, "undoChipAvailable", awaitDescription("Undo autocorrect"))) return;
         tap(locate("Undo autocorrect"));
@@ -451,28 +451,13 @@ public final class TrialInstrumentation extends Instrumentation {
         SystemClock.sleep(600);
         expandKeyboardIfCollapsed();
         if (hasStatus(warning) || !baseline.equals(chrome())) throw new AssertionError();
-        // Visit right/left/floating/docked, restoring the starting mode even on failure.
-        int cycles = 0;
-        try {
-            for (; cycles < 4;) {
-                tap(locate("One-handed or floating keyboard")); cycles++;
-                SystemClock.sleep(250);
-                List<Rect> compact = chrome();
-                tap(locate("Polish all text in this field")); locate(warning);
-                if (!compact.equals(chrome())) throw new AssertionError();
-                SystemClock.sleep(3300);
-                if (hasStatus(warning) || !compact.equals(chrome())) throw new AssertionError();
-            }
-        } finally {
-            while (cycles > 0 && cycles < 4) { tap(locate("One-handed or floating keyboard")); cycles++; SystemClock.sleep(250); }
-        }
         result.putBoolean("passed", true);
-        result.putString("summary", "statusGeometry=true inertTap=true replacementDeadline=true expiry=true reopen=true fourLayouts=true providerCalls=0 hostTextCollected=false");
+        result.putString("summary", "statusGeometry=true inertTap=true replacementDeadline=true expiry=true reopen=true providerCalls=0 hostTextCollected=false");
     }
 
     private List<Rect> chrome() {
         List<Rect> bounds = new ArrayList<>();
-        for (String description : new String[]{"Open Odicto settings", "Raw transcription with Groq", "AI answer", "Live transcription", "Hold to speak. Double tap for voice settings.", "Polish all text in this field", "One-handed or floating keyboard"}) bounds.add(locate(description));
+        for (String description : new String[]{"Hide keyboard", "Hold to speak. Double tap for voice settings.", "Polish all text in this field"}) bounds.add(locate(description));
         return bounds;
     }
 

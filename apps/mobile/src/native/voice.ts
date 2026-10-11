@@ -16,7 +16,7 @@ export type VoiceSettings = {
   tapTolerance: 0 | 1 | 2;
   autocorrectEnabled: boolean;
   keySize: 'small' | 'medium' | 'large';
-  keyFont: 'system' | 'sansflex';
+  keyFont: 'system' | 'instrument';
   pinnedEmoji: string[];
   showTextPreview: boolean;
   paused: boolean;

@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- The root stays transparent: KeyboardExpansion paints the keyboard surface below the column's
+     drawn top, so the collapsed keyboard shows only its top row over the host app. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:background="#0E0E10">
+    android:layout_height="wrap_content">
 
     <LinearLayout
         android:id="@+id/ime_column"
@@ -18,73 +19,74 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
+            <!-- One fixed 48dp row in every state. Suggestions, Undo and status replace the tool
+                 cells inside this row; they never add a row, so nothing above or below moves. -->
+            <!-- Left to right in every locale: VoiceControlView places its cells left to right, and
+                 the assistance slot's margins must line up with those cells. -->
             <FrameLayout
                 android:id="@+id/ime_top_row"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:minHeight="48dp">
+                android:layout_height="48dp"
+                android:layoutDirection="ltr">
 
                 <ImageButton
                     android:id="@+id/ime_keyboard_toggle"
                     android:layout_width="48dp"
                     android:layout_height="48dp"
                     android:layout_gravity="top|start"
-                    android:background="@drawable/odicto_ime_polish_background"
+                    android:background="@drawable/odicto_toolbar_button"
                     android:contentDescription="Show keyboard"
-                    android:padding="12dp"
+                    android:padding="13dp"
                     android:scaleType="fitCenter"
-                    android:src="@drawable/odicto_ic_keyboard" />
+                    android:src="@drawable/odicto_ic_keyboard"
+                    android:tint="@color/odicto_toolbar_icon" />
 
                 <ImageButton
                     android:id="@+id/ime_polish"
                     android:layout_width="48dp"
                     android:layout_height="48dp"
                     android:layout_gravity="top|end"
-                    android:background="@drawable/odicto_ime_polish_background"
+                    android:background="@drawable/odicto_toolbar_button"
                     android:contentDescription="Polish all text in this field"
-                    android:padding="12dp"
+                    android:padding="13dp"
                     android:scaleType="fitCenter"
-                    android:src="@drawable/odicto_ic_polish" />
-            </FrameLayout>
+                    android:src="@drawable/odicto_ic_polish"
+                    android:tint="@color/odicto_accent" />
 
-            <!-- Only actual status, suggestions or Undo make this shared slot visible. -->
-            <FrameLayout
-                android:id="@+id/ime_assistance"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:visibility="gone">
-
-                <LinearLayout
-                    android:id="@+id/ime_suggestions"
+                <!-- Covers only the tool cells; its margins are set in code from the cell width. -->
+                <FrameLayout
+                    android:id="@+id/ime_assistance"
                     android:layout_width="match_parent"
-                    android:layout_height="36dp"
-                    android:layout_gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:paddingStart="6dp"
-                    android:paddingEnd="6dp"
-                    android:contentDescription="Spelling suggestions"
-                    android:visibility="gone" />
+                    android:layout_height="48dp"
+                    android:layout_gravity="top|start"
+                    android:background="@color/odicto_keyboard_background"
+                    android:visibility="gone">
 
-                <TextView
-                    android:id="@+id/ime_polish_status"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center_vertical"
-                    android:gravity="start"
-                    android:lines="1"
-                    android:maxLines="1"
-                    android:ellipsize="end"
-                    android:clickable="false"
-                    android:focusable="false"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="12dp"
-                    android:paddingTop="4dp"
-                    android:paddingBottom="8dp"
-                    android:lineSpacingExtra="2dp"
-                    android:textColor="#C6B7FF"
-                    android:textSize="12sp"
-                    android:visibility="invisible" />
+                    <LinearLayout
+                        android:id="@+id/ime_suggestions"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:contentDescription="Spelling suggestions"
+                        android:visibility="gone" />
+
+                    <TextView
+                        android:id="@+id/ime_polish_status"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:gravity="center_vertical|start"
+                        android:lines="1"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:clickable="false"
+                        android:focusable="false"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:textColor="@color/odicto_accent"
+                        android:textSize="13sp"
+                        android:visibility="invisible" />
+                </FrameLayout>
             </FrameLayout>
         </LinearLayout>
 
@@ -107,13 +109,13 @@
                     android:id="@+id/ime_keyboard"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:background="#0E0E10" />
+                    android:background="@color/odicto_keyboard_background" />
 
                 <LinearLayout
                     android:id="@+id/emoji_panel"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
-                    android:background="#0E0E10"
+                    android:background="@color/odicto_keyboard_background"
                     android:elevation="4dp"
                     android:orientation="vertical"
                     android:paddingStart="6dp"
@@ -124,7 +126,7 @@
                     android:id="@+id/clipboard_panel"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
-                    android:background="#0E0E10"
+                    android:background="@color/odicto_keyboard_background"
                     android:elevation="4dp"
                     android:orientation="vertical"
                     android:paddingStart="6dp"
@@ -143,7 +145,7 @@
                     android:background="@drawable/odicto_key_background"
                     android:gravity="center"
                     android:padding="10dp"
-                    android:textColor="#F3EFFB"
+                    android:textColor="#E7E5DF"
                     android:textSize="13sp"
                     android:visibility="gone" />
             </FrameLayout>

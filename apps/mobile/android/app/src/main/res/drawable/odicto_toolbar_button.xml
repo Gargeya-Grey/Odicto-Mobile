@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Top-row icon button: no resting border; a round ripple, and a quiet fill while selected. -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#26FFFFFF">
+    <item android:id="@android:id/mask">
+        <inset android:inset="4dp">
+            <shape android:shape="oval"><solid android:color="#FFFFFFFF" /></shape>
+        </inset>
+    </item>
+    <item>
+        <selector>
+            <item android:state_selected="true">
+                <inset android:inset="6dp">
+                    <shape android:shape="oval"><solid android:color="#FF282B2E" /></shape>
+                </inset>
+            </item>
+            <item><color android:color="#00000000" /></item>
+        </selector>
+    </item>
+</ripple>

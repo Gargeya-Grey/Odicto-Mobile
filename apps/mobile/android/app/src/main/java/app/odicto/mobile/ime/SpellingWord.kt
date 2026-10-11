@@ -6,7 +6,8 @@ internal data class SpellingWord(val text: String, val end: Int, val epoch: Long
         fun atCursor(tail: String?, end: Int, epoch: Long): SpellingWord? {
             if (tail == null || end < 0) return null
             val text = tail.takeLastWhile { it in 'a'..'z' || it in 'A'..'Z' }
-            if (text.length !in 2..32 || text.length > end) return null
+            // A lone "i" is the one single letter worth correcting (to "I").
+            if ((text.length !in 2..32 && text != "i") || text.length > end) return null
             val prefix = tail.dropLast(text.length)
             // Require a real word boundary. A truncated suffix and URL/email/identifier fragments
             // must not become a plausible English word just because they end in ASCII letters.

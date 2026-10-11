@@ -67,10 +67,8 @@ class KeyboardStatusServiceTest {
                     val current = measure(root, width, height)
                     if (active == null) active = current else assertEquals("$width/$height/$phase", active, current)
                     assertEquals("bottom tools stay anchored as content appears", idle.tools, current.tools)
-                    if (height >= 800) {
-                        assertTrue("an unconstrained content row must add height", current.height > idle.height)
-                        assertEquals("keys stay bottom-anchored where no height compression is needed", idle.keys, current.keys)
-                    }
+                    assertEquals("a status line replaces tool cells; it never adds height", idle.height, current.height)
+                    assertEquals("keys never move when status appears", idle.keys, current.keys)
                     assertEquals(View.VISIBLE, status.visibility)
                     assertEquals(1, status.maxLines)
                     assertFalse(status.isClickable)
@@ -123,7 +121,7 @@ class KeyboardStatusServiceTest {
             assertEquals(View.GONE, root.findViewById<View>(R.id.ime_assistance).visibility)
             polish(service, "A long warning\n".repeat(30))
             val populated = measure(root, 300, 220)
-            assertTrue(populated.height > baseline.height)
+            assertEquals("even at 2x font scale the status stays inside the fixed row", baseline, populated)
             val status = root.findViewById<TextView>(R.id.ime_polish_status)
             assertEquals(1, status.maxLines)
             assertFalse(status.text.contains('\n'))

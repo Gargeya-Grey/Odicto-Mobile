@@ -30,7 +30,7 @@ class PolishBusyDrawableTest {
         val bitmap = Bitmap.createBitmap(240, 240, Bitmap.Config.ARGB_8888)
         drawable.draw(Canvas(bitmap))
         for ((x, y) in listOf(120 to 100, 190 to 200, 40 to 170)) {
-            assertEquals(0xFFC5B3FF.toInt(), bitmap.getPixel(x, y))
+            assertEquals(0xFF8EDCBB.toInt(), bitmap.getPixel(x, y))
         }
         assertEquals(Color.TRANSPARENT, bitmap.getPixel(20, 20))
         assertEquals(24, drawable.intrinsicWidth)

@@ -16,7 +16,7 @@ const val DEFAULT_POLISH_MODEL = "poolside/laguna-xs-2.1"
 data class KeySettings(
     val hapticLevel: Int = 2,
     val keySize: String = "medium",
-    val keyFont: String = "sansflex",
+    val keyFont: String = "instrument",
     val pinnedEmoji: List<String> = emptyList(),
     val recentEmoji: List<String> = emptyList(),
     val pinnedClips: List<String> = emptyList(),
@@ -29,11 +29,20 @@ data class KeySettings(
         const val SIZE_MEDIUM = "medium"
         const val SIZE_LARGE = "large"
         const val FONT_SYSTEM = "system"
+        /** Instrument Sans, the brand face shared with the app screens. */
+        const val FONT_BRAND = "instrument"
+        /** Retired key faces. A stored "sansflex" or "lora" value is read as the brand face. */
         const val FONT_FLEX = "sansflex"
-        /** Retired key face. A stored "lora" value is read as Google Sans Flex. */
         const val FONT_LORA = "lora"
         val SIZES = listOf(SIZE_SMALL, SIZE_MEDIUM, SIZE_LARGE)
-        val FONTS = listOf(FONT_SYSTEM, FONT_FLEX)
+        val FONTS = listOf(FONT_SYSTEM, FONT_BRAND)
+
+        /**
+         * The key face to use for a stored value. Lora, then Google Sans Flex, were earlier faces;
+         * both read as the brand face now. Only a deliberate, recorded "system" choice stays off it.
+         */
+        fun resolveFont(stored: String?, choiceRecorded: Boolean): String =
+            if (stored == FONT_SYSTEM && choiceRecorded) FONT_SYSTEM else FONT_BRAND
     }
 }
 
@@ -95,13 +104,7 @@ object VoicePreferences {
                     val haptics = preferences[booleanPreferencesKey("voice_haptics")] ?: true
                     val fontChoiceRecorded = preferences[booleanPreferencesKey("voice_key_font_migrated")] ?: false
                     val rawFont = preferences[stringPreferencesKey("voice_key_font")]
-                    // Lora was the previous key face. It is replaced by Google Sans Flex. A deliberate
-                    // "system" choice is the only value that stays off the new face.
-                    val keyFont = when {
-                        rawFont == KeySettings.FONT_SYSTEM && fontChoiceRecorded -> KeySettings.FONT_SYSTEM
-                        rawFont == KeySettings.FONT_LORA -> KeySettings.FONT_FLEX
-                        else -> KeySettings.FONT_FLEX
-                    }
+                    val keyFont = KeySettings.resolveFont(rawFont, fontChoiceRecorded)
                     mutable.value = VoiceSettings(
                         enabled = preferences[booleanPreferencesKey("voice_enabled")] ?: false,
                         mode = preferences[stringPreferencesKey("voice_mode")] ?: "raw",

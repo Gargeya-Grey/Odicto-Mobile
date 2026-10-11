@@ -61,8 +61,6 @@ class KeyboardController(
     private var lastNotice = 0L
     private var lastWasSpace = false
     private var emojiPage: String = PAGE_RECENT
-    private var layoutMode = MODE_DOCKED
-    private var floatOffset = 0f
     private val editorTail = EditorTail()
     private var enterKind = ImeActions.Kind.NEWLINE
     private var deleteBurst = false
@@ -78,7 +76,9 @@ class KeyboardController(
     private var keepOriginal: SpellingWord? = null
     private data class CorrectionUndo(val original: String, val replacement: SpellingWord)
     private var correctionUndo: CorrectionUndo? = null
-    private val spellingStrip = SpellingStrip(root.findViewById(R.id.ime_suggestions), ::chooseSpelling) { feedback(); undoSpelling() }
+    private val spellingStrip = SpellingStrip(root.findViewById(R.id.ime_suggestions), ::chooseSpelling,
+        keep = ::keepTyped, undo = { feedback(); undoSpelling() }, covered = ::onAssistanceCovered)
+    private val assistance: View = root.findViewById(R.id.ime_assistance)
 
     fun refreshAppearance() {
         refreshSpelling()
@@ -94,10 +94,7 @@ class KeyboardController(
         keyboard.setOnKeyListener(::onKey)
         keyboard.setUppercaseChoiceListener(::uppercaseChoice)
         root.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
-            if (right - left != oldRight - oldLeft) {
-                keyboard.cancelTouch()
-                applyLayout()
-            }
+            if (right - left != oldRight - oldLeft) keyboard.cancelTouch()
         }
         keyboard.setBackspaceReleaseListener(::finishDeleteBurst)
         keyboard.setBackspaceRepeatGate(::prepareDeleteRepeat)
@@ -106,8 +103,6 @@ class KeyboardController(
         functionRow.findViewById<ImageButton>(R.id.function_emoji).setOnClickListener { toggleEmoji() }
         functionRow.findViewById<ImageButton>(R.id.function_clipboard).setOnClickListener { toggleClipboard() }
         functionRow.findViewById<ImageButton>(R.id.function_switch).setOnClickListener { switchKeyboard() }
-        functionRow.findViewById<ImageButton>(R.id.function_layout).setOnClickListener { cycleLayout() }
-        functionRow.findViewById<View>(R.id.function_grip).setOnTouchListener { _, event -> dragFloating(event) }
         show(OdictoKeyboardView.Page.LETTERS)
     }
 
@@ -117,6 +112,10 @@ class KeyboardController(
             root.findViewById<android.widget.FrameLayout>(R.id.ime_top_row).addView(view, 0,
                 android.widget.FrameLayout.LayoutParams(view.requiredWidth, view.requiredHeight, android.view.Gravity.START))
         }
+        (assistance.parent as View).addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
+            if (right - left != oldRight - oldLeft) assistance.post { layoutAssistance() }
+        }
+        layoutAssistance()
         syncMicButton()
     }
 
@@ -285,8 +284,7 @@ class KeyboardController(
             }
             OdictoKeyboardView.Key.SPACE -> {
                 val word = spellingWord
-                val replacement = word?.takeIf { it != keepOriginal && spellingAllowed() }
-                    ?.let { EnglishSpelling.typoCorrection(it.text) }
+                val replacement = word?.takeIf { it != keepOriginal && spellingAllowed() && !strippedOfView() }?.let(::autocorrectFor)
                 keepOriginal = null
                 if (word != null && replacement != null && replaceSpelling(connection, word, "$replacement ") != SpellingEdit.SKIPPED) {
                     lastWasSpace = true
@@ -294,7 +292,7 @@ class KeyboardController(
                     refreshSpelling()
                     return
                 }
-                clearSpelling()
+                clearSpelling(updateView = false)
                 val before = if (assist) editorTail.textBefore(8) { readBefore(connection, TAIL) } else ""
                 if (lastWasSpace && TypingAssist.periodForSecondSpace(before)) {
                     deleteBackwards(connection)
@@ -306,7 +304,7 @@ class KeyboardController(
                 lastWasSpace = true
             }
             OdictoKeyboardView.Key.ENTER -> {
-                clearSpelling()
+                clearSpelling(updateView = false)
                         if (enterKind != ImeActions.Kind.NEWLINE && connection.performEditorAction(enterKind.code)) {
                     editorTail.clear()
                     sentenceCap = if (assist) null else false
@@ -326,7 +324,7 @@ class KeyboardController(
                     }
                     return
                 }
-                clearSpelling()
+                clearSpelling(updateView = false)
                 if (spec.repeatOrdinal == 0) {
                     finishDeleteBurst()
                     deleteConnection = connection
@@ -357,9 +355,66 @@ class KeyboardController(
         if (!allowed) {
             spellingWord = null; correctionUndo = null; keepOriginal = null
         }
-        spellingStrip.render(allowed && keyboard.visibility == View.VISIBLE,
-            spellingWord?.text, correctionUndo?.original)
+        val word = spellingWord
+        spellingStrip.render(allowed && keyboard.visibility == View.VISIBLE, word?.text, correctionUndo?.original,
+            word != null && startsSentence(word), word != null && word == keepOriginal)
+        layoutAssistance()
     }
+
+    /** The replacement the spacebar applies; the curated table covers the moment before the lexicon loads. */
+    private fun autocorrectFor(word: SpellingWord): String? {
+        val start = startsSentence(word)
+        val engine = EnglishSpelling.loaded() ?: return EnglishSpelling.builtinCorrection(word.text, start)
+        return engine.autocorrect(word.text, start)
+    }
+
+    /** True only on evidence: the field start, or a sentence end before the word. */
+    private fun startsSentence(word: SpellingWord): Boolean {
+        val tail = editorTail.knownSuffix() ?: return false
+        if (!tail.endsWith(word.text)) return false
+        val before = tail.dropLast(word.text.length)
+        if (before.endsWith('\n')) return true
+        val trimmed = before.trimEnd()
+        if (trimmed.isEmpty()) return word.end == tail.length
+        return trimmed.last() in ".!?"
+    }
+
+    /** Keep the typed word: no correction for it, then the same space a spacebar tap gives. */
+    private fun keepTyped() {
+        val word = spellingWord ?: return
+        if (!spellingAllowed()) { clearSpelling(); return }
+        feedback()
+        keepOriginal = word
+        onKey(OdictoKeyboardView.KeySpec(OdictoKeyboardView.Key.SPACE, "Space", " ", 1f))
+    }
+
+    private fun onAssistanceCovered(covered: Boolean) {
+        voiceControl?.setKeyboardCovered(covered)
+        layoutAssistance()
+    }
+
+    /**
+     * The slot covers the tool cells and nothing else. Idle: everything between the keyboard toggle
+     * and the mic, minus the Copy cell while a result can be copied (explicit Copy recovery must stay
+     * reachable). During voice: only the three mode cells, so cancel and lock stay reachable.
+     * The top row is laid out left to right in every locale (see ime_keyboard.xml), so these are
+     * absolute left/right margins.
+     */
+    private fun layoutAssistance() {
+        val row = assistance.parent as? View ?: return
+        val cell = voiceControl?.keyboardCellPx ?: dp(48)
+        val voice = VoiceSession.state.value
+        val copyable = !voice.busy && (voice.finalText.isNotBlank() || voice.interim.isNotBlank())
+        val left = if (voice.busy && row.width > 0) (row.width - cell * 6).coerceAtLeast(cell * 2) else cell
+        val right = if (voice.busy || copyable) cell * 3 else cell * 2
+        val params = assistance.layoutParams as? android.view.ViewGroup.MarginLayoutParams ?: return
+        if (params.leftMargin == left && params.rightMargin == right) return
+        params.leftMargin = left; params.rightMargin = right
+        assistance.layoutParams = params
+    }
+
+    /** True while a status line hides the strip: Space then must not apply an unseen correction. */
+    private fun strippedOfView(): Boolean = spellingStrip.statusShown
 
     fun setSpellingStatusVisible(visible: Boolean) = spellingStrip.setStatusVisible(visible)
 
@@ -384,7 +439,12 @@ class KeyboardController(
         val connection = connectionProvider() ?: return
         if (!spellingAllowed()) { clearSpelling(); return }
         feedback()
-        replaceSpelling(connection, word, replacement)
+        // A picked word ends the word with a space, unless text already follows (mid-sentence edit).
+        val atEnd = runCatching { connection.getTextAfterCursor(1, 0)?.toString() }.getOrNull()?.isEmpty() == true
+        if (replaceSpelling(connection, word, if (atEnd) "$replacement " else replacement) == SpellingEdit.APPLIED) {
+            lastWasSpace = atEnd
+            sentenceCap = false
+        }
         refreshSpelling()
     }
 
@@ -873,7 +933,16 @@ class KeyboardController(
             slot.layoutParams = slot.layoutParams.apply { this.height = height }
         }
         keyboard.visibility = View.INVISIBLE
+        panel.animate().cancel()
         panel.visibility = View.VISIBLE
+        // Crossfade by alpha only: size and position never animate, and the system animator
+        // setting (which "remove animations" turns off) is honoured.
+        if (android.animation.ValueAnimator.areAnimatorsEnabled()) {
+            panel.alpha = 0f
+            panel.animate().alpha(1f).setDuration(140L).withLayer().start()
+        } else {
+            panel.alpha = 1f
+        }
         panel.bringToFront()
     }
 
@@ -885,8 +954,13 @@ class KeyboardController(
             }
         }
         keyboard.visibility = View.VISIBLE
+        // Closing is immediate. Stop any fade still running so the next open starts clean.
+        emojiPanel.animate().cancel()
+        emojiPanel.alpha = 1f
         emojiPanel.visibility = View.GONE
         emojiPanel.removeAllViews()
+        clipboardPanel.animate().cancel()
+        clipboardPanel.alpha = 1f
         clipboardPanel.visibility = View.GONE
         clipboardPanel.removeAllViews()
         clipboard.close()
@@ -904,9 +978,12 @@ class KeyboardController(
         val scroll = ScrollView(context).apply { contentDescription = "Emoji list" }
         val column = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(6), dp(4), dp(6), dp(4))
+            setPadding(dp(2), 0, dp(2), dp(8))
         }
-        emojiPanel.addView(emojiFilters())
+        emojiPanel.addView(emojiFilters(), LinearLayout.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+        ))
         if (emojiPage == PAGE_RECENT) {
             val keys = VoicePreferences.state.value.keys
             if (keys.pinnedEmoji.isNotEmpty()) {
@@ -930,18 +1007,30 @@ class KeyboardController(
 
     private fun sectionLabel(title: String): TextView = TextView(context).apply {
         text = title
-        textSize = 11f
+        textSize = 12f
         typeface = OdictoKeyboardView.typefaceFor(context)
-        setTextColor(0xFFB7B7C2.toInt())
+        setTextColor(context.getColor(R.color.odicto_text_muted))
         setPadding(dp(8), dp(8), dp(8), dp(4))
     }
 
+    /** Category selector: a scrolling row of pills. Each pill is 32dp tall inside a 48dp touch row. */
     private fun emojiFilters(): View {
         val row = android.widget.HorizontalScrollView(context).apply {
             isHorizontalScrollBarEnabled = false
             contentDescription = "Emoji categories"
         }
-        val line = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
+        val line = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(4), 0, dp(4), 0)
+        }
+        val base = OdictoKeyboardView.typefaceFor(context)
+        val medium = if (Build.VERSION.SDK_INT >= 28) android.graphics.Typeface.create(base, 500, false) else base
+        val radius = dp(16).toFloat()
+        // The 8dp vertical inset leaves a 32dp pill; the full 48dp row stays tappable.
+        fun pill(fill: Int) = android.graphics.drawable.InsetDrawable(
+            android.graphics.drawable.GradientDrawable().apply { cornerRadius = radius; setColor(fill) },
+            0, dp(8), 0, dp(8),
+        )
         val choices = listOf(PAGE_RECENT) + EmojiCatalog.categories.map { it.label }
         for (choice in choices) {
             val selected = choice == emojiPage
@@ -950,11 +1039,16 @@ class KeyboardController(
                 contentDescription = "Emoji category $choice"
                 isSelected = selected
                 textSize = 13f
-                typeface = OdictoKeyboardView.typefaceFor(context)
-                setTextColor(if (selected) 0xFFFFFFFF.toInt() else 0xFF8E8E98.toInt())
+                typeface = if (selected) medium else base
+                setTextColor(context.getColor(if (selected) R.color.odicto_text_strong else R.color.odicto_text_muted))
                 gravity = android.view.Gravity.CENTER
-                minHeight = dp(48)
-                setPadding(dp(10), dp(6), dp(10), dp(6))
+                background = android.graphics.drawable.RippleDrawable(
+                    android.content.res.ColorStateList.valueOf(0x26FFFFFF),
+                    pill(if (selected) context.getColor(R.color.odicto_panel_pill_selected) else 0),
+                    pill(0xFFFFFFFF.toInt()),
+                )
+                // After the background: assigning a background replaces the view's padding.
+                setPadding(dp(14), 0, dp(14), 0)
                 setOnClickListener {
                     val scrollX = row.scrollX
                     emojiPage = choice
@@ -964,20 +1058,18 @@ class KeyboardController(
                         filters.post { filters.scrollTo(scrollX, 0) }
                     }
                 }
+            }, LinearLayout.LayoutParams(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)).apply {
+                marginStart = dp(2)
+                marginEnd = dp(2)
             })
         }
         row.addView(line)
         return row
     }
 
+    /** The gap between two sections. Sections are separated by spacing only; no rule is drawn. */
     private fun divider(): View = View(context).apply {
-        setBackgroundColor(0x33FFFFFF)
-        layoutParams = android.widget.LinearLayout.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
-            topMargin = dp(8)
-            bottomMargin = dp(4)
-            marginStart = dp(8)
-            marginEnd = dp(8)
-        }
+        layoutParams = android.widget.LinearLayout.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, dp(12))
     }
 
     private fun emojiRow(entries: List<String>): View {
@@ -988,11 +1080,16 @@ class KeyboardController(
 
     private fun emojiCell(entry: String): View = TextView(context).apply {
         text = entry
-        textSize = 22f
-        // Lora has no emoji. Forcing it here draws blank boxes, so the panel looked empty.
+        // Emoji are pictures: a fixed size keeps them inside the 48dp cell at any font scale.
+        setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 26f)
+        // The key face has no emoji; forcing it here would draw blank boxes.
         typeface = android.graphics.Typeface.DEFAULT
         gravity = android.view.Gravity.CENTER
-        setTextColor(0xFFF3EFFB.toInt())
+        setTextColor(context.getColor(R.color.odicto_toolbar_icon))
+        // A round ripple on press is the only feedback, so a tap never animates the grid.
+        background = android.graphics.drawable.RippleDrawable(
+            android.content.res.ColorStateList.valueOf(0x26FFFFFF), null, null,
+        ).apply { radius = dp(22) }
         layoutParams = GridLayout.LayoutParams().apply {
             width = 0
             height = dp(48)
@@ -1013,8 +1110,13 @@ class KeyboardController(
         VoicePreferences.update(context) { settings ->
             settings.copy(keys = VoicePreferences.withPinned(entry, settings.keys))
         }
+        // Rebuilding the panel must not throw away where the user was looking.
+        val filtersX = (emojiPanel.getChildAt(0) as? android.widget.HorizontalScrollView)?.scrollX ?: 0
+        val listY = (emojiPanel.getChildAt(1) as? ScrollView)?.scrollY ?: 0
         emojiPanel.removeAllViews()
         buildEmojiPanel()
+        (emojiPanel.getChildAt(0) as? android.widget.HorizontalScrollView)?.let { it.post { it.scrollTo(filtersX, 0) } }
+        (emojiPanel.getChildAt(1) as? ScrollView)?.let { it.post { it.scrollTo(0, listY) } }
     }
 
     private fun buildClipboardPanel() {
@@ -1086,63 +1188,6 @@ class KeyboardController(
 
     private fun dp(value: Int) = (value * context.resources.displayMetrics.density + 0.5f).toInt()
 
-    /** Docked, right hand, left hand, then a narrower keyboard you can drag. */
-    private fun cycleLayout() {
-        feedback()
-        layoutMode = (layoutMode + 1) % 4
-        root.findViewById<View>(R.id.ime_column).post { applyLayout() }
-    }
-
-    private fun applyLayout() {
-        val column = root.findViewById<LinearLayout>(R.id.ime_column)
-        val parent = column.parent as? View ?: return
-        val full = parent.width
-        if (full <= 0) return
-        val lp = column.layoutParams as? android.widget.FrameLayout.LayoutParams ?: return
-        val grip = functionRow.findViewById<View>(R.id.function_grip)
-        when (layoutMode) {
-            MODE_RIGHT, MODE_LEFT -> {
-                lp.width = (full * 0.72f).toInt().coerceAtLeast(dp(288)).coerceAtMost(full)
-                lp.gravity = if (layoutMode == MODE_LEFT) android.view.Gravity.START else android.view.Gravity.END
-                column.translationX = 0f
-                grip.visibility = View.GONE
-            }
-            MODE_FLOAT -> {
-                lp.width = (full * 0.78f).toInt().coerceAtLeast(dp(288)).coerceAtMost(full)
-                lp.gravity = android.view.Gravity.CENTER_HORIZONTAL
-                column.translationX = floatOffset
-                grip.visibility = View.VISIBLE
-            }
-            else -> {
-                lp.width = android.view.ViewGroup.LayoutParams.MATCH_PARENT
-                lp.gravity = android.view.Gravity.CENTER_HORIZONTAL
-                column.translationX = 0f
-                grip.visibility = View.GONE
-            }
-        }
-        column.layoutParams = lp
-        if (BuildConfig.DEBUG) column.postDelayed({ service.logKeyboardGeometry(root) }, 32)
-    }
-
-    private var dragOrigin = 0f
-    private var dragBase = 0f
-
-    private fun dragFloating(event: android.view.MotionEvent): Boolean {
-        if (layoutMode != MODE_FLOAT) return false
-        val column = root.findViewById<View>(R.id.ime_column)
-        when (event.actionMasked) {
-            android.view.MotionEvent.ACTION_DOWN -> {
-                dragOrigin = event.rawX
-                dragBase = column.translationX
-            }
-            android.view.MotionEvent.ACTION_MOVE -> {
-                floatOffset = dragBase + (event.rawX - dragOrigin)
-                column.translationX = floatOffset
-            }
-        }
-        return true
-    }
-
     private companion object {
         const val GRID_COLUMNS = 8
         const val SURROUNDING = 2048
@@ -1150,10 +1195,6 @@ class KeyboardController(
         const val TAIL = 96
         const val NOTICE_MS = 2500L
         const val DIMMED_ALPHA = 0.35f
-        const val MODE_DOCKED = 0
-        const val MODE_RIGHT = 1
-        const val MODE_LEFT = 2
-        const val MODE_FLOAT = 3
         const val PAGE_RECENT = "Recent"
     }
 }

@@ -219,7 +219,9 @@ class AutocorrectKeyboardTest {
             assertEquals("the retained old button must be inert", "seed teh", f.host.text())
             f.tap("Space")
             assertEquals("seed teh ", f.host.text())
-            assertEquals("ordinary Space really has no content to reserve", View.GONE, header.visibility)
+            assertEquals("the slot lingers between words instead of flashing the tools", View.VISIBLE, header.visibility)
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(2_000))
+            assertEquals("after a pause the tools come back", View.GONE, header.visibility)
         }
     }
 
@@ -385,8 +387,8 @@ class AutocorrectKeyboardTest {
             val choice = f.button("Suggestion because")
             assertNotNull("bundled dictionary supplies local spelling choice", choice)
             choice!!.performClick()
-            assertEquals("seed because", f.host.text())
-            f.type(" xyz")
+            assertEquals("a picked suggestion ends the word with a space", "seed because ", f.host.text())
+            f.type("xyz")
             choice.performClick()
             assertEquals("seed because xyz", f.host.text())
         }

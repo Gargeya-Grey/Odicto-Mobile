@@ -1,4 +1,8 @@
-import { Capacitor, registerPlugin } from '@capacitor/core';
+import {
+  Capacitor,
+  registerPlugin,
+  type PluginListenerHandle,
+} from '@capacitor/core';
 
 export type OnboardingStatus = {
   microphone: boolean;
@@ -20,6 +24,10 @@ const plugin = registerPlugin<{
   showKeyboardPicker(): Promise<void>;
   openOverlaySettings(): Promise<void>;
   openAccessibilitySettings(): Promise<void>;
+  addListener(
+    eventName: 'statusChanged',
+    listener: () => void,
+  ): Promise<PluginListenerHandle>;
 }>('OdictoOnboarding');
 export const onboarding = {
   supported: Capacitor.getPlatform() === 'android',
@@ -30,4 +38,7 @@ export const onboarding = {
   showKeyboardPicker: () => plugin.showKeyboardPicker(),
   openOverlaySettings: () => plugin.openOverlaySettings(),
   openAccessibilitySettings: () => plugin.openAccessibilitySettings(),
+  /** Fires when the default or enabled keyboards change, e.g. after the system picker. */
+  onStatusChanged: (listener: () => void) =>
+    plugin.addListener('statusChanged', listener),
 };

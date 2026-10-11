@@ -72,7 +72,7 @@ The enabled trial starts with the compact voice bar and no spelling strip. After
 It then verifies all of these outcomes through the actual IME/host boundary:
 
 - Backspace restores `teh` and removes the triggering space; the next Space leaves that original spelling unchanged. A subsequent `recieve` becomes `receive` normally.
-- Typing `becuase` offers `Suggestion because`; tapping it produces exactly `because` without adding a space.
+- Typing `becuase` offers `Suggestion because`; tapping it produces exactly `because` followed by one space, as a picked word ends the word.
 - `Spelling suggestions` is visible while expanded, absent after collapse, and visible again after expansion.
 - A later correction works again. Tapping `Undo autocorrect` restores the original spelling without the space; its next Space is also exempt from immediate correction, while the following word can correct normally.
 - Focusing the other generated field starts collapsed and clears the previous undo. Backspace in the new field edits only that field. Returning to the original field also clears stale undo and leaves its corrected spelling intact when deleting the trailing space.

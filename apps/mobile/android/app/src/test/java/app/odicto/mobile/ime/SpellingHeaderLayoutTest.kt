@@ -56,7 +56,7 @@ class SpellingHeaderLayoutTest {
 
     private fun waitForCandidate(row: LinearLayout): View {
         repeat(200) {
-            descendants(row).firstOrNull { it.contentDescription == "Suggestion because" }?.let { return it }
+            descendants(row).firstOrNull { it.contentDescription == "Suggestion because" || it.contentDescription == "Space applies because" }?.let { return it }
             Thread.sleep(10)
             shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(20))
         }
@@ -135,89 +135,76 @@ class SpellingHeaderLayoutTest {
         }
     }
 
-    @Test fun emptyAssistanceDoesNotReserveAnyHeight() {
+    private fun controls(root: View): List<Rect> = listOf(R.id.ime_keyboard_toggle, R.id.ime_polish).map { id ->
+        val view = root.findViewById<View>(id)
+        Rect(0, 0, view.width, view.height).also { (root as ViewGroup).offsetDescendantRectToMyCoords(view, it) }
+    }
+
+    @Test fun theHeaderIsOneFixedRowAndEmptyAssistanceIsGone() {
         Fixture().use { f ->
             measure(f.root)
-            assertEquals("no spelling choices means no suggestion row", View.GONE, f.row.visibility)
-            assertEquals("an empty status must not leave its own black spacer", View.GONE,
-                f.root.findViewById<View>(R.id.ime_assistance).visibility)
-            assertEquals(f.root.findViewById<View>(R.id.ime_top_row).height,
-                f.root.findViewById<View>(R.id.ime_top_controls).height)
+            val density = f.root.resources.displayMetrics.density
+            assertEquals((48 * density).toInt(), f.root.findViewById<View>(R.id.ime_top_controls).height)
+            assertEquals(View.GONE, f.row.visibility)
+            assertEquals(View.GONE, f.root.findViewById<View>(R.id.ime_assistance).visibility)
+            assertSame("suggestions live inside the top row", f.root.findViewById<View>(R.id.ime_top_row),
+                f.root.findViewById<View>(R.id.ime_assistance).parent)
         }
     }
 
-    @Test fun contentOnlyHeaderKeepsKeysAnchoredAndPopulatedRowsEqual() {
+    @Test fun suggestionsUndoStatusAndVoiceNeverMoveTheKeysOrTheControls() {
         Fixture().use { f ->
-            assertSame("status and spelling must share a single height reservation", f.status.parent, f.row.parent)
+            assertSame("status and spelling share one slot", f.status.parent, f.row.parent)
             val empty = measure(f.root)
-            val compactHeight = (36 * f.root.resources.displayMetrics.density).toInt()
-            val xmlRow = LayoutInflater.from(f.root.context).inflate(R.layout.ime_keyboard, null, false)
-                .findViewById<LinearLayout>(R.id.ime_suggestions)
-            assertEquals("the authored compact baseline remains 36dp", compactHeight, xmlRow.layoutParams.height)
+            val fixed = controls(f.root)
             f.spelling(word = "becuase")
             val candidate = waitForCandidate(f.row) as TextView
-            assertSame("candidate must still belong to the live strip before layout", f.row, candidate.parent)
-            val populated = measure(f.root)
-            sameKeys(empty, populated)
-            assertEquals((f.row.parent as View).height, populated.height - empty.height)
-            assertTrue(populated.height > empty.height)
-            assertSame("geometry checks must never use a retired candidate", f.row, candidate.parent)
-            assertSame(candidate, descendants(f.row).single { it.contentDescription == "Suggestion because" })
-            // Robolectric 4.14.1's ShadowPaint uses top=-32/bottom=9 in REALISTIC text mode,
-            // regardless of text size. Real fonts and accessibility sizes also have their own
-            // metrics: validate against the actual rendered label, not a guessed line height.
-            val font = candidate.paint.fontMetricsInt
-            assertEquals("only a taller rendered font line may exceed the compact baseline",
-                maxOf(compactHeight, font.bottom - font.top), f.row.height)
+            assertEquals("Suggestion because", candidate.contentDescription)
+            assertEquals(empty, measure(f.root))
+            assertEquals(fixed, controls(f.root))
+            assertEquals(View.VISIBLE, (f.row.parent as View).visibility)
             assertTrue(candidate.isClickable && candidate.isFocusable)
-            assertEquals("the whole compact row remains a touch target", f.row.height, candidate.height)
+            assertNotNull(descendants(f.row).single { it.contentDescription == "Keep becuase" })
             f.spelling(original = "teh")
-            assertEquals(populated, measure(f.root))
-            val undo = descendants(f.row).single { it.contentDescription == "Undo autocorrect" }
-            assertEquals(f.row.height, undo.height)
+            assertEquals(empty, measure(f.root))
+            assertNotNull(descendants(f.row).single { it.contentDescription == "Undo autocorrect" })
             for (message in listOf("Copied", "Field changed. Try Polish again.", "Polishing")) {
                 f.message(message, message == "Polishing")
                 assertEquals(message, f.status.text.toString())
                 assertEquals(View.VISIBLE, f.status.visibility)
                 assertEquals(View.INVISIBLE, f.row.visibility)
                 assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS, f.row.importantForAccessibility)
-                assertEquals(populated, measure(f.root))
+                assertEquals(empty, measure(f.root))
+                assertEquals(fixed, controls(f.root))
             }
             f.message("")
             assertEquals(View.INVISIBLE, f.status.visibility)
             assertEquals(View.VISIBLE, f.row.visibility)
-            assertEquals(populated, measure(f.root))
 
-            f.spelling()
-            assertEquals(empty, measure(f.root))
+            f.controller.onExternalEdit(0, 0)
             assertEquals(View.GONE, (f.row.parent as View).visibility)
-
             VoiceSession.update { VoiceUi(phase = "processing", message = "Processing voice") }
             shadowOf(Looper.getMainLooper()).idle()
             assertEquals(View.GONE, f.row.visibility)
-            val busy = measure(f.root)
-            assertTrue(busy.height > empty.height)
-            sameKeys(empty, busy)
             assertEquals(View.VISIBLE, f.status.visibility)
+            assertEquals("a voice status replaces tool cells, it does not add a row", empty, measure(f.root))
+            assertEquals(fixed, controls(f.root))
         }
     }
 
-    @Test fun sharedHeaderDoesNotAddSpaceToCollapsedOrDisabledKeyboard() {
+    @Test fun aCollapsedKeyboardShowsStatusInPlace() {
         Fixture(false).use { f ->
             val off = measure(f.root)
-            assertEquals(View.GONE, f.row.visibility)
             f.enabled(true)
-            val on = measure(f.root)
-            assertEquals("enabling the feature alone must not create a blank row", off, on)
+            assertEquals("enabling the feature alone must not create a blank row", off, measure(f.root))
             f.root.findViewById<View>(R.id.ime_keyboard_toggle).performClick()
-            val collapsedOn = measure(f.root)
+            val collapsed = measure(f.root)
             assertEquals(View.GONE, f.row.visibility)
-            f.enabled(false)
-            assertEquals(collapsedOn, measure(f.root))
             f.message("Copied")
-            assertTrue(measure(f.root).height > collapsedOn.height)
+            assertEquals(View.VISIBLE, f.status.visibility)
+            assertEquals(collapsed, measure(f.root))
             f.message("")
-            assertEquals(collapsedOn, measure(f.root))
+            assertEquals(collapsed, measure(f.root))
         }
     }
 
@@ -227,15 +214,16 @@ class SpellingHeaderLayoutTest {
         val row = root.findViewById<LinearLayout>(R.id.ime_suggestions)
         var choices = 0
         var undos = 0
-        val strip = SpellingStrip(row, { choices++ }, { undos++ })
+        val covers = mutableListOf<Boolean>()
+        val strip = SpellingStrip(row, { choices++ }, {}, { undos++ }, { covers += it })
         try {
+            val empty = measure(root)
             strip.render(true, "becuase", null)
             val candidate = waitForCandidate(row)
-            val baseline = measure(root)
+            assertEquals(listOf(true), covers)
             strip.setStatusVisible(true)
             candidate.performClick()
             assertEquals(0, choices)
-            assertEquals(baseline, measure(root))
             strip.setStatusVisible(false)
             candidate.performClick()
             assertEquals(1, choices)
@@ -244,48 +232,45 @@ class SpellingHeaderLayoutTest {
             strip.setStatusVisible(true)
             undo.performClick()
             assertEquals(0, undos)
-            assertEquals(baseline, measure(root))
             strip.setStatusVisible(false)
             undo.performClick()
             assertEquals(1, undos)
             strip.render(false, null, null)
             undo.performClick()
             assertEquals("a collapsed/retired action stays inert", 1, undos)
-            val empty = measure(root)
-            assertTrue(empty.height < baseline.height)
-            sameKeys(baseline, empty)
             assertEquals(View.GONE, (row.parent as View).visibility)
+            assertEquals(listOf(true, false), covers)
+            assertEquals(empty, measure(root))
         } finally { strip.dispose() }
     }
 
-    @Test fun noResultReleasesTheHeaderAndOldChoicesAreInertDuringLookup() {
+    @Test fun oldChoicesAreInertDuringLookupAndTheSlotLingersBetweenWords() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val root = LayoutInflater.from(context).inflate(R.layout.ime_keyboard, null, false)
         val row = root.findViewById<LinearLayout>(R.id.ime_suggestions)
         var choices = 0
-        val strip = SpellingStrip(row, { choices++ }, {})
+        val strip = SpellingStrip(row, { choices++ }, {}, {}, {})
         try {
-            val empty = measure(root)
             strip.render(true, "becuase", null)
             val old = waitForCandidate(row)
-            val populated = measure(root)
             strip.render(true, "because", null)
             assertSame("retain last choices only while the next lookup runs", row, old.parent)
             old.performClick()
             assertEquals("retained choices cannot edit a newer word", 0, choices)
-            assertEquals(populated, measure(root))
             complete(lookup(strip))
-            assertEquals(0, row.childCount)
-            assertEquals(View.GONE, row.visibility)
+            assertNotNull(descendants(row).single { it.contentDescription == "Keep because" })
+            strip.render(true, null, null)
+            assertEquals(0, (0 until row.childCount).count { row.getChildAt(it).visibility == View.VISIBLE })
+            assertEquals("the slot stays through the gap between words", View.VISIBLE, (row.parent as View).visibility)
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(2_000))
             assertEquals(View.GONE, (row.parent as View).visibility)
-            assertEquals(empty, measure(root))
         } finally { strip.dispose() }
     }
 
     @Test fun clearedCollapsedAndChangedEditorsCannotResurrectPendingChoices() {
         Fixture().use { f ->
             val empty = measure(f.root)
-            for (clear in listOf<() -> Unit>({ f.spelling() }, { f.controller.onExternalEdit(0, 0) },
+            for (clear in listOf<() -> Unit>({ f.controller.onExternalEdit(0, 0) },
                 { f.controller.onKeyboardPresentationChanged(false) })) {
                 f.controller.onKeyboardPresentationChanged(true)
                 f.spelling(word = "becuase")
@@ -293,7 +278,7 @@ class SpellingHeaderLayoutTest {
                 clear()
                 complete(pending)
                 assertEquals(View.GONE, f.row.visibility)
-                assertEquals(0, f.row.childCount)
+                assertEquals(0, (0 until f.row.childCount).count { f.row.getChildAt(it).visibility == View.VISIBLE })
                 assertEquals(View.GONE, (f.row.parent as View).visibility)
                 assertEquals(empty, measure(f.root))
             }
@@ -305,10 +290,6 @@ class SpellingHeaderLayoutTest {
             assertEquals(View.VISIBLE, f.root.findViewById<View>(R.id.emoji_panel).visibility)
             assertEquals(View.GONE, f.row.visibility)
             assertEquals(View.GONE, (f.row.parent as View).visibility)
-            f.root.findViewById<View>(R.id.function_emoji).performClick()
-            complete(lookup(f.strip))
-            assertEquals(0, f.row.childCount)
-            assertEquals(empty, measure(f.root))
         }
     }
 }

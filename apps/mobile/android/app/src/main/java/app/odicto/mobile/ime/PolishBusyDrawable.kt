@@ -19,7 +19,7 @@ internal class PolishBusyDrawable(
 ) : Drawable(), Animatable {
     private val size = (24 * density).roundToInt()
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFFC5B3FF.toInt()
+        color = 0xFF8EDCBB.toInt()
         style = Paint.Style.FILL
     }
     private val stars = arrayOf(

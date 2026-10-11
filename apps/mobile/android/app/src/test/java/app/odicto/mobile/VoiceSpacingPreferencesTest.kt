@@ -49,7 +49,7 @@ class VoiceSpacingPreferencesTest {
         withTimeout(5_000) { VoicePreferences.ready.first { it } }
         assertEquals(2, VoicePreferences.state.value.keys.tapTolerance)
         assertEquals("medium", VoicePreferences.state.value.keys.keySize)
-        assertEquals("sansflex", VoicePreferences.state.value.keys.keyFont)
+        assertEquals("instrument", VoicePreferences.state.value.keys.keyFont)
     }
 
     private fun storedSpacingPresetsAndBoundsLoadWithoutChangingOtherFields() = runBlocking {

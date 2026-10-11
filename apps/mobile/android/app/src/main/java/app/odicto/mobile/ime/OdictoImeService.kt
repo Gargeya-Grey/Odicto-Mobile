@@ -69,6 +69,8 @@ class OdictoImeService : InputMethodService() {
         override fun endLive() = this@OdictoImeService.endLive()
     }
     override fun onCreate() {
+        // Before super: InputMethodService creates its window from this theme.
+        setTheme(R.style.OdictoImeTheme)
         super.onCreate()
         VoicePreferences.initialize(this); DictationCoordinator.registerTarget(target)
         clipboardCapture = ClipboardCapture(this, scope).also { capture ->
@@ -109,8 +111,25 @@ class OdictoImeService : InputMethodService() {
         scope.cancel()
         super.onDestroy()
     }
+    /**
+     * The system draws the IME's navigation strip and paints it black unless the window draws its
+     * own bar backgrounds. Graphite keeps the strip continuous with the keyboard surface.
+     */
+    private fun paintNavigationStrip() {
+        val keyboardWindow = window?.window ?: return
+        runCatching {
+            keyboardWindow.addFlags(android.view.WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+            @Suppress("DEPRECATION")
+            keyboardWindow.navigationBarColor = getColor(R.color.odicto_keyboard_background)
+            if (Build.VERSION.SDK_INT >= 29) keyboardWindow.isNavigationBarContrastEnforced = false
+            if (Build.VERSION.SDK_INT >= 30) keyboardWindow.insetsController?.setSystemBarsAppearance(
+                0, android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS)
+        }
+    }
+
     override fun onWindowShown() {
         super.onWindowShown()
+        paintNavigationStrip()
         statusViewActive = true
         DictationCoordinator.keyboardVisible.value = true
         inputRoot?.post { publishKeyboardBounds() }
@@ -210,7 +229,10 @@ class OdictoImeService : InputMethodService() {
             if (BuildConfig.DEBUG && (left != oldLeft || right != oldRight)) row.post { logKeyboardGeometry(root) }
         }
         controller = KeyboardController(this, root)
-        expansion = KeyboardExpansion(root) { controller?.cancelTouch() }
+        expansion = KeyboardExpansion(root, { controller?.cancelTouch() }) {
+            // A new inset reaches the window manager on the next traversal of the IME window.
+            if (inputRoot === root) { root.requestLayout(); root.post { if (inputRoot === root) publishKeyboardBounds() } }
+        }
         expansion?.onPresentationChanged = {
             controller?.onKeyboardPresentationChanged(it)
         }
@@ -248,7 +270,28 @@ class OdictoImeService : InputMethodService() {
         if (!DictationCoordinator.keyboardVisible.value || !root.isAttachedToWindow) return
         val position = IntArray(2)
         root.getLocationOnScreen(position)
-        DictationCoordinator.keyboardTopPx.value = position[1]
+        DictationCoordinator.keyboardTopPx.value = position[1] + (expansion?.contentTop() ?: 0)
+    }
+
+    /**
+     * The window always holds the expanded keyboard; only the part from [KeyboardExpansion.contentTop]
+     * down is keyboard. The host app keeps that part clear, and touches above it reach the app.
+     */
+    override fun onComputeInsets(outInsets: Insets) {
+        super.onComputeInsets(outInsets)
+        // A hardware keyboard hides the input view while the root keeps its last bounds.
+        if (!isInputViewShown) return
+        val root = inputRoot ?: return
+        val expansion = expansion ?: return
+        val decor = window?.window?.decorView ?: return
+        if (!root.isAttachedToWindow || root.height == 0 || decor.height == 0) return
+        val position = IntArray(2)
+        root.getLocationInWindow(position)
+        val top = (position[1] + expansion.contentTop()).coerceIn(0, decor.height)
+        outInsets.contentTopInsets = top
+        outInsets.visibleTopInsets = top
+        outInsets.touchableInsets = Insets.TOUCHABLE_INSETS_REGION
+        outInsets.touchableRegion.set(0, top, decor.width, decor.height)
     }
     override fun onFinishInput() {
         clipboardCapture?.onEditorChanged(null)
@@ -279,7 +322,7 @@ class OdictoImeService : InputMethodService() {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER
-            setBackgroundColor(0xFF0E0E10.toInt())
+            setBackgroundColor(0xFF17191C.toInt())
             elevation = 8 * resources.displayMetrics.density
             isClickable = true
             visibility = View.GONE
@@ -293,7 +336,7 @@ class OdictoImeService : InputMethodService() {
             minimumWidth = 0
             minWidth = 0
             minimumHeight = touchHeight
-            setTextColor(android.graphics.Color.rgb(198, 183, 255))
+            setTextColor(android.graphics.Color.rgb(142, 220, 187))
             setOnClickListener {
                 val id = row.tag as? Long ?: return@setOnClickListener
                 val copied = polish?.copyCompletedResult(id) { text ->
@@ -317,7 +360,7 @@ class OdictoImeService : InputMethodService() {
         }
         val countdown = TextView(this).apply {
             textSize = 12f
-            setTextColor(android.graphics.Color.rgb(198, 183, 255))
+            setTextColor(android.graphics.Color.rgb(142, 220, 187))
             gravity = android.view.Gravity.CENTER
             // Do not announce every tick as a live-region update.
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_NONE
@@ -330,7 +373,7 @@ class OdictoImeService : InputMethodService() {
             minimumWidth = 0
             minWidth = 0
             minimumHeight = touchHeight
-            setTextColor(android.graphics.Color.rgb(198, 183, 255))
+            setTextColor(android.graphics.Color.rgb(142, 220, 187))
             setOnClickListener {
                 (row.tag as? Long)?.let { polish?.dismissCompletedResult(it) }
                 renderRecovery()
@@ -514,7 +557,6 @@ class OdictoImeService : InputMethodService() {
         val rect = Rect()
         if (control?.getGlobalVisibleRect(rect) == true) bounds += "Voice=${rect.toShortString()}"
         if (polishButton?.getGlobalVisibleRect(rect) == true) bounds += "Polish=${rect.toShortString()}"
-        if (root.findViewById<View>(R.id.function_layout).getGlobalVisibleRect(rect)) bounds += "Layout=${rect.toShortString()}"
         for (index in 0 until keyboard.childCount) {
             val line = keyboard.getChildAt(index) as? ViewGroup ?: continue
             for (key in 0 until line.childCount) {

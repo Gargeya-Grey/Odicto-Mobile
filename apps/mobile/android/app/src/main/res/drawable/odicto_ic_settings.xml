@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- settings: three slider lines, each with a ring knob -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.75" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M4,6.5 H13.25 M17.75,6.5 H20 M13.25,6.5 A2.25,2.25 0 1 0 17.75,6.5 A2.25,2.25 0 1 0 13.25,6.5 Z" />
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.75" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M4,12 H6.25 M10.75,12 H20 M6.25,12 A2.25,2.25 0 1 0 10.75,12 A2.25,2.25 0 1 0 6.25,12 Z" />
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.75" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M4,17.5 H10.75 M15.25,17.5 H20 M10.75,17.5 A2.25,2.25 0 1 0 15.25,17.5 A2.25,2.25 0 1 0 10.75,17.5 Z" />
+</vector>

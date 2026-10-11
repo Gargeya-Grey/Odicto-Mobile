@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Clipboard and emoji panels. Fills sit one step above the keyboard background. -->
+<resources>
+    <color name="odicto_panel_card">#FF212326</color>
+    <color name="odicto_panel_card_selected">#FF303438</color>
+    <color name="odicto_panel_pill_selected">#FF303438</color>
+</resources>

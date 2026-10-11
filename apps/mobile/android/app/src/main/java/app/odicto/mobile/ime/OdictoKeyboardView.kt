@@ -101,14 +101,14 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
     private var punctualShow: Runnable? = null
     private var enterKind = ImeActions.Kind.NEWLINE
     private var enterLabel: String? = null
-    private val bubbleFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xE03C3C42.toInt() }
+    private val bubbleFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xE03B4044.toInt() }
     private val bubbleShade = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x33000000 }
     private val bubbleText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFFE4E4E8.toInt()
+        color = 0xFFE7E5DF.toInt()
         textAlign = Paint.Align.CENTER
     }
-    private val stripFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xF02A2A2E.toInt() }
-    private val stripSelected = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xF05A5A62.toInt() }
+    private val stripFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xF0303438.toInt() }
+    private val stripSelected = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xF04A5055.toInt() }
 
     init {
         orientation = VERTICAL
@@ -955,7 +955,11 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
             color = LABEL
             textAlign = Paint.Align.CENTER
         }
-        private val icon: Drawable? = if (spec.icon != 0) ContextCompat.getDrawable(context, spec.icon) else null
+        private val baseIcon: Drawable? = if (spec.icon != 0) ContextCompat.getDrawable(context, spec.icon)?.mutate() else null
+        private val lockedIcon: Drawable? by lazy { ContextCompat.getDrawable(context, R.drawable.odicto_ic_shift_locked)?.mutate() }
+        private val icon: Drawable? get() = if (accent && spec.key == Key.SHIFT) lockedIcon else baseIcon
+        /** Shift, backspace, mode and enter keys sit one step darker than the letters. */
+        private val function = spec.key != Key.CHARACTER && spec.key != Key.SPACE
         private var label: String = spec.label
         private var actionLabel: String? = null
         private var pressed = false
@@ -1011,7 +1015,13 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
             val radius = 8f * density
 
             fill.style = Paint.Style.FILL
-            fill.color = if (pressed || accent) PRESSED else if (isEnabled) NORMAL else DISABLED
+            fill.color = when {
+                pressed -> PRESSED
+                accent -> ACCENT
+                !isEnabled -> DISABLED
+                function -> FUNCTION
+                else -> NORMAL
+            }
             canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), radius, radius, fill)
 
             if (spec.key == Key.SPACE) {
@@ -1019,7 +1029,7 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
                 val tickH = 3f * density
                 val left = (width - tickW) / 2f
                 val top = (height - tickH) / 2f
-                fill.color = if (pressed) 0xFFFFFFFF.toInt() else 0xFF9A9AA3.toInt()
+                fill.color = if (pressed) 0xFFE7E5DF.toInt() else 0xFF737C80.toInt()
                 canvas.drawRoundRect(left, top, left + tickW, top + tickH, tickH, tickH, fill)
                 return
             }
@@ -1043,7 +1053,7 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
                 val top = (height - size) / 2f
                 drawable.setBounds(left.toInt(), top.toInt(), (left + size).toInt(), (top + size).toInt())
                 // Tint the vector to the label colour so it matches the text keys.
-                drawable.setTint(if (isEnabled) LABEL else LABEL_DISABLED)
+                drawable.setTint(if (accent) ON_ACCENT else if (isEnabled) LABEL else LABEL_DISABLED)
                 drawable.draw(canvas)
                 return
             }
@@ -1060,11 +1070,14 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
 
         private fun glyphSp(): Float = GLYPH_SP[VoicePreferences.state.value.keys.keySize] ?: 17.6f
         private companion object {
-            const val NORMAL = 0xA63C3C41.toInt()
-            const val PRESSED = 0xF07A7A84.toInt()
-            const val DISABLED = 0x663C3C41.toInt()
-            const val LABEL = 0xFFFFFFFF.toInt()
-            const val LABEL_DISABLED = 0xFF8E8E93.toInt()
+            const val NORMAL = 0xFF303438.toInt()
+            const val FUNCTION = 0xFF232629.toInt()
+            const val PRESSED = 0xFF4A5055.toInt()
+            const val ACCENT = 0xFF2A745D.toInt()
+            const val ON_ACCENT = 0xFFF2F2EC.toInt()
+            const val DISABLED = 0x66303438.toInt()
+            const val LABEL = 0xFFE7E5DF.toInt()
+            const val LABEL_DISABLED = 0xFF8A9294.toInt()
         }
     }
 
@@ -1089,36 +1102,38 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
             KeySettings.SIZE_MEDIUM to 17.6f,
             KeySettings.SIZE_LARGE to 19.8f,
         )
-        private var cachedFlex: android.graphics.Typeface? = null
+        private var cachedBrand: android.graphics.Typeface? = null
         private val SYSTEM_TYPEFACE: android.graphics.Typeface = android.graphics.Typeface.create("sans-serif-medium", 0)
 
         /**
-         * The typeface every keyboard surface draws with. Google Sans Flex is the default.
+         * The typeface every keyboard surface draws with. Instrument Sans, the brand face shared
+         * with the app screens, is the default.
          * System is the only other choice. One place so keys and panels never disagree.
          */
         fun typefaceFor(context: Context): android.graphics.Typeface {
             val choice = VoicePreferences.state.value.keys.keyFont
-            return if (choice == KeySettings.FONT_SYSTEM) SYSTEM_TYPEFACE else flexTypeface(context)
+            return if (choice == KeySettings.FONT_SYSTEM) SYSTEM_TYPEFACE else brandTypeface(context)
         }
 
         /**
-         * Google Sans Flex, bundled under the SIL Open Font License 1.1. Loaded once and cached.
+         * Instrument Sans, bundled under the SIL Open Font License 1.1. Loaded once and cached.
          *
-         * Regular weight and optical size 18. A heavier weight reads as bold at key size.
+         * Weight 460 and full width: a touch above regular so letters hold up on the dark keys
+         * without reading as bold.
          * The system sans is chained afterwards so a symbol the file does not contain still draws.
          */
-        fun flexTypeface(context: Context): android.graphics.Typeface {
-            cachedFlex?.let { return it }
-            val resolved = loadFlex(context)
-            cachedFlex = resolved
+        fun brandTypeface(context: Context): android.graphics.Typeface {
+            cachedBrand?.let { return it }
+            val resolved = loadBrand(context)
+            cachedBrand = resolved
             return resolved
         }
 
-        private fun loadFlex(context: Context): android.graphics.Typeface {
+        private fun loadBrand(context: Context): android.graphics.Typeface {
             if (android.os.Build.VERSION.SDK_INT >= 29) {
                 val chained = runCatching {
-                    val font = android.graphics.fonts.Font.Builder(context.assets, FLEX_ASSET)
-                        .setFontVariationSettings("'wght' 400, 'opsz' 18, 'wdth' 100")
+                    val font = android.graphics.fonts.Font.Builder(context.assets, BRAND_ASSET)
+                        .setFontVariationSettings("'wght' 460, 'wdth' 100")
                         .build()
                     val family = android.graphics.fonts.FontFamily.Builder(font).build()
                     android.graphics.Typeface.CustomFallbackBuilder(family)
@@ -1127,12 +1142,12 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
                 }.getOrNull()
                 if (chained != null) return chained
             }
-            return runCatching { android.graphics.Typeface.createFromAsset(context.assets, FLEX_ASSET) }.getOrNull()
+            return runCatching { android.graphics.Typeface.createFromAsset(context.assets, BRAND_ASSET) }.getOrNull()
                 ?: android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
         }
 
-        /** Variable Google Sans Flex from google/fonts. The OFL file sits beside it. */
-        const val FLEX_ASSET = "fonts/GoogleSansFlex.ttf"
+        /** Variable Instrument Sans from google/fonts. The OFL file sits beside it. */
+        const val BRAND_ASSET = "fonts/InstrumentSans.ttf"
 
         private const val ROW_HEIGHT_WEIGHT = 0f
         private const val SHIFT_DOUBLE_MS = 400L
