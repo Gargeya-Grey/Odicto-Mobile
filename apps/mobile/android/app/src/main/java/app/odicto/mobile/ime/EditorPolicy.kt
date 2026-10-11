@@ -2,6 +2,7 @@ package app.odicto.mobile.ime
 
 import android.text.InputType
 import android.view.inputmethod.EditorInfo
+import app.odicto.mobile.BuildConfig
 
 /**
  * Which editor each capability may act in.
@@ -44,8 +45,16 @@ object EditorPolicy {
         return !isPasswordField(info) && !refusesLearning(info)
     }
 
+    /**
+     * A field in Odicto's own app. It shares the keyboard's main thread, so it cannot answer
+     * editor reads (see [OwnEditorConnection]): typing works there, but nothing that reads it.
+     */
+    fun ownEditor(info: EditorInfo?): Boolean = info?.packageName == BuildConfig.APPLICATION_ID
+
+    /** Typing assistance reads the editor, so it stays out of fields that cannot answer reads. */
     fun typingAssistPermits(info: EditorInfo?): Boolean =
-        info != null && manualPermits(info) && (info.inputType and InputType.TYPE_MASK_CLASS) == InputType.TYPE_CLASS_TEXT
+        info != null && manualPermits(info) && !ownEditor(info) &&
+            (info.inputType and InputType.TYPE_MASK_CLASS) == InputType.TYPE_CLASS_TEXT
 
     /** Spelling is opt-in prose/search assistance, never an edit to an identifier or protected field. */
     fun autocorrectPermits(info: EditorInfo?): Boolean {

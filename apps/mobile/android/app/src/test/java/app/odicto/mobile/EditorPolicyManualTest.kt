@@ -84,4 +84,19 @@ class EditorPolicyManualTest {
         assertFalse(EditorPolicy.emojiPermits(password))
         assertFalse(EditorPolicy.clipboardPermits(password))
     }
+
+    /** Odicto's own fields share the keyboard's main thread and cannot answer reads. */
+    @Test fun ownFieldsAllowTypingButNoTypingAssistance() {
+        val own = editor(InputType.TYPE_CLASS_TEXT).apply { packageName = BuildConfig.APPLICATION_ID }
+        assertTrue(EditorPolicy.ownEditor(own))
+        assertTrue(EditorPolicy.manualPermits(own))
+        assertTrue(EditorPolicy.permits(own))
+        assertFalse(EditorPolicy.typingAssistPermits(own))
+        assertFalse(EditorPolicy.autocorrectPermits(own))
+
+        val other = editor(InputType.TYPE_CLASS_TEXT).apply { packageName = "com.example.notes" }
+        assertFalse(EditorPolicy.ownEditor(other))
+        assertTrue(EditorPolicy.typingAssistPermits(other))
+        assertFalse(EditorPolicy.ownEditor(editor(InputType.TYPE_CLASS_TEXT)))
+    }
 }
