@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { modelGroups, modelLabel, MAX_MODEL_ID } from '../../lib/modelGroups';
 import type { OnboardingStatus } from '../../native/onboarding';
 import type { OpenRouterModel, VoiceSettings } from '../../native/voice';
 import { AndroidOnboarding } from '../AndroidOnboarding';
@@ -164,9 +165,7 @@ const PROVIDERS: SelectGroup[] = [
 ];
 
 const AUTO_LABEL = 'Auto · Laguna XS (free)';
-
-const modelLabel = (item: OpenRouterModel) =>
-  `${item.name}${item.free ? ' · free' : ''}`;
+const AUTO_OPTION = { value: DEFAULT_OPENROUTER_MODEL, label: AUTO_LABEL };
 
 export function SettingsPage({
   settings,
@@ -191,58 +190,16 @@ export function SettingsPage({
   const provider = draft.value('provider') ?? 'gemini';
   const model = draft.value('model') ?? '';
   const polishModel = draft.value('polishModel') ?? 'poolside/laguna-xs-2.1';
-  const modelGroups = useMemo<SelectGroup[]>(() => {
-    const search = modelSearch.trim().toLowerCase();
-    const matches = models
-      .filter(
-        (item) =>
-          item.id !== DEFAULT_OPENROUTER_MODEL &&
-          !item.name.toLowerCase().includes('(batch)'),
-      )
-      .filter(
-        (item) =>
-          !search ||
-          item.name.toLowerCase().includes(search) ||
-          item.id.toLowerCase().includes(search),
-      )
-      .sort((a, b) =>
-        a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
-      );
-    const byLetter = new Map<string, OpenRouterModel[]>();
-    for (const item of matches) {
-      const letter = item.name.charAt(0).toUpperCase() || '#';
-      const group = byLetter.get(letter) ?? [];
-      group.push(item);
-      byLetter.set(letter, group);
-    }
-    return [
-      ...(!search || AUTO_LABEL.toLowerCase().includes(search)
-        ? [
-            {
-              options: [{ value: DEFAULT_OPENROUTER_MODEL, label: AUTO_LABEL }],
-            },
-          ]
-        : []),
-      ...[...byLetter.entries()].map(([letter, group]) => ({
-        label: letter,
-        options: group.map((item) => ({
-          value: item.id,
-          label: modelLabel(item),
-        })),
-      })),
-    ];
-  }, [models, modelSearch]);
-  const catalogGroups = useMemo<SelectGroup[]>(
-    () => [
-      {
-        options: models.map((item) => ({
-          value: item.id,
-          label: modelLabel(item),
-        })),
-      },
-    ],
-    [models],
+  const [polishSearch, setPolishSearch] = useState('');
+  const answerGroups = useMemo<SelectGroup[]>(
+    () => modelGroups(models, modelSearch, { pinned: AUTO_OPTION }),
+    [models, modelSearch],
   );
+  const polishGroups = useMemo<SelectGroup[]>(
+    () => modelGroups(models, polishSearch, { allowCustom: true }),
+    [models, polishSearch],
+  );
+  const polishCatalogModel = models.find((item) => item.id === polishModel);
   const selectedModel = model || DEFAULT_OPENROUTER_MODEL;
   const selectedModelLabel = models.find((item) => item.id === selectedModel);
   const off = !settings;
@@ -498,7 +455,7 @@ export function SettingsPage({
                   id={id}
                   labelledBy={labelId}
                   describedBy={describedBy}
-                  groups={modelGroups}
+                  groups={answerGroups}
                   value={selectedModel}
                   valueLabel={
                     selectedModel === DEFAULT_OPENROUTER_MODEL
@@ -556,39 +513,38 @@ export function SettingsPage({
             }
           />
           <Row
-            title="OpenRouter model ID"
+            title="Model"
             asLabel
-            below={({ id }) => (
-              <input
-                id={id}
-                className="voice-input"
-                value={polishModel}
-                onChange={(event) =>
-                  draft.setFields({ polishModel: event.target.value })
-                }
-                maxLength={200}
-                placeholder="poolside/laguna-xs-2.1"
-                autoCapitalize="none"
-                spellCheck={false}
-              />
-            )}
-          />
-          <Row
-            title="Choose from OpenRouter catalog"
-            asLabel
-            below={({ id, labelId }) => (
+            hint={
+              loadingModels
+                ? 'Loading the current OpenRouter model catalog…'
+                : models.length > 0
+                  ? 'Search by name or ID. To use a model that is not listed, type its full ID, such as vendor/model.'
+                  : 'The catalog did not load. Type a full model ID, such as vendor/model.'
+            }
+            below={({ id, labelId, describedBy }) => (
               <Select
                 id={id}
                 labelledBy={labelId}
-                groups={catalogGroups}
-                value={
-                  models.some((item) => item.id === polishModel)
-                    ? polishModel
-                    : ''
+                describedBy={describedBy}
+                groups={polishGroups}
+                value={polishModel}
+                valueLabel={
+                  polishCatalogModel
+                    ? modelLabel(polishCatalogModel)
+                    : polishModel
                 }
-                placeholder="Enter a model ID above"
-                disabled={off || loadingModels || models.length === 0}
-                onChange={(next) => draft.setFields({ polishModel: next })}
+                disabled={off || loadingModels}
+                onChange={(next) =>
+                  draft.setFields({ polishModel: next.slice(0, MAX_MODEL_ID) })
+                }
+                emptyText="No matching models. Type a full ID, such as vendor/model."
+                search={{
+                  value: polishSearch,
+                  onChange: setPolishSearch,
+                  label: 'Search OpenRouter models for text polish',
+                  placeholder: 'Search or type a model ID',
+                }}
               />
             )}
           />

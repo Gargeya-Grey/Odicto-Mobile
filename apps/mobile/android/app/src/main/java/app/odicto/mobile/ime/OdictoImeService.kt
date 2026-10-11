@@ -57,6 +57,24 @@ class OdictoImeService : InputMethodService() {
     private var polishBusy = false
     private var compactTop = false
     private val statusHandler = Handler(Looper.getMainLooper())
+    private var ownEditorTarget: android.view.inputmethod.InputConnection? = null
+    private var ownEditorConnection: OwnEditorConnection? = null
+
+    /**
+     * Every editor read goes through here. Odicto's own fields share this main thread,
+     * so they get a connection that never blocks on a read (see [OwnEditorConnection]).
+     * One wrapper per connection keeps the identity checks that detect editor changes.
+     */
+    override fun getCurrentInputConnection(): android.view.inputmethod.InputConnection? {
+        val connection = super.getCurrentInputConnection() ?: return null
+        if (!EditorPolicy.ownEditor(currentInputEditorInfo)) return connection
+        if (ownEditorTarget !== connection) {
+            ownEditorTarget = connection
+            ownEditorConnection = OwnEditorConnection(connection)
+        }
+        return ownEditorConnection
+    }
+
     private val target = object : DictationTarget {
         override val id = DictationTarget.IME
         override val identity: Any get() = currentInputConnection ?: this
@@ -588,8 +606,10 @@ class OdictoImeService : InputMethodService() {
         controller?.onSelectionChanged(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
         DictationCoordinator.selectionUpdated(newSelStart, newSelEnd)
     }
+    // AI and Live need the field's text. Odicto's own fields cannot give it, so they refuse
+    // before any recording or request; a guessed selection would fail only at delivery.
     private fun readSelection(): AiSelection? {
-        if (session == null || !EditorPolicy.permits(currentInputEditorInfo)) return null
+        if (session == null || !EditorPolicy.permits(currentInputEditorInfo) || EditorPolicy.ownEditor(currentInputEditorInfo)) return null
         val connection = currentInputConnection ?: return null
         return try {
             if (android.os.Build.VERSION.SDK_INT >= 31) {
@@ -606,7 +626,7 @@ class OdictoImeService : InputMethodService() {
         } catch (_: Exception) { null }
     }
     private fun selectAll(): Boolean {
-        if (session == null || !EditorPolicy.permits(currentInputEditorInfo)) return false
+        if (session == null || !EditorPolicy.permits(currentInputEditorInfo) || EditorPolicy.ownEditor(currentInputEditorInfo)) return false
         val connection = currentInputConnection ?: return false
         return try {
             connection.performContextMenuAction(android.R.id.selectAll) || run {

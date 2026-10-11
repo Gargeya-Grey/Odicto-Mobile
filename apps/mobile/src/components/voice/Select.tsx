@@ -48,7 +48,8 @@ const printable = (event: KeyboardEvent) =>
  *
  * - With `search`, the menu starts with a search field and the parent filters
  *   `groups` (a combobox). Focus stays in the field; the options can still be
- *   tapped, and a polite live region says how many match.
+ *   tapped, and a polite live region says how many match. Closing the menu
+ *   clears the search, so the next open shows every option again.
  * - Without `search`, focus moves to the selected option (roving tabindex), so
  *   TalkBack reads and reaches the options. Focus returns to the trigger on close.
  * - An open menu owns one history entry, so Android back closes the menu and
@@ -147,6 +148,7 @@ export function Select({
       // The system back gesture popped the menu's entry: close, and stay on the page.
       historyEntry.current = null;
       typed.current = { buffer: '', at: 0 };
+      search?.onChange('');
       setOpen(false);
       trigger.current?.focus({ preventScroll: true });
     });
@@ -156,6 +158,7 @@ export function Select({
     historyEntry.current?.release();
     historyEntry.current = null;
     typed.current = { buffer: '', at: 0 };
+    search?.onChange('');
     setOpen(false);
     if (returnFocus) trigger.current?.focus({ preventScroll: true });
   };
