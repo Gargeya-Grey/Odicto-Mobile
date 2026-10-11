@@ -47,6 +47,23 @@ object EditorPolicy {
     fun typingAssistPermits(info: EditorInfo?): Boolean =
         info != null && manualPermits(info) && (info.inputType and InputType.TYPE_MASK_CLASS) == InputType.TYPE_CLASS_TEXT
 
+    /** Spelling is opt-in prose/search assistance, never an edit to an identifier or protected field. */
+    fun autocorrectPermits(info: EditorInfo?): Boolean {
+        if (!typingAssistPermits(info) || info == null) return false
+        // Search apps can provide their own query completions while asking the IME not to show
+        // candidates. Honor the user's local spelling opt-in in an ordinary search field; this
+        // presentation flag is not a protected-field signal. The variation checks still apply.
+        val search = (info.imeOptions and EditorInfo.IME_MASK_ACTION) == EditorInfo.IME_ACTION_SEARCH
+        if (info.inputType and InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS != 0 && !search) return false
+        return (info.inputType and InputType.TYPE_MASK_VARIATION) in setOf(
+            InputType.TYPE_TEXT_VARIATION_NORMAL,
+            InputType.TYPE_TEXT_VARIATION_SHORT_MESSAGE,
+            InputType.TYPE_TEXT_VARIATION_LONG_MESSAGE,
+            InputType.TYPE_TEXT_VARIATION_EMAIL_SUBJECT,
+            InputType.TYPE_TEXT_VARIATION_WEB_EDIT_TEXT,
+        )
+    }
+
     /** Emoji and clipboard both write text, so they are refused wherever voice is. */
     fun clipboardPermits(info: EditorInfo?): Boolean = permits(info)
 

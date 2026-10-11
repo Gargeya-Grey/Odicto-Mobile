@@ -1,119 +1,211 @@
-import React, { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { onboarding, type OnboardingStatus } from '../native/onboarding';
+import { Check, ChevronRight, Info } from './voice/icons';
+import { Footer, Group, SectionLabel } from './voice/controls';
 
-export function AndroidOnboarding() {
-  const [status, setStatus] = useState<OnboardingStatus | null>(null);
+type Step = {
+  key: string;
+  ready: boolean;
+  label: string;
+  action: string;
+  run: () => Promise<void>;
+  optional?: boolean;
+};
+
+/**
+ * Android setup: one row per step, with a clear done / to do mark. While a
+ * required step is open the whole list shows; when all required steps are
+ * done, one "Setup complete" row remains and the optional steps fold away.
+ * The parent owns the status so Home, Settings, and this list never disagree.
+ */
+export function AndroidOnboarding({
+  status = null,
+  onRefresh = () => undefined,
+  note = true,
+}: {
+  status?: OnboardingStatus | null;
+  onRefresh?: () => Promise<void> | void;
+  /** Show the protected-fields sentence under the list. */
+  note?: boolean;
+}) {
   const [disclosure, setDisclosure] = useState(false);
   const [accessibilityAttempt, setAccessibilityAttempt] = useState(false);
-  const refresh = () =>
-    onboarding
-      .status()
-      .then(setStatus)
-      .catch(() => setStatus(null));
-  useEffect(() => {
-    if (onboarding.supported) refresh();
-    const resume = () => {
-      if (!document.hidden && onboarding.supported) refresh();
-    };
-    document.addEventListener('visibilitychange', resume);
-    return () => document.removeEventListener('visibilitychange', resume);
-  }, []);
+  const [optionalOpen, setOptionalOpen] = useState(false);
   if (!onboarding.supported) return null;
   const overlaySupported = status?.overlaySupported ?? false;
   const accessibilitySupported = status?.accessibilitySupported ?? false;
-  const row = (
-    ready: boolean,
-    label: string,
-    action: () => Promise<void>,
-    optional = false,
-  ) => (
-    <button
-      type="button"
-      onClick={() => action().then(refresh)}
-      className="w-full flex items-center justify-between p-3 rounded-xl bg-[#0d0e15] border border-[rgba(255,255,255,0.08)]"
-    >
-      <span className="text-xs text-left">
-        {label}
-        {optional ? ' (optional)' : ''}
-      </span>
-      <span className={ready ? 'text-[#10b981]' : 'text-[#f59e0b]'}>
-        {ready ? 'Ready' : 'Open'}
-      </span>
-    </button>
+
+  const run = (action: () => Promise<void>) =>
+    void action()
+      .catch(() => undefined)
+      .then(onRefresh);
+
+  const steps: Step[] = [
+    {
+      key: 'microphone',
+      ready: Boolean(status?.microphone),
+      label: 'Allow microphone access',
+      action: 'Allow',
+      run: onboarding.requestMicrophone,
+    },
+    {
+      key: 'ime-enabled',
+      ready: Boolean(status?.imeEnabled),
+      label: 'Enable Odicto Keyboard',
+      action: 'Enable',
+      run: onboarding.openKeyboardSettings,
+    },
+    {
+      key: 'ime-selected',
+      ready: Boolean(status?.imeSelected),
+      label: 'Select Odicto as current keyboard',
+      action: 'Select',
+      run: onboarding.showKeyboardPicker,
+    },
+  ];
+  if (overlaySupported) {
+    steps.push(
+      {
+        key: 'overlay',
+        ready: Boolean(status?.overlay),
+        label: 'Allow floating microphone',
+        action: 'Allow',
+        run: onboarding.openOverlaySettings,
+        optional: true,
+      },
+      {
+        key: 'notifications',
+        ready: Boolean(status?.notifications),
+        label: 'Allow recording notifications',
+        action: 'Allow',
+        run: onboarding.requestNotifications,
+        optional: true,
+      },
+    );
+  }
+  if (accessibilitySupported) {
+    steps.push({
+      key: 'accessibility',
+      ready: Boolean(status?.accessibility),
+      label: 'Allow voice typing in other keyboards',
+      action: 'Review',
+      run: async () => setDisclosure(true),
+      optional: true,
+    });
+  }
+
+  const required = steps.filter((step) => !step.optional);
+  const optional = steps.filter((step) => step.optional);
+  const requiredDone = status !== null && required.every((step) => step.ready);
+  const listed = requiredDone ? (optionalOpen ? optional : []) : steps;
+
+  const stepRow = (step: Step) => (
+    <li key={step.key}>
+      <button
+        type="button"
+        className="voice-rowbtn voice-step"
+        data-ready={step.ready ? 'true' : 'false'}
+        onClick={() => run(step.run)}
+      >
+        <span className="voice-step-mark" aria-hidden="true">
+          {step.ready ? <Check size={14} /> : null}
+        </span>
+        <span className="voice-step-text">
+          <span className="voice-step-label">{step.label}</span>
+          {step.optional && <span className="voice-step-note">Optional</span>}
+        </span>
+        <span className="voice-step-state">
+          <span className="voice-sr">{step.ready ? 'Done. ' : 'To do. '}</span>
+          {step.ready ? (
+            'Done'
+          ) : (
+            <>
+              {step.action}
+              <ChevronRight size={16} />
+            </>
+          )}
+        </span>
+      </button>
+    </li>
   );
+
   return (
-    <section className="bg-[#11131c] border border-[rgba(255,255,255,0.08)] rounded-2xl p-4 space-y-3">
-      <div className="voice-section-heading">
-        <h3 className="text-sm font-semibold">Activate Odicto Keyboard</h3>
-        <p className="text-xs text-[#9ca3af]">
+    <section className="voice-section" id="voice-setup">
+      <SectionLabel id="voice-setup-title" title="Android setup" />
+      <Group labelledBy="voice-setup-title">
+        {status === null && (
+          <li className="voice-row">
+            <p className="voice-row-note">Checking setup…</p>
+          </li>
+        )}
+        {requiredDone && optional.length === 0 && (
+          <li className="voice-row voice-step" data-ready="true">
+            <span className="voice-step-mark" aria-hidden="true">
+              <Check size={14} />
+            </span>
+            <span className="voice-step-label">Setup complete</span>
+          </li>
+        )}
+        {requiredDone && optional.length > 0 && (
+          <li>
+            <button
+              type="button"
+              className="voice-rowbtn voice-step"
+              data-ready="true"
+              aria-expanded={optionalOpen}
+              onClick={() => setOptionalOpen((value) => !value)}
+            >
+              <span className="voice-step-mark" aria-hidden="true">
+                <Check size={14} />
+              </span>
+              <span className="voice-step-text">
+                <span className="voice-step-label">Setup complete</span>
+              </span>
+              <span className="voice-step-state" data-open={optionalOpen}>
+                Optional steps
+                <ChevronRight size={16} />
+              </span>
+            </button>
+          </li>
+        )}
+        {status !== null && listed.map(stepRow)}
+      </Group>
+      {!requiredDone && status !== null && (
+        <Footer>
           {accessibilitySupported
             ? 'Enable and select the keyboard first. The floating microphone is optional.'
             : 'Enable and select the keyboard. That is all Odicto needs: it types, and its microphone dictates directly into the field you are using.'}
-        </p>
-      </div>
-      {row(
-        Boolean(status?.microphone),
-        'Allow microphone access',
-        onboarding.requestMicrophone,
+        </Footer>
       )}
-      {row(
-        Boolean(status?.imeEnabled),
-        'Enable Odicto Keyboard',
-        onboarding.openKeyboardSettings,
-      )}
-      {row(
-        Boolean(status?.imeSelected),
-        'Select Odicto as current keyboard',
-        onboarding.showKeyboardPicker,
-      )}
-      {overlaySupported &&
-        row(
-          Boolean(status?.overlay),
-          'Allow floating microphone',
-          onboarding.openOverlaySettings,
-          true,
-        )}
-      {overlaySupported &&
-        row(
-          Boolean(status?.notifications),
-          'Allow recording notifications',
-          onboarding.requestNotifications,
-          true,
-        )}
-      {accessibilitySupported &&
-        row(
-          Boolean(status?.accessibility),
-          'Allow voice typing in other keyboards',
-          async () => setDisclosure(true),
-          true,
-        )}
       {accessibilitySupported && disclosure && (
-        <div className="bg-[#0d0e15] border border-[rgba(255,255,255,0.12)] rounded-xl p-3 space-y-3">
-          <h4 className="text-xs font-semibold">
-            Turn on Odicto voice typing?
-          </h4>
-          <p className="text-[11px] text-[#9ca3af]">
+        <div
+          className="voice-group voice-panel"
+          role="group"
+          aria-labelledby="voice-disclosure-title"
+        >
+          <h3 id="voice-disclosure-title">Turn on Odicto voice typing?</h3>
+          <p>
             Odicto needs Android&apos;s accessibility permission so the floating
             microphone can type into the field you are using while another
             keyboard is active. Odicto reads only the focused text field, to
             place your dictation and to skip password, phone, and numeric
             fields. It never reads or stores the rest of the screen.
           </p>
-          <div className="flex gap-2">
+          <div className="voice-actions">
             <button
               type="button"
-              className="flex-1 p-2 rounded-lg bg-[#6d28d9] text-xs font-semibold"
+              className="voice-btn voice-btn-primary"
               onClick={() => {
                 setDisclosure(false);
                 setAccessibilityAttempt(true);
-                void onboarding.openAccessibilitySettings().then(refresh);
+                run(onboarding.openAccessibilitySettings);
               }}
             >
               Agree and open settings
             </button>
             <button
               type="button"
-              className="flex-1 p-2 rounded-lg border border-[rgba(255,255,255,0.12)] text-xs"
+              className="voice-btn voice-btn-tertiary"
               onClick={() => setDisclosure(false)}
             >
               Not now
@@ -125,17 +217,22 @@ export function AndroidOnboarding() {
         accessibilityAttempt &&
         status &&
         !status.accessibility && (
-          <p className="text-[10px] text-[#f59e0b]">
-            Toggle greyed out or blocked? Android restricts accessibility for
-            apps installed outside a store. Open App info, use the ⋮ menu to
-            allow restricted settings, and turn Samsung Auto Blocker off first
-            if that option is unavailable. Store installs skip this step.
+          <p className="voice-callout">
+            <Info size={16} />
+            <span>
+              Toggle greyed out or blocked? Android restricts accessibility for
+              apps installed outside a store. Open App info, use the ⋮ menu to
+              allow restricted settings, and turn Samsung Auto Blocker off first
+              if that option is unavailable. Store installs skip this step.
+            </span>
           </p>
         )}
-      <p className="text-[10px] text-[#9ca3af]">
-        Odicto disables voice input in password, phone, numeric/payment-like,
-        and protected fields.
-      </p>
+      {note && (
+        <Footer>
+          Odicto disables voice input in password, phone, numeric/payment-like,
+          and protected fields.
+        </Footer>
+      )}
     </section>
   );
 }

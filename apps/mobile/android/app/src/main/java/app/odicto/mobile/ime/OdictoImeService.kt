@@ -31,6 +31,8 @@ class OdictoImeService : InputMethodService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var control: VoiceControlView? = null
     private var controller: KeyboardController? = null
+    private var expansion: KeyboardExpansion? = null
+    private var inputRoot: View? = null
     private var session: Long? = null
     private var selectionStart = -1
     private var selectionEnd = -1
@@ -67,6 +69,8 @@ class OdictoImeService : InputMethodService() {
         override fun endLive() = this@OdictoImeService.endLive()
     }
     override fun onCreate() {
+        // Before super: InputMethodService creates its window from this theme.
+        setTheme(R.style.OdictoImeTheme)
         super.onCreate()
         VoicePreferences.initialize(this); DictationCoordinator.registerTarget(target)
         clipboardCapture = ClipboardCapture(this, scope).also { capture ->
@@ -77,33 +81,58 @@ class OdictoImeService : InputMethodService() {
         scope.launch { fieldPolish().recovery.collect { renderRecovery() } }
         scope.launch { VoiceSession.state.collect { state ->
             if (state.busy) cancelFieldPolish()
+            controller?.refreshSpelling()
             observeVoiceStatus()
             if (DictationCoordinator.keyboardVisible.value) {
                 control?.render(state)
                 renderTopStatus()
             }
         } }
-        scope.launch { VoicePreferences.state.collect { if (DictationCoordinator.keyboardVisible.value) control?.render(VoiceSession.state.value) } }
+        scope.launch { VoicePreferences.state.collect {
+            controller?.refreshAppearance()
+            if (DictationCoordinator.keyboardVisible.value) control?.render(VoiceSession.state.value)
+        } }
     }
     override fun onDestroy() {
         pauseStatusView()
         cancelFieldPolish()
         controller?.dispose()
         controller = null
+        expansion?.dispose(); expansion = null
         stopRecoveryCountdown()
         recoveryRow = null; recoveryCopy = null; recoveryCountdown = null
         cancelStatusCallback()
         DictationCoordinator.keyboardVisible.value = false
+        DictationCoordinator.keyboardTopPx.value = null
+        inputRoot = null
         DictationCoordinator.unregisterTarget(DictationTarget.IME)
         clipboardCapture?.close()
         clipboardCapture = null
         scope.cancel()
         super.onDestroy()
     }
+    /**
+     * The system draws the IME's navigation strip and paints it black unless the window draws its
+     * own bar backgrounds. Graphite keeps the strip continuous with the keyboard surface.
+     */
+    private fun paintNavigationStrip() {
+        val keyboardWindow = window?.window ?: return
+        runCatching {
+            keyboardWindow.addFlags(android.view.WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+            @Suppress("DEPRECATION")
+            keyboardWindow.navigationBarColor = getColor(R.color.odicto_keyboard_background)
+            if (Build.VERSION.SDK_INT >= 29) keyboardWindow.isNavigationBarContrastEnforced = false
+            if (Build.VERSION.SDK_INT >= 30) keyboardWindow.insetsController?.setSystemBarsAppearance(
+                0, android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS)
+        }
+    }
+
     override fun onWindowShown() {
         super.onWindowShown()
+        paintNavigationStrip()
         statusViewActive = true
         DictationCoordinator.keyboardVisible.value = true
+        inputRoot?.post { publishKeyboardBounds() }
         control?.render(VoiceSession.state.value)
         renderTopStatus()
         startRecoveryCountdown()
@@ -112,7 +141,9 @@ class OdictoImeService : InputMethodService() {
         pauseStatusView()
         cancelFieldPolish()
         DictationCoordinator.keyboardVisible.value = false
+        DictationCoordinator.keyboardTopPx.value = null
         controller?.onFinishInput()
+        expansion?.reset()
         stopRecoveryCountdown()
         if (BuildConfig.DEBUG) KeyLatencyProbe.flushAsync()
         super.onWindowHidden()
@@ -122,8 +153,13 @@ class OdictoImeService : InputMethodService() {
         pauseStatusView()
         cancelFieldPolish()
         controller?.dispose()
+        expansion?.dispose()
         stopRecoveryCountdown()
         val root = layoutInflater.inflate(R.layout.ime_keyboard, null)
+        inputRoot = root
+        root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            root.post { if (inputRoot === root) publishKeyboardBounds() }
+        }
         val column = root.findViewById<LinearLayout>(R.id.ime_column)
         column.layoutParams = FrameLayout.LayoutParams(-1, -2, android.view.Gravity.CENTER_HORIZONTAL)
         // Let the grid absorb a height shortage instead of clipping the bottom tools in landscape.
@@ -131,8 +167,9 @@ class OdictoImeService : InputMethodService() {
         attachRecoveryControls(root)
         val row = root.findViewById<FrameLayout>(R.id.ime_top_row)
         val voice = VoiceControlView(this, true)
+        var topCell = 48
         fun voiceParams(width: Int, height: Int) = FrameLayout.LayoutParams(width, height, android.view.Gravity.TOP or android.view.Gravity.END).apply {
-            marginEnd = voice.dp(48)
+            marginEnd = voice.dp(topCell)
         }
         voice.resize = { width, height -> voice.layoutParams = voiceParams(width, height) }
         control = voice
@@ -178,15 +215,27 @@ class OdictoImeService : InputMethodService() {
         }
         compactTop = false
         row.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
-            val compact = right - left < (370f * resources.displayMetrics.density).toInt()
-            if (compactTop != compact) {
-                compactTop = compact
-                voice.setKeyboardCompact(compact)
+            val cell = ((right - left) / resources.displayMetrics.density / 8f).toInt().coerceIn(32, 48)
+            if (topCell != cell) {
+                topCell = cell
+                compactTop = cell < 48
+                voice.setKeyboardCellWidth(cell)
+                voice.layoutParams = voiceParams(voice.requiredWidth, voice.requiredHeight)
+                listOf(R.id.ime_keyboard_toggle, R.id.ime_polish).forEach { id ->
+                    root.findViewById<View>(id).apply { layoutParams = layoutParams.apply { width = voice.dp(cell) } }
+                }
                 renderTopStatus()
             }
             if (BuildConfig.DEBUG && (left != oldLeft || right != oldRight)) row.post { logKeyboardGeometry(root) }
         }
         controller = KeyboardController(this, root)
+        expansion = KeyboardExpansion(root, { controller?.cancelTouch() }) {
+            // A new inset reaches the window manager on the next traversal of the IME window.
+            if (inputRoot === root) { root.requestLayout(); root.post { if (inputRoot === root) publishKeyboardBounds() } }
+        }
+        expansion?.onPresentationChanged = {
+            controller?.onKeyboardPresentationChanged(it)
+        }
         controller?.attachVoiceControl(voice)
         controller?.onStartInput(currentInputEditorInfo)
         clipboardCapture?.error?.value?.let { controller?.showClipboardNotice(it) }
@@ -199,6 +248,7 @@ class OdictoImeService : InputMethodService() {
     }
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
+        if (!restarting) expansion?.reset()
         clipboardCapture?.onEditorChanged(attribute)
         pauseStatusView()
         cancelFieldPolish()
@@ -213,6 +263,35 @@ class OdictoImeService : InputMethodService() {
         updatePolishButton(attribute)
         renderRecovery()
         VoiceOverlayController.sync(this, scope)
+    }
+
+    private fun publishKeyboardBounds() {
+        val root = inputRoot ?: return
+        if (!DictationCoordinator.keyboardVisible.value || !root.isAttachedToWindow) return
+        val position = IntArray(2)
+        root.getLocationOnScreen(position)
+        DictationCoordinator.keyboardTopPx.value = position[1] + (expansion?.contentTop() ?: 0)
+    }
+
+    /**
+     * The window always holds the expanded keyboard; only the part from [KeyboardExpansion.contentTop]
+     * down is keyboard. The host app keeps that part clear, and touches above it reach the app.
+     */
+    override fun onComputeInsets(outInsets: Insets) {
+        super.onComputeInsets(outInsets)
+        // A hardware keyboard hides the input view while the root keeps its last bounds.
+        if (!isInputViewShown) return
+        val root = inputRoot ?: return
+        val expansion = expansion ?: return
+        val decor = window?.window?.decorView ?: return
+        if (!root.isAttachedToWindow || root.height == 0 || decor.height == 0) return
+        val position = IntArray(2)
+        root.getLocationInWindow(position)
+        val top = (position[1] + expansion.contentTop()).coerceIn(0, decor.height)
+        outInsets.contentTopInsets = top
+        outInsets.visibleTopInsets = top
+        outInsets.touchableInsets = Insets.TOUCHABLE_INSETS_REGION
+        outInsets.touchableRegion.set(0, top, decor.width, decor.height)
     }
     override fun onFinishInput() {
         clipboardCapture?.onEditorChanged(null)
@@ -243,7 +322,7 @@ class OdictoImeService : InputMethodService() {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER
-            setBackgroundColor(0xFF0E0E10.toInt())
+            setBackgroundColor(0xFF17191C.toInt())
             elevation = 8 * resources.displayMetrics.density
             isClickable = true
             visibility = View.GONE
@@ -257,7 +336,7 @@ class OdictoImeService : InputMethodService() {
             minimumWidth = 0
             minWidth = 0
             minimumHeight = touchHeight
-            setTextColor(android.graphics.Color.rgb(198, 183, 255))
+            setTextColor(android.graphics.Color.rgb(142, 220, 187))
             setOnClickListener {
                 val id = row.tag as? Long ?: return@setOnClickListener
                 val copied = polish?.copyCompletedResult(id) { text ->
@@ -281,7 +360,7 @@ class OdictoImeService : InputMethodService() {
         }
         val countdown = TextView(this).apply {
             textSize = 12f
-            setTextColor(android.graphics.Color.rgb(198, 183, 255))
+            setTextColor(android.graphics.Color.rgb(142, 220, 187))
             gravity = android.view.Gravity.CENTER
             // Do not announce every tick as a live-region update.
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_NONE
@@ -294,7 +373,7 @@ class OdictoImeService : InputMethodService() {
             minimumWidth = 0
             minWidth = 0
             minimumHeight = touchHeight
-            setTextColor(android.graphics.Color.rgb(198, 183, 255))
+            setTextColor(android.graphics.Color.rgb(142, 220, 187))
             setOnClickListener {
                 (row.tag as? Long)?.let { polish?.dismissCompletedResult(it) }
                 renderRecovery()
@@ -332,6 +411,7 @@ class OdictoImeService : InputMethodService() {
             recoveryCovered = emptyMap()
         }
         recoveryRow?.visibility = if (result == null) View.GONE else View.VISIBLE
+        expansion?.recoveryVisible(result != null)
         recoveryCopy?.isEnabled = result != null && canCopyRecovery()
         if (result == null) {
             recoveryCountdown?.text = ""
@@ -395,6 +475,7 @@ class OdictoImeService : InputMethodService() {
             statusPresentation.notice(message, busy, SystemClock.uptimeMillis(), statusTimeout())
         }
         polishBusy = busy
+        controller?.refreshSpelling()
         if (BuildConfig.DEBUG && message.isNotEmpty()) {
             val reason = when {
                 message.startsWith("Polishing") -> "pending"
@@ -450,6 +531,7 @@ class OdictoImeService : InputMethodService() {
     private fun renderTopStatus() {
         observeVoiceStatus()
         val feedback = statusPresentation.current(SystemClock.uptimeMillis())
+        controller?.setSpellingStatusVisible(feedback != null)
         polishStatus?.apply {
             val summary = feedback?.summary.orEmpty()
             if (text.toString() != summary) text = summary
@@ -475,7 +557,6 @@ class OdictoImeService : InputMethodService() {
         val rect = Rect()
         if (control?.getGlobalVisibleRect(rect) == true) bounds += "Voice=${rect.toShortString()}"
         if (polishButton?.getGlobalVisibleRect(rect) == true) bounds += "Polish=${rect.toShortString()}"
-        if (root.findViewById<View>(R.id.function_layout).getGlobalVisibleRect(rect)) bounds += "Layout=${rect.toShortString()}"
         for (index in 0 until keyboard.childCount) {
             val line = keyboard.getChildAt(index) as? ViewGroup ?: continue
             for (key in 0 until line.childCount) {
@@ -563,6 +644,7 @@ class OdictoImeService : InputMethodService() {
     }
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        if (!restarting) expansion?.reset()
         statusViewActive = true
         renderTopStatus()
         controller?.onStartInput(info)

@@ -91,7 +91,7 @@ class ClipboardPanelBindingTest {
         val preview = row.getChildAt(0) as Button
         assertEquals(ClipboardPanel.preview(payload), preview.text.toString())
         assertTrue(preview.text.endsWith("…"))
-        assertEquals(3, preview.maxLines)
+        assertEquals(2, preview.maxLines)
         preview.performClick()
         row.getChildAt(1).performClick()
         assertEquals(payload, pasted)

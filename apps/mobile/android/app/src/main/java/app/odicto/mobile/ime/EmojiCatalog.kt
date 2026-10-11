@@ -1,25 +1,107 @@
 package app.odicto.mobile.ime
 
-/**
- * A small, curated emoji set rather than the full Unicode table.
- *
- * A full picker is a large, frequently updated data set that a keyboard does not need to justify:
- * these are the emoji people reach for in conversation, grouped so the panel is browsable. The
- * catalogue validates itself at construction, so a malformed or duplicated entry fails loudly in a
- * unit test rather than becoming a blank cell or a broken glyph on the phone.
- */
+/** Common conversation emoji, grouped for browsing without a network or a picker dependency. */
 internal object EmojiCatalog {
     data class Category(val label: String, val emoji: List<String>)
 
-    /** Two rows of eight. Each page is only the emoji people actually reach for. */
-    const val PAGE_SIZE = 16
+    /** Four rows of eight in Recent; larger categories scroll vertically. */
+    const val PAGE_SIZE = 32
 
     val categories: List<Category> = listOf(
-        Category("Smileys", listOf("😀", "😃", "😄", "😁", "😅", "😂", "🤣", "😊", "😍", "😘", "😉", "😎", "😢", "😭", "😡", "🤔")),
-        Category("Gestures", listOf("👍", "👎", "👏", "🙏", "💪", "👋", "🤞", "✌️", "👌", "🤝", "🙌", "👀", "🤘", "🤙", "🫡", "👊")),
-        Category("Hearts", listOf("❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "💔", "💕", "💖", "💗", "💘", "💝", "💞", "💓", "💟")),
-        Category("Objects", listOf("🔥", "✨", "⭐", "💯", "✅", "❌", "🎉", "🎁", "☕", "🍕", "🌹", "🌙", "⚡", "💡", "🎵", "🏆")),
-        Category("Symbols", listOf("❗", "❓", "➕", "➖", "⚠", "🚫", "♻", "💬", "🔁", "➡", "⬅", "⬆", "⬇", "▶", "⏸", "♾")),
+        Category("Smileys", listOf(
+            "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣",
+            "😊", "🙂", "🙃", "😉", "😌", "😍", "🥰", "😘",
+            "😗", "😙", "😚", "😋", "😛", "😜", "🤪", "😝",
+            "🤑", "🤗", "🤭", "🤫", "🤔", "🤐", "🤨", "😐",
+            "😑", "😶", "😏", "😒", "🙄", "😬", "🤥", "😴",
+            "😪", "🤤", "😷", "🤒", "🤕", "🤢", "🤮", "🤧",
+            "🥵", "🥶", "🥴", "😵", "🤯", "🤠", "🥳", "😎",
+            "🤓", "🧐", "😕", "😟", "🙁", "☹️", "😮", "😯",
+            "😲", "😳", "🥺", "😦", "😧", "😨", "😰", "😥",
+            "😢", "😭", "😱", "😖", "😣", "😞", "😓", "😩",
+            "😫", "🥱", "😤", "😠", "😡", "🤬", "😈", "👿",
+            "💀", "☠️", "💩", "🤡", "👻", "👽", "👾", "🤖",
+        )),
+        Category("Gestures", listOf(
+            "👍", "👎", "👏", "🙏", "💪", "👋", "🤞", "✌️",
+            "👌", "🤝", "🙌", "👀", "🤘", "🤙", "🫡", "👊",
+            "✊", "🤛", "🤜", "🖐️", "✋", "🖖", "🤟", "🤲",
+            "👐", "🤌", "🤏", "☝️", "👆", "👇", "👈", "👉",
+            "✍️", "💅", "🤳", "👂", "👃", "👄", "👅", "🦶",
+            "🦵", "🧠", "👶", "🧒", "👦", "👧", "🧑", "👨",
+            "👩", "🧔", "👵", "👴", "🧓", "🙋", "🙆", "🙅",
+            "🤷", "🤦", "🙇", "💁", "👮", "👷", "👨‍💻", "👩‍💻",
+        )),
+        Category("Hearts", listOf(
+            "❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍",
+            "🤎", "💔", "❣️", "💕", "💞", "💓", "💗", "💖",
+            "💘", "💝", "💟", "♥️", "💌", "💋", "💍", "💐",
+            "🌹", "🥀", "🎀", "🧸", "💑", "💏", "💒", "🕊️",
+        )),
+        Category("Nature", listOf(
+            "🐶", "🐱", "🐭", "🐹", "🐰", "🦊", "🐻", "🐼",
+            "🐨", "🐯", "🦁", "🐮", "🐷", "🐸", "🐵", "🙈",
+            "🙉", "🙊", "🐔", "🐧", "🐦", "🐤", "🦆", "🦉",
+            "🦋", "🐝", "🐞", "🐢", "🐍", "🐙", "🦑", "🦀",
+            "🐠", "🐟", "🐬", "🐳", "🦈", "🐊", "🐘", "🦒",
+            "🦓", "🦏", "🦛", "🦍", "🦌", "🐎", "🐕", "🐈",
+            "🌸", "🌺", "🌻", "🌼", "🌷", "🌱", "🌿", "🍀",
+            "🌴", "🌵", "🍁", "🍂", "☀️", "🌙", "⭐", "🌈",
+            "🌍", "🌎", "🌏", "🌊", "🔥", "✨", "⚡", "❄️",
+            "☁️", "⛅", "🌤️", "🌧️", "⛈️", "🌩️", "🌨️", "☔",
+        )),
+        Category("Food", listOf(
+            "🍎", "🍏", "🍐", "🍊", "🍋", "🍌", "🍉", "🍇",
+            "🍓", "🍈", "🍒", "🍑", "🥭", "🍍", "🥥", "🥝",
+            "🍅", "🍆", "🥑", "🥦", "🥕", "🌽", "🥔", "🥒",
+            "🍞", "🥐", "🥖", "🧀", "🥚", "🍳", "🥓", "🥞",
+            "🍗", "🍖", "🌭", "🍔", "🍟", "🍕", "🥪", "🌮",
+            "🌯", "🥙", "🍜", "🍝", "🍛", "🍣", "🍱", "🍤",
+            "🍚", "🍙", "🥟", "🍦", "🍧", "🍨", "🍩", "🍪",
+            "🎂", "🍰", "🧁", "🍫", "🍿", "🍯", "☕", "🍵",
+            "🍼", "🥛", "🧃", "🥤", "🍺", "🍻", "🥂", "🍷",
+            "🍸", "🍹", "🍾", "🥃", "🍶", "🥗", "🥣", "🥡",
+        )),
+        Category("Travel", listOf(
+            "🚗", "🚕", "🚙", "🚌", "🚎", "🏎️", "🚓", "🚑",
+            "🚒", "🚐", "🚚", "🚛", "🚜", "🛵", "🏍️", "🚲",
+            "🚆", "🚇", "🚊", "🚉", "🚄", "🚅", "🚂", "🚋",
+            "✈️", "🛫", "🛬", "🚀", "🛸", "🚁", "⛵", "🚤",
+            "🛳️", "🚢", "⚓", "⛽", "🚦", "🚥", "🚧", "🛣️",
+            "🏠", "🏡", "🏢", "🏥", "🏦", "🏨", "🏫", "🏪",
+            "🏖️", "🏝️", "🏔️", "⛰️", "🏕️", "⛺", "🗺️", "🧭",
+            "🗼", "🗽", "🏰", "🕌", "🛕", "⛩️", "⛪", "🕋",
+        )),
+        Category("Activities", listOf(
+            "⚽", "🏀", "🏈", "⚾", "🎾", "🏐", "🏉", "🎱",
+            "🏓", "🏸", "🏒", "🏑", "🏏", "🥅", "⛳", "🏹",
+            "🎣", "🥊", "🥋", "🎿", "🛷", "⛸️", "🛹", "🏄",
+            "🏊", "🚴", "🏃", "🧘", "🏋️", "🤸", "🤾", "🤽",
+            "🎮", "🕹️", "🎲", "🧩", "♟️", "🎯", "🎳", "🎨",
+            "🎭", "🎤", "🎧", "🎵", "🎶", "🎸", "🎹", "🥁",
+            "🎉", "🎊", "🎈", "🎆", "🎇", "🎄", "🎃", "🎓",
+            "🏆", "🏅", "🥇", "🥈", "🥉", "🎬", "🎟️", "🎫",
+        )),
+        Category("Objects", listOf(
+            "⌚", "📱", "📲", "💻", "⌨️", "🖥️", "🖨️", "🖱️",
+            "📷", "📸", "📹", "🎥", "📺", "📻", "☎️", "📞",
+            "🔋", "🔌", "💡", "🔦", "🕯️", "🧯", "🛒", "🎁",
+            "💰", "💵", "💸", "💳", "🧾", "💎", "⚖️", "🔧",
+            "🔨", "🛠️", "⚙️", "🔩", "🔑", "🗝️", "🔒", "🔓",
+            "📚", "📖", "📝", "✏️", "🖊️", "🖋️", "📌", "📍",
+            "📎", "🖇️", "📏", "📐", "✂️", "📅", "🗓️", "⏰",
+            "⌛", "⏳", "📦", "✉️", "📧", "📮", "🗑️", "🧹",
+        )),
+        Category("Symbols", listOf(
+            "💯", "✅", "☑️", "✔️", "❌", "❎", "➕", "➖",
+            "✖️", "➗", "❗", "❓", "❕", "❔", "⁉️", "‼️",
+            "⚠️", "🚫", "⛔", "🚭", "🔞", "♻️", "🔰", "🔱",
+            "💬", "🗨️", "🗯️", "💭", "💤", "🔔", "🔕", "📣",
+            "🔁", "🔂", "🔃", "🔄", "➡️", "⬅️", "⬆️", "⬇️",
+            "↗️", "↘️", "↙️", "↖️", "↔️", "↕️", "↩️", "↪️",
+            "▶️", "⏸️", "⏹️", "⏺️", "⏭️", "⏮️", "⏩", "⏪",
+            "♾️", "🆗", "🆕", "🆒", "🆘", "🏁", "🚩", "🏳️‍🌈",
+        )),
     )
 
     /** Category name, or a short alias such as "heart". Empty shows every category. */
@@ -33,40 +115,48 @@ internal object EmojiCatalog {
     }
 
     private val ALIASES = mapOf(
-        "smile" to "Smileys", "face" to "Smileys",
-        "hand" to "Gestures", "hands" to "Gestures",
-        "heart" to "Hearts", "love" to "Hearts",
-        "food" to "Objects", "star" to "Objects",
-        "arrow" to "Symbols",
+        "smile" to "Smileys", "face" to "Smileys", "happy" to "Smileys", "sad" to "Smileys",
+        "hand" to "Gestures", "hands" to "Gestures", "thumb" to "Gestures", "people" to "Gestures",
+        "heart" to "Hearts", "love" to "Hearts", "kiss" to "Hearts",
+        "animal" to "Nature", "animals" to "Nature", "flower" to "Nature", "weather" to "Nature", "star" to "Nature",
+        "drink" to "Food", "coffee" to "Food", "pizza" to "Food", "fruit" to "Food",
+        "car" to "Travel", "train" to "Travel", "plane" to "Travel", "places" to "Travel",
+        "sport" to "Activities", "sports" to "Activities", "game" to "Activities", "music" to "Activities", "party" to "Activities",
+        "phone" to "Objects", "computer" to "Objects", "work" to "Objects", "gift" to "Objects",
+        "arrow" to "Symbols", "sign" to "Symbols", "flag" to "Symbols",
     )
 
-    /** Frequently used first so the default panel is useful without scrolling. */
-    val recent: List<String> = listOf("😂", "❤️", "👍", "😊", "🔥", "🙏", "😅", "🎉", "😍", "👏", "😭", "💯", "😉", "🙂", "✨", "😎")
+    /** Familiar choices fill the default page until the user has their own recent emoji. */
+    val recent: List<String> = listOf(
+        "😂", "❤️", "👍", "😊", "🔥", "🙏", "😅", "🎉",
+        "😍", "👏", "😭", "💯", "😉", "🙂", "✨", "😎",
+        "🥰", "🤣", "😘", "🤔", "🙌", "✅", "💕", "🥳",
+        "🤗", "💪", "👋", "☕", "🎂", "🌹", "🎁", "🤞",
+    )
 
     init {
+        val labels = mutableSetOf<String>()
         val seen = mutableSetOf<String>()
         for (category in categories) {
-            require(category.label.isNotBlank()) { "Emoji category needs a label" }
+            require(category.label.isNotBlank() && labels.add(category.label)) { "Emoji category needs a unique label" }
             require(category.emoji.isNotEmpty()) { "Emoji category ${category.label} is empty" }
             for (entry in category.emoji) {
                 require(isWellFormed(entry)) { "Malformed emoji entry" }
                 require(seen.add(entry)) { "Duplicate emoji in ${category.label}" }
             }
         }
-        for (entry in recent) require(isWellFormed(entry)) { "Malformed emoji in recent list" }
+        require(recent.toSet().size == recent.size) { "Duplicate default emoji" }
+        for (entry in recent) require(entry in seen) { "Default emoji must be in the catalog" }
     }
 
-    /**
-     * An entry is well formed when every code point is a real character. A lone surrogate survives
-     * as its own code point, so checking that none of them is a surrogate catches a split emoji.
-     */
+    /** Reject split surrogate pairs and invalid text without restricting complete emoji sequences. */
     private fun isWellFormed(entry: String): Boolean {
         if (entry.isBlank()) return false
         if (entry.any { Character.isISOControl(it) }) return false
         var index = 0
         while (index < entry.length) {
             val codePoint = entry.codePointAt(index)
-            if (codePoint in 0xD800..0xDFFF) return false
+            if (codePoint in 0xD800..0xDFFF || codePoint == 0xFFFD) return false
             index += Character.charCount(codePoint)
         }
         return index == entry.length

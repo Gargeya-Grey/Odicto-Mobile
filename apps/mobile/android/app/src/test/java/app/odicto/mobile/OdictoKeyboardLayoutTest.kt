@@ -39,6 +39,13 @@ import java.time.Duration
  */
 @RunWith(RobolectricTestRunner::class)
 class OdictoKeyboardLayoutTest {
+    @org.junit.Before fun preciseTargets() = kotlinx.coroutines.runBlocking {
+        app.odicto.mobile.storage.VoicePreferences.save(context, app.odicto.mobile.storage.VoiceSettings(keys = app.odicto.mobile.storage.KeySettings(tapTolerance = 0)))
+    }
+    @org.junit.After fun restoreTargets() = kotlinx.coroutines.runBlocking {
+        app.odicto.mobile.storage.VoicePreferences.save(context, app.odicto.mobile.storage.VoiceSettings())
+    }
+
     private val context get() = ApplicationProvider.getApplicationContext<android.content.Context>()
 
     private fun inflate(): View =
@@ -82,22 +89,115 @@ class OdictoKeyboardLayoutTest {
         assertTrue(button.right <= row.width)
     }
 
-    @Test fun oneHandedLayoutsLeaveRoomForSixCompactSlotsAndPolish() {
+    @Test fun theToolRowHasNoLayoutKeyUnderTheSpacebar() {
+        // A layout key under the spacebar moved the whole keyboard on a near miss.
+        val row = inflate().findViewById<LinearLayout>(R.id.function_row)
+        val descriptions = (0 until row.childCount).map { row.getChildAt(it).contentDescription?.toString() }
+        assertEquals(listOf("Hold to speak. Double tap for voice options.", "Emoji", "Clipboard", "Switch to the next keyboard"), descriptions)
+        assertEquals(0, context.resources.getIdentifier("function_layout", "id", context.packageName))
+    }
+
+    @Test fun statusAndSuggestionsNeverMoveTheHeaderOrTheKeys() {
         val owner = Robolectric.buildService(OdictoImeService::class.java).create()
         try {
             val service = owner.get()
-            val root = inflate()
+            val root = LayoutInflater.from(service).inflate(R.layout.ime_keyboard, null, false)
             val controller = KeyboardController(service, root)
+            controller.attachVoiceControl(VoiceControlView(service, true))
             measure(root)
-            repeat(3) {
-                root.findViewById<View>(R.id.function_layout).performClick()
-                controller.javaClass.getDeclaredMethod("applyLayout").apply { isAccessible = true }.invoke(controller)
-                measure(root)
-                val column = root.findViewById<View>(R.id.ime_column)
-                assertTrue("Six 40dp slots plus 48dp Polish must fit", column.width >= (288 * context.resources.displayMetrics.density).toInt())
-            }
+            val row = root.findViewById<View>(R.id.ime_top_row)
+            val toggle = root.findViewById<View>(R.id.ime_keyboard_toggle)
+            val keys = root.findViewById<View>(R.id.ime_keyboard)
+            fun geometry() = listOf(root.measuredHeight, row.height, topIn(root, toggle), topIn(root, keys))
+            val idle = geometry()
+            assertEquals((48 * context.resources.displayMetrics.density).toInt(), row.height)
+            controller.setSpellingStatusVisible(true)
+            measure(root)
+            assertEquals(View.VISIBLE, root.findViewById<View>(R.id.ime_assistance).visibility)
+            assertEquals("a status line must not add height or move a control", idle, geometry())
+            controller.setSpellingStatusVisible(false)
+            measure(root)
+            assertEquals(idle, geometry())
             controller.dispose()
         } finally { owner.destroy() }
+    }
+
+    /** The real service wiring: the voice row sits at the right edge, sized from the row width. */
+    private fun serviceKeyboard(service: OdictoImeService, rtl: Boolean = false): Triple<View, KeyboardController, VoiceControlView> {
+        val root = service.onCreateInputView()
+        if (rtl) root.layoutDirection = View.LAYOUT_DIRECTION_RTL
+        repeat(2) { measure(root) }
+        fun field(name: String) = service.javaClass.getDeclaredField(name).apply { isAccessible = true }.get(service)
+        return Triple(root, field("controller") as KeyboardController, field("control") as VoiceControlView)
+    }
+
+    private fun childOf(voice: VoiceControlView, matches: (View) -> Boolean) =
+        (0 until voice.childCount).map { voice.getChildAt(it) }.first(matches)
+
+    @Test fun copyRecoveryStaysReachableWhileAStatusCoversTheTools() {
+        val previous = app.odicto.mobile.dictation.VoiceSession.state.value
+        val owner = Robolectric.buildService(OdictoImeService::class.java).create()
+        try {
+            val (root, controller, voice) = serviceKeyboard(owner.get())
+            app.odicto.mobile.dictation.VoiceSession.update { app.odicto.mobile.dictation.VoiceUi(phase = "done", finalText = "synthetic") }
+            Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            voice.render(app.odicto.mobile.dictation.VoiceSession.state.value)
+            controller.refreshSpelling()
+            controller.setSpellingStatusVisible(true)
+            repeat(2) { measure(root) }
+            val copy = childOf(voice) { it.contentDescription == "Copy completed result" }
+            assertEquals(View.VISIBLE, copy.visibility)
+            val slot = root.findViewById<View>(R.id.ime_assistance)
+            assertEquals(View.VISIBLE, slot.visibility)
+            assertTrue("slot ${slot.left}..${slot.right} covers Copy at ${voice.left + copy.left}", slot.right <= voice.left + copy.left)
+        } finally { owner.destroy(); app.odicto.mobile.dictation.VoiceSession.update { previous } }
+    }
+
+    @Test fun inRightToLeftLocalesTheSlotStillLeavesTheMicUncovered() {
+        val owner = Robolectric.buildService(OdictoImeService::class.java).create()
+        try {
+            val (root, controller, voice) = serviceKeyboard(owner.get(), rtl = true)
+            controller.setSpellingStatusVisible(true)
+            repeat(2) { measure(root) }
+            val mic = childOf(voice) { it.contentDescription?.startsWith("Hold to speak") == true }
+            val slot = root.findViewById<View>(R.id.ime_assistance)
+            val toggle = root.findViewById<View>(R.id.ime_keyboard_toggle)
+            assertTrue("slot ${slot.left}..${slot.right} covers the mic at ${voice.left + mic.left}", slot.right <= voice.left + mic.left)
+            assertTrue("slot must not cover the keyboard toggle", slot.left >= toggle.right)
+        } finally { owner.destroy() }
+    }
+
+    @Test fun collapsingKeepsTheWindowHeightAndMovesOnlyTheInsetLine() {
+        val root = inflate()
+        var insetUpdates = 0
+        val expansion = app.odicto.mobile.ime.KeyboardExpansion(root, {}) { insetUpdates++ }
+        measure(root)
+        val column = root.findViewById<View>(R.id.ime_column)
+        val area = root.findViewById<View>(R.id.ime_typing_area)
+        val height = root.measuredHeight
+        assertTrue(area.height > 0)
+        assertEquals("collapsed: the app keeps only the top row clear", column.top + area.height, expansion.contentTop())
+        assertEquals(area.height.toFloat(), column.translationY)
+        assertEquals(View.INVISIBLE, area.visibility)
+        val before = insetUpdates
+        root.findViewById<View>(R.id.ime_keyboard_toggle).performClick()
+        measure(root)
+        assertEquals("expanding must not resize the IME window", height, root.measuredHeight)
+        assertEquals(column.top, expansion.contentTop())
+        assertEquals(0f, column.translationY)
+        assertEquals(View.VISIBLE, area.visibility)
+        assertTrue("the host app hears about the new inset", insetUpdates > before)
+        expansion.dispose()
+    }
+
+    private fun topIn(root: View, view: View): Int {
+        var top = 0
+        var current: View? = view
+        while (current != null && current !== root) {
+            top += current.top
+            current = current.parent as? View
+        }
+        return top
     }
 
     @Test fun accessibilityClickOnSpaceTypesASpace() {
@@ -157,7 +257,7 @@ class OdictoKeyboardLayoutTest {
 
     @Test fun theToolbarSitsBelowTheKeysAndLettersStartWithANumberRow() {
         val root = inflate()
-        val column = root.findViewById<LinearLayout>(R.id.ime_column)
+        val column = root.findViewById<LinearLayout>(R.id.ime_typing_area)
         val toolbar = root.findViewById<View>(R.id.function_row)
         val grid = root.findViewById<View>(R.id.ime_content)
         val toolbarIndex = (0 until column.childCount).indexOfFirst { column.getChildAt(it) === toolbar }
@@ -187,7 +287,7 @@ class OdictoKeyboardLayoutTest {
             keyboard.measure(widthSpec, heightSpec)
             keyboard.layout(0, 0, 1080, 200)
 
-            val expectedRows = if (page == OdictoKeyboardView.Page.LETTERS) 5 else 4
+            val expectedRows = 5
             assertEquals("page $page row count", expectedRows, keyboard.childCount)
             val rowHeights = (0 until keyboard.childCount).map { keyboard.getChildAt(it).height }
             val letterRows = rowHeights.dropLast(1)
@@ -647,31 +747,39 @@ class OdictoKeyboardLayoutTest {
     }
 
     @Test fun emojiAndClipboardReplaceTheKeyGridInsteadOfCollapsing() {
-        val service = Robolectric.buildService(OdictoImeService::class.java).create().get()
-        val root = LayoutInflater.from(service).inflate(R.layout.ime_keyboard, null, false)
-        val controller = KeyboardController(service, root)
-        val info = EditorInfo().apply { inputType = InputType.TYPE_CLASS_TEXT }
-        controller.onStartInput(info)
-        val keyboard = root.findViewById<View>(R.id.ime_keyboard)
-        measure(root)
-        val keyHeight = keyboard.height
-        assertTrue("keys must have a height before a panel opens", keyHeight > 80)
+        val serviceOwner = Robolectric.buildService(OdictoImeService::class.java).create()
+        val service = serviceOwner.get()
+        val host = Robolectric.buildActivity(android.app.Activity::class.java).setup()
+        try {
+            val root = LayoutInflater.from(service).inflate(R.layout.ime_keyboard, null, false)
+            host.get().setContentView(root)
+            val controller = KeyboardController(service, root)
+            val info = EditorInfo().apply { inputType = InputType.TYPE_CLASS_TEXT }
+            controller.onStartInput(info)
+            val keyboard = root.findViewById<View>(R.id.ime_keyboard)
+            measure(root)
+            val keyHeight = keyboard.height
+            assertTrue("keys must have a height before a panel opens", keyHeight > 80)
 
-        root.findViewById<View>(R.id.function_emoji).performClick()
-        measure(root)
-        val emoji = root.findViewById<LinearLayout>(R.id.emoji_panel)
-        assertEquals(View.VISIBLE, emoji.visibility)
-        assertEquals(View.INVISIBLE, keyboard.visibility)
-        assertTrue("emoji panel collapsed to ${emoji.height}, keys were $keyHeight", emoji.height >= keyHeight - 4)
-        assertTrue("emoji panel must contain glyphs", containsEmoji(emoji))
-        assertFalse("emoji must not be forced onto Lora", emojiUsesLora(emoji))
+            root.findViewById<View>(R.id.function_emoji).performClick()
+            Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            measure(root)
+            val emoji = root.findViewById<LinearLayout>(R.id.emoji_panel)
+            assertEquals(View.VISIBLE, emoji.visibility)
+            assertEquals(View.INVISIBLE, keyboard.visibility)
+            assertTrue("emoji panel collapsed to ${emoji.height}, keys were $keyHeight", emoji.height >= keyHeight - 4)
+            assertTrue("emoji panel must contain glyphs", containsEmoji(emoji))
+            assertFalse("emoji must not be forced onto Lora", emojiUsesLora(emoji))
 
-        root.findViewById<View>(R.id.function_clipboard).performClick()
-        measure(root)
-        val clipboard = root.findViewById<View>(R.id.clipboard_panel)
-        assertEquals(View.VISIBLE, clipboard.visibility)
-        assertEquals(View.GONE, emoji.visibility)
-        assertTrue("clipboard panel collapsed to ${clipboard.height}", clipboard.height >= keyHeight - 4)
+            root.findViewById<View>(R.id.function_clipboard).performClick()
+            Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            measure(root)
+            val clipboard = root.findViewById<View>(R.id.clipboard_panel)
+            assertEquals(View.VISIBLE, clipboard.visibility)
+            assertEquals(View.GONE, emoji.visibility)
+            assertTrue("clipboard panel collapsed to ${clipboard.height}", clipboard.height >= keyHeight - 4)
+            controller.dispose()
+        } finally { host.pause().stop().destroy(); serviceOwner.destroy() }
     }
 
     private fun laidOutKeyboard(): OdictoKeyboardView {

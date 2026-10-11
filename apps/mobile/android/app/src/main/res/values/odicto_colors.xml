@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Keyboard palette: the EduDojo dark theme. Graphite surfaces, warm off-white text, muted jade. -->
+<resources>
+    <color name="odicto_keyboard_background">#FF17191C</color>
+    <color name="odicto_accent">#FF8EDCBB</color>
+    <color name="odicto_toolbar_icon">#FFE7E5DF</color>
+    <color name="odicto_text_strong">#FFF2F2EC</color>
+    <color name="odicto_text_muted">#FFB2B5B5</color>
+    <color name="odicto_divider">#FF3B4044</color>
+</resources>

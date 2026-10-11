@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Clip card: a quiet fill, and a soft jade outline while it is selected. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_selected="true">
+        <shape android:shape="rectangle">
+            <corners android:radius="14dp" />
+            <solid android:color="@color/odicto_panel_card_selected" />
+            <stroke android:width="1.5dp" android:color="@color/odicto_accent" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="14dp" />
+            <solid android:color="@color/odicto_panel_card" />
+        </shape>
+    </item>
+</selector>

@@ -12,7 +12,7 @@ class KeyboardStatusPresentation {
     private var feedback: Feedback? = null
 
     fun voice(value: VoiceUi, operation: String, now: Long, timeout: Long) {
-        val key = "$operation:${value.resultId}:${value.phase}"
+        val key = "$operation:${value.resultId}:${value.phase}:${value.locked}"
         if (voiceKey == key) {
             // Persistence may add an important warning, but must not renew the deadline.
             if (source == "voice") feedback = feedback?.copy(description = value.message)
@@ -24,10 +24,13 @@ class KeyboardStatusPresentation {
             if (source == "voice") clear()
             return
         }
-        val summary = if (value.phase == "done") {
-            if (value.delivery == DeliveryOutcome.CONFIRMED) "Text inserted" else "Check field before pasting"
-        } else value.message
-        show("voice", summary, value.message, value.busy, now, timeout)
+        val summary = when {
+            value.phase == "done" -> if (value.delivery == DeliveryOutcome.CONFIRMED) "Text inserted" else "Check field before pasting"
+            // The recording phase carries no message; the keyboard row still says what is happening.
+            value.phase == "recording" && value.message.isBlank() -> if (value.locked) "Hands-free" else "Listening…"
+            else -> value.message
+        }
+        show("voice", summary, value.message.ifBlank { summary }, value.busy, now, timeout)
     }
 
     /** Every explicit action/Polish transition supersedes the already observed voice feedback. */

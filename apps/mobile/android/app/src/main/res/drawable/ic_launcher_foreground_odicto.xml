@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Odicto mark "Turning strokes": five strokes turn from upright (sound) to flat (writing). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M26.00,69.00L26.00,39.00"
+        android:strokeColor="#8EDCBB"
+        android:strokeWidth="7"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M32.71,65.88L43.29,42.12"
+        android:strokeColor="#8EDCBB"
+        android:strokeWidth="7"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M41.83,61.36L58.17,46.64"
+        android:strokeColor="#8EDCBB"
+        android:strokeWidth="7"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M52.49,57.09L71.51,50.91"
+        android:strokeColor="#8EDCBB"
+        android:strokeWidth="7"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M65.00,54.00L83.00,54.00"
+        android:strokeColor="#8EDCBB"
+        android:strokeWidth="7"
+        android:strokeLineCap="round" />
+</vector>

@@ -14,10 +14,17 @@
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:statusBarColor">#111116</item>
-        <item name="android:navigationBarColor">#111116</item>
+        <item name="android:statusBarColor">#17191C</item>
+        <item name="android:navigationBarColor">#17191C</item>
     </style>
 
+
+    <!-- Keyboard window. The system reads these when it creates the IME window: without them it
+         paints the keyboard's navigation strip black under the graphite keyboard. -->
+    <style name="OdictoImeTheme" parent="@android:style/Theme.DeviceDefault.InputMethod">
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:navigationBarColor">@color/odicto_keyboard_background</item>
+    </style>
 
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="android:background">@drawable/splash</item>

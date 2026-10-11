@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- hide keyboard: smaller keyboard raised, chevron pointing down below -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.75" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M6.25,3.5 H17.75 A2.25,2.25 0 0 1 20,5.75 V12.75 A2.25,2.25 0 0 1 17.75,15.0 H6.25 A2.25,2.25 0 0 1 4,12.75 V5.75 A2.25,2.25 0 0 1 6.25,3.5 Z" />
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.75" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M8,7 h0.01 M10.67,7 h0.01 M13.33,7 h0.01 M16,7 h0.01" />
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.75" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M9.33,9.5 h0.01 M12,9.5 h0.01 M14.67,9.5 h0.01" />
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.75" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M9,12 H15" />
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.75" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M8.5,18 L12,20.25 L15.5,18" />
+</vector>

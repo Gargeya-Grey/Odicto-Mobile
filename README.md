@@ -45,7 +45,9 @@ Keep the root `package-lock.json` as the single npm lockfile. Local environment 
 
 ## Product limits
 
-Dictation requires Odicto as the active input method and a permitted text editor. Password, phone, numeric/payment-like, and protected fields block voice controls. Insertion revalidates the original editor; changed focus saves the result locally instead of inserting elsewhere. Audio is request-scoped and unretained; history stays on the device. Overlay permission is optional, and the keyboard microphone is the fallback. AccessibilityService is not used.
+The single `app.odicto.mobile` build supports insertion through the Odicto IME, or through its narrow AccessibilityService while another keyboard is active. Both require a permitted editor; password, phone, numeric/payment-like, and protected fields block voice actions. Insertion revalidates the original editor; changed focus rejects delivery and keeps explicit Copy recovery, with device-only history when persistence succeeds. Audio is request-scoped and unretained. Overlay permission is optional, and the keyboard microphone is the fallback. Accessibility insertion and OEM overlay behavior require physical-device verification.
+
+Older `app.odicto.mobile.legacy` installations have separate local data. Installing the unified APK does not migrate their history, settings, clipboard items, or Keystore keys. Do not uninstall or clear an old installation without explicit data-loss approval. Generated flavor APKs left in build directories are obsolete outputs, not supported alternatives.
 
 iOS, accounts, billing, and managed production services are deferred. Tablet viewport checks do not establish physical-tablet microphone or IME reliability.
 

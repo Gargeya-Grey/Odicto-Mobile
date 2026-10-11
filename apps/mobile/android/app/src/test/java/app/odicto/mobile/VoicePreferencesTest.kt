@@ -7,6 +7,13 @@ import app.odicto.mobile.storage.VoiceSettings
 import org.junit.Assert.assertEquals
 import org.junit.Test
 class VoicePreferencesTest {
+    @Test fun autocorrectDefaultsOffWithoutChangingPolish() {
+        val settings = VoiceSettings()
+        assertEquals(false, settings.keys.autocorrectEnabled)
+        assertEquals("poolside/laguna-xs-2.1", settings.polishModel)
+        assertEquals("", settings.polishSystemPrompt)
+    }
+
     @Test fun fieldPolishDefaultsDoNotChangeVoiceModelOrPrompt() {
         val settings = VoiceSettings()
         assertEquals("poolside/laguna-xs-2.1", settings.polishModel)

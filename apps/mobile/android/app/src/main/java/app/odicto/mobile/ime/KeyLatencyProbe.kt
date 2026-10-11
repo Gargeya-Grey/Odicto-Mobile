@@ -18,6 +18,28 @@ internal object KeyLatencyProbe {
         REPEAT_LATENESS,
     }
 
+    enum class Outcome {
+        CONTACT_RECEIVED, KEY_CONTACT, KEY_MARGIN_MISS, MARGIN_RECOVERED, STRUCTURAL_MISS, EXTRA_CONTACT,
+        PLATFORM_CANCEL, INTERACTION_INVALIDATED, CHARACTER_DISPATCH, SPACE_DISPATCH,
+        OTHER_DISPATCH, NO_CONNECTION, STALE_SESSION, COMMIT_ATTEMPT, COMMIT_ACCEPTED,
+        COMMIT_REJECTED, COMMIT_EXCEPTION,
+    }
+
+    private val outcomes = LongArray(Outcome.entries.size)
+
+    @Synchronized fun outcome(value: Outcome) {
+        if (BuildConfig.DEBUG && outcomes[value.ordinal] < Long.MAX_VALUE) outcomes[value.ordinal]++
+    }
+
+    @Synchronized fun outcomeSnapshot(clear: Boolean = false): Map<Outcome, Long> {
+        val result = Outcome.entries.associateWith { outcomes[it.ordinal] }
+        if (clear) outcomes.fill(0)
+        return result
+    }
+
+    fun summarizeOutcomes(values: Map<Outcome, Long>): String = values.entries.filter { it.value > 0 }
+        .joinToString(" ") { "${it.key.name}=${it.value}" }.let { if (it.isEmpty()) "" else "OUTCOMES $it" }
+
     data class Sample(val eventId: Long, val metric: Metric, val startNanos: Long, val endNanos: Long) {
         val durationNanos: Long get() = endNanos - startNanos
     }
@@ -108,8 +130,10 @@ internal object KeyLatencyProbe {
         if (!BuildConfig.DEBUG || !flushPending.compareAndSet(false, true)) return
         Handler(Looper.getMainLooper()).post {
             val samples = snapshot(clear = true)
+            val totals = outcomeSnapshot(clear = true)
             exportWorker.execute {
-                try { onSummary(summarize(samples)) } finally { flushPending.set(false) }
+                try { onSummary(listOf(summarize(samples), summarizeOutcomes(totals)).filter { it.isNotEmpty() }.joinToString("\n")) }
+                finally { flushPending.set(false) }
             }
         }
     }

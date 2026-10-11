@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- The root stays transparent: KeyboardExpansion paints the keyboard surface below the column's
+     drawn top, so the collapsed keyboard shows only its top row over the host app. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:background="#0E0E10">
+    android:layout_height="wrap_content">
 
     <LinearLayout
         android:id="@+id/ime_column"
@@ -18,102 +19,144 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
+            <!-- One fixed 48dp row in every state. Suggestions, Undo and status replace the tool
+                 cells inside this row; they never add a row, so nothing above or below moves. -->
+            <!-- Left to right in every locale: VoiceControlView places its cells left to right, and
+                 the assistance slot's margins must line up with those cells. -->
             <FrameLayout
                 android:id="@+id/ime_top_row"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:minHeight="48dp">
+                android:layout_height="48dp"
+                android:layoutDirection="ltr">
+
+                <ImageButton
+                    android:id="@+id/ime_keyboard_toggle"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_gravity="top|start"
+                    android:background="@drawable/odicto_toolbar_button"
+                    android:contentDescription="Show keyboard"
+                    android:padding="13dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/odicto_ic_keyboard"
+                    android:tint="@color/odicto_toolbar_icon" />
 
                 <ImageButton
                     android:id="@+id/ime_polish"
                     android:layout_width="48dp"
                     android:layout_height="48dp"
                     android:layout_gravity="top|end"
-                    android:background="@drawable/odicto_ime_polish_background"
+                    android:background="@drawable/odicto_toolbar_button"
                     android:contentDescription="Polish all text in this field"
-                    android:padding="12dp"
+                    android:padding="13dp"
                     android:scaleType="fitCenter"
-                    android:src="@drawable/odicto_ic_polish" />
-            </FrameLayout>
+                    android:src="@drawable/odicto_ic_polish"
+                    android:tint="@color/odicto_accent" />
 
-            <TextView
-                android:id="@+id/ime_polish_status"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="start"
-                android:lines="1"
-                android:maxLines="1"
-                android:ellipsize="end"
-                android:clickable="false"
-                android:focusable="false"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                android:paddingTop="4dp"
-                android:paddingBottom="8dp"
-                android:lineSpacingExtra="2dp"
-                android:textColor="#C6B7FF"
-                android:textSize="12sp"
-                android:visibility="invisible" />
+                <!-- Covers only the tool cells; its margins are set in code from the cell width. -->
+                <FrameLayout
+                    android:id="@+id/ime_assistance"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_gravity="top|start"
+                    android:background="@color/odicto_keyboard_background"
+                    android:visibility="gone">
+
+                    <LinearLayout
+                        android:id="@+id/ime_suggestions"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:contentDescription="Spelling suggestions"
+                        android:visibility="gone" />
+
+                    <TextView
+                        android:id="@+id/ime_polish_status"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:gravity="center_vertical|start"
+                        android:lines="1"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:clickable="false"
+                        android:focusable="false"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:textColor="@color/odicto_accent"
+                        android:textSize="13sp"
+                        android:visibility="invisible" />
+                </FrameLayout>
+            </FrameLayout>
         </LinearLayout>
 
-        <!-- The key grid and the panels share this slot. A panel replaces the grid in place: the
-             grid goes INVISIBLE (not GONE) so the slot keeps its height. The tool row sits below
-             this slot, so the letters stay up where a thumb can reach them. -->
-        <FrameLayout
-            android:id="@+id/ime_content"
+        <LinearLayout
+            android:id="@+id/ime_typing_area"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content">
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
 
-            <app.odicto.mobile.ime.OdictoKeyboardView
-                android:id="@+id/ime_keyboard"
+            <!-- The key grid and the panels share this slot. A panel replaces the grid in place: the
+                 grid goes INVISIBLE (not GONE) so the slot keeps its height. The tool row sits below
+                 this slot, so the letters stay up where a thumb can reach them. -->
+            <FrameLayout
+                android:id="@+id/ime_content"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="#0E0E10" />
+                android:layout_height="wrap_content">
 
-            <LinearLayout
-                android:id="@+id/emoji_panel"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:background="#0E0E10"
-                android:elevation="4dp"
-                android:orientation="vertical"
-                android:paddingStart="6dp"
-                android:paddingEnd="6dp"
-                android:visibility="gone" />
+                <app.odicto.mobile.ime.OdictoKeyboardView
+                    android:id="@+id/ime_keyboard"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@color/odicto_keyboard_background" />
 
-            <LinearLayout
-                android:id="@+id/clipboard_panel"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:background="#0E0E10"
-                android:elevation="4dp"
-                android:orientation="vertical"
-                android:paddingStart="6dp"
-                android:paddingEnd="6dp"
-                android:visibility="gone" />
+                <LinearLayout
+                    android:id="@+id/emoji_panel"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@color/odicto_keyboard_background"
+                    android:elevation="4dp"
+                    android:orientation="vertical"
+                    android:paddingStart="6dp"
+                    android:paddingEnd="6dp"
+                    android:visibility="gone" />
 
-            <!-- A refusal or error is shown here, inside the keyboard, next to the control that
-                 caused it. Messages rendered in the voice strip read as "showing somewhere" and
-                 were never connected to the button that was tapped. -->
-            <TextView
-                android:id="@+id/ime_notice"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_gravity="bottom"
-                android:layout_margin="8dp"
-                android:background="@drawable/odicto_key_background"
-                android:gravity="center"
-                android:padding="10dp"
-                android:textColor="#F3EFFB"
-                android:textSize="13sp"
-                android:visibility="gone" />
-        </FrameLayout>
+                <LinearLayout
+                    android:id="@+id/clipboard_panel"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@color/odicto_keyboard_background"
+                    android:elevation="4dp"
+                    android:orientation="vertical"
+                    android:paddingStart="6dp"
+                    android:paddingEnd="6dp"
+                    android:visibility="gone" />
 
-        <!-- Emoji, clipboard, and the other tools are intentional taps, so they sit at the bottom
-             edge. That also keeps the letter keys off the bottom of the screen. -->
-        <include
-            android:id="@+id/function_row"
-            layout="@layout/ime_function_row" />
+                <!-- A refusal or error is shown here, inside the keyboard, next to the control that
+                     caused it. Messages rendered in the voice strip read as "showing somewhere" and
+                     were never connected to the button that was tapped. -->
+                <TextView
+                    android:id="@+id/ime_notice"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="bottom"
+                    android:layout_margin="8dp"
+                    android:background="@drawable/odicto_key_background"
+                    android:gravity="center"
+                    android:padding="10dp"
+                    android:textColor="#E7E5DF"
+                    android:textSize="13sp"
+                    android:visibility="gone" />
+            </FrameLayout>
+
+            <!-- Emoji, clipboard, and the other tools are intentional taps, so they sit at the bottom
+                 edge. That also keeps the letter keys off the bottom of the screen. -->
+            <include
+                android:id="@+id/function_row"
+                layout="@layout/ime_function_row" />
+
+        </LinearLayout>
 
     </LinearLayout>
 </FrameLayout>

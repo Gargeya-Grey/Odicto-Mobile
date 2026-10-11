@@ -17,7 +17,7 @@ class ClipboardPreviewActivity : Activity() {
             automaticCapture = true,
         )
         lateinit var panel: ClipboardPanelBinding
-        panel = ClipboardPanelBinding(this, OdictoKeyboardView.flexTypeface(this), ClipboardPanelActions(
+        panel = ClipboardPanelBinding(this, OdictoKeyboardView.brandTypeface(this), ClipboardPanelActions(
             pin = { text, pinned ->
                 state = if (pinned) state.copy(pins = listOf(text) + state.pins, history = state.history - text)
                     else state.copy(pins = state.pins - text, history = listOf(text) + state.history)

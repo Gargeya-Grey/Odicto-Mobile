@@ -27,6 +27,8 @@ object DictationCoordinator {
     val busy get() = operation != null
     val protectedField = MutableStateFlow(false)
     val keyboardVisible = MutableStateFlow(false)
+    /** Screen geometry only: lets the bubble avoid covering the IME's controls. */
+    val keyboardTopPx = MutableStateFlow<Int?>(null)
 
     fun registerTarget(target: DictationTarget) { targets[target.id] = target }
 

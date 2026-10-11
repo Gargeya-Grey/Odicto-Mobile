@@ -22,6 +22,21 @@ import org.junit.runner.RunWith
 /** Synthetic UI states only: no microphone, provider calls, or history writes. */
 @RunWith(AndroidJUnit4::class)
 class VoiceControlViewDeviceTest {
+    /** Only public feature flags are exported; no credentials, history or text. */
+    @Test fun reportVoiceSurfaceAvailability() = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        VoicePreferences.initialize(context)
+        withTimeout(5000) { VoicePreferences.ready.first { it } }
+        val state = VoicePreferences.state.value
+        instrumentation.sendStatus(0, android.os.Bundle().apply {
+            putBoolean("overlayEnabled", state.enabled)
+            putBoolean("voicePaused", state.paused)
+            putBoolean("overlayPermission", android.provider.Settings.canDrawOverlays(context))
+            putBoolean("overlaySupported", BuildCapability.overlaySupported)
+        })
+    }
+
     @Test fun keyboardKeepsSixSlotsAcrossSyntheticStates() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.runOnMainSync {

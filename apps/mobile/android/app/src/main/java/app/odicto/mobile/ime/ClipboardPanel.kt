@@ -3,9 +3,6 @@ package app.odicto.mobile.ime
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.RippleDrawable
-import android.graphics.drawable.StateListDrawable
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
@@ -114,10 +111,10 @@ internal class ClipboardPanelBinding(
     private val font: Typeface,
     private val actions: ClipboardPanelActions = ClipboardPanelActions(),
 ) {
-    private val ink = 0xFFF3EFFB.toInt()
-    private val muted = 0xFFBBB7C6.toInt()
-    private val accent = 0xFFC5B3FF.toInt()
-    private val surface = 0xFF292933.toInt()
+    private val ink = context.getColor(R.color.odicto_toolbar_icon)
+    private val strong = context.getColor(R.color.odicto_text_strong)
+    private val muted = context.getColor(R.color.odicto_text_muted)
+    private val accent = context.getColor(R.color.odicto_accent)
     private var state = ClipboardState()
     private var selecting = false
     private var expanded = false
@@ -125,8 +122,8 @@ internal class ClipboardPanelBinding(
     private var updating = false
     private val selected = linkedSetOf<String>()
     private val rows = linkedMapOf<String, LinearLayout>()
-    val root = column().apply { setBackgroundColor(0xFF0E0E10.toInt()) }
-    private val title = label("Clipboard", 16f)
+    val root = column().apply { setBackgroundColor(context.getColor(R.color.odicto_keyboard_background)) }
+    private val title = label("Clipboard", 16f, strong)
     private val count = label("0 clips", 12f, muted)
     private val select = icon("Select clips", R.drawable.odicto_clipboard_select) {
         selecting = !selecting
@@ -140,7 +137,7 @@ internal class ClipboardPanelBinding(
         scroll.post { scroll.smoothScrollTo(0, 0) }
     }
     private val scroll = ScrollView(context).apply { isFillViewport = true; clipToPadding = false }
-    private val content = column().apply { setPadding(dp(8), 0, dp(8), dp(8)) }
+    private val content = column().apply { setPadding(dp(4), 0, dp(4), dp(8)) }
     private val status = label("", 13f, muted).apply {
         visibility = View.GONE
         accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
@@ -154,7 +151,7 @@ internal class ClipboardPanelBinding(
         minimumHeight = dp(48)
         setPadding(dp(8), 0, dp(8), 0)
         thumbTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(accent, muted))
-        trackTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(0x66C5B3FF, 0xFF45454F.toInt()))
+        trackTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(0x668EDCBB, context.getColor(R.color.odicto_divider)))
         setOnCheckedChangeListener { _, enabled -> if (!updating) actions.automaticCapture(enabled) }
     }
     private val privacy = icon("Local only. Show clipboard privacy details", R.drawable.odicto_clipboard_info) {
@@ -172,7 +169,11 @@ internal class ClipboardPanelBinding(
         val safe = selected.filter { it in state.history && it !in state.pins }.toSet()
         if (safe.isNotEmpty()) actions.delete(safe)
     }
-    private val confirmation = column()
+    private val confirmation = column().apply {
+        background = context.getDrawable(R.drawable.odicto_clipboard_card)
+        setPadding(dp(8), dp(8), dp(8), dp(8))
+        layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) }
+    }
     private val list = column()
 
     init {
@@ -185,7 +186,7 @@ internal class ClipboardPanelBinding(
         }
         root.addView(LinearLayout(context).apply {
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), 0, dp(8), 0)
+            setPadding(dp(4), 0, dp(4), 0)
             addView(heading, LinearLayout.LayoutParams(0, -2, 1f))
             addView(select)
             addView(clear)
@@ -205,8 +206,8 @@ internal class ClipboardPanelBinding(
         content.addView(selectionBar)
         confirmation.addView(label("Clear recent clips? Pins stay saved. This cannot be undone.", 13f))
         confirmation.addView(LinearLayout(context).apply {
-            addView(textAction("Cancel") { confirming = false; render(); clear.requestFocus() }, LinearLayout.LayoutParams(0, -2, 1f))
-            addView(textAction("Clear recent") {
+            addView(textAction("Cancel", muted) { confirming = false; render(); clear.requestFocus() }, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(textAction("Clear recent", accent) {
                 confirming = false
                 render()
                 actions.clear()
@@ -214,7 +215,8 @@ internal class ClipboardPanelBinding(
             }, LinearLayout.LayoutParams(0, -2, 1f))
         })
         content.addView(confirmation)
-        content.addView(list)
+        // The list takes the space left over, so the empty state can sit in the middle of it.
+        content.addView(list, LinearLayout.LayoutParams(-1, 0, 1f))
         render()
     }
 
@@ -252,11 +254,13 @@ internal class ClipboardPanelBinding(
         select.setImageResource(if (selecting) R.drawable.odicto_clipboard_done else R.drawable.odicto_clipboard_select)
         select.contentDescription = if (selecting) "Done selecting clips" else "Select clips"
         select.isSelected = selecting
+        select.imageTintList = ColorStateList.valueOf(if (selecting) accent else ink)
         clear.isEnabled = state.history.isNotEmpty()
         clear.alpha = if (clear.isEnabled) 1f else 0.4f
         details.visibility = if (expanded) View.VISIBLE else View.GONE
         privacy.contentDescription = if (expanded) "Local only. Hide clipboard privacy details" else "Local only. Show clipboard privacy details"
         privacy.isSelected = expanded
+        privacy.imageTintList = ColorStateList.valueOf(if (expanded) accent else ink)
         selectionBar.visibility = if (selecting) View.VISIBLE else View.GONE
         selectedCount.text = "${selected.size} selected"
         delete.isEnabled = selected.isNotEmpty()
@@ -273,11 +277,12 @@ internal class ClipboardPanelBinding(
         if (oldOrder != newOrder || payloads.isEmpty()) {
             list.removeAllViews()
             rows.keys.retainAll(payloads.toSet())
-            if (payloads.isEmpty()) list.addView(label("No saved clips yet. Copy text in an eligible field while Odicto is active.", 14f, muted))
+            list.gravity = if (payloads.isEmpty()) Gravity.CENTER else Gravity.TOP
+            if (payloads.isEmpty()) list.addView(emptyState())
             for (item in newOrder) {
                 if (item is Boolean) list.addView(label(if (item) "Pinned" else "Recent", 12f, muted).apply {
                     tag = item
-                    setPadding(dp(8), dp(8), dp(8), dp(4))
+                    setPadding(dp(8), dp(12), dp(8), dp(6))
                     if (android.os.Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true
                 })
                 else if (item is String) list.addView(rows.getOrPut(item) { clipRow(item) })
@@ -293,6 +298,7 @@ internal class ClipboardPanelBinding(
         rows.forEach { (payload, row) ->
             val pinned = payload in state.pins
             val chosen = payload in selected
+            row.isSelected = chosen
             val text = row.getChildAt(0) as Button
             text.isSelected = chosen
             text.contentDescription = "${if (pinned) "Pinned clip" else "Clip"}. ${ClipboardPanel.preview(payload)}. " +
@@ -306,27 +312,38 @@ internal class ClipboardPanelBinding(
         }
     }
 
+    /** One short line and the instruction under it, centred in the space the list would fill. */
+    private fun emptyState() = column().apply {
+        gravity = Gravity.CENTER_HORIZONTAL
+        setPadding(dp(24), dp(24), dp(24), dp(24))
+        addView(label("Nothing saved yet", 15f, ink).apply { gravity = Gravity.CENTER })
+        addView(label("Copy text in an eligible field while Odicto is active.", 13f, muted).apply { gravity = Gravity.CENTER })
+    }
+
     private fun clipRow(payload: String) = LinearLayout(context).apply {
         tag = payload
         gravity = Gravity.CENTER_VERTICAL
-        minimumHeight = dp(72)
+        minimumHeight = dp(56)
         setPaddingRelative(0, 0, dp(8), 0)
-        layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(4) }
-        background = shape(surface)
-        addView(textAction(ClipboardPanel.preview(payload)) {
+        layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) }
+        background = context.getDrawable(R.drawable.odicto_clipboard_card)
+        addView(textAction(ClipboardPanel.preview(payload), ink) {
             if (selecting) {
                 if (payload !in state.pins && !selected.add(payload)) selected.remove(payload)
                 render()
             } else actions.paste(payload)
         }.apply {
+            textSize = 15f
             gravity = Gravity.CENTER_VERTICAL or Gravity.START
-            minimumHeight = dp(72)
-            maxLines = 3
+            minimumHeight = dp(56)
+            maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
             compoundDrawablePadding = dp(8)
+            compoundDrawableTintList = ColorStateList.valueOf(accent)
+            background = context.getDrawable(R.drawable.odicto_clipboard_card_press)
             setPadding(dp(12), dp(12), dp(8), dp(12))
         }, LinearLayout.LayoutParams(0, -2, 1f))
-        addView(icon("Pin clip", R.drawable.odicto_clipboard_pin) { actions.pin(payload, payload !in state.pins) }.apply {
+        addView(icon("Pin clip", R.drawable.odicto_clipboard_pin, muted) { actions.pin(payload, payload !in state.pins) }.apply {
             setPadding(dp(16), dp(16), dp(16), dp(16))
         })
     }
@@ -339,12 +356,12 @@ internal class ClipboardPanelBinding(
         setTextColor(color)
         setPadding(dp(8), dp(4), dp(8), dp(4))
     }
-    private fun textAction(value: String, click: () -> Unit) = Button(context).apply {
+    private fun textAction(value: String, color: Int, click: () -> Unit) = Button(context).apply {
         text = value
         textSize = 14f
         typeface = font
         isAllCaps = false
-        setTextColor(ink)
+        setTextColor(color)
         minWidth = 0
         minimumWidth = dp(48)
         minHeight = 0
@@ -352,28 +369,18 @@ internal class ClipboardPanelBinding(
         setPadding(dp(8), dp(8), dp(8), dp(8))
         stateListAnimator = null
         elevation = 0f
-        background = feedback()
+        background = context.getDrawable(R.drawable.odicto_suggestion_background)
         setOnClickListener { click() }
     }
-    private fun icon(name: String, drawable: Int, click: () -> Unit) = ImageButton(context).apply {
+    private fun icon(name: String, drawable: Int, tint: Int = ink, click: () -> Unit) = ImageButton(context).apply {
         contentDescription = name
         if (android.os.Build.VERSION.SDK_INT >= 26) tooltipText = name
         setImageResource(drawable)
-        imageTintList = ColorStateList.valueOf(accent)
-        setPadding(dp(14), dp(14), dp(14), dp(14))
-        background = feedback()
+        imageTintList = ColorStateList.valueOf(tint)
+        setPadding(dp(12), dp(12), dp(12), dp(12))
+        background = context.getDrawable(R.drawable.odicto_toolbar_button)
         layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
         setOnClickListener { click() }
     }
-    private fun shape(color: Int, border: Boolean = false) = GradientDrawable().apply {
-        setColor(color)
-        cornerRadius = dp(8).toFloat()
-        if (border) setStroke(dp(2), accent)
-    }
-    private fun feedback() = RippleDrawable(ColorStateList.valueOf(0x33C5B3FF), StateListDrawable().apply {
-        addState(intArrayOf(android.R.attr.state_focused), shape(surface, true))
-        addState(intArrayOf(android.R.attr.state_selected), shape(0xFF393044.toInt(), true))
-        addState(intArrayOf(), shape(android.graphics.Color.TRANSPARENT))
-    }, shape(android.graphics.Color.WHITE))
     private fun dp(value: Int) = (value * context.resources.displayMetrics.density + 0.5f).toInt()
 }

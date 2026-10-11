@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- copy: front rounded square with the visible edge of a second one behind -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.75" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M11.25,9 H17.75 A2.25,2.25 0 0 1 20,11.25 V17.75 A2.25,2.25 0 0 1 17.75,20 H11.25 A2.25,2.25 0 0 1 9,17.75 V11.25 A2.25,2.25 0 0 1 11.25,9 Z" />
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.75" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M9,15 H6.25 A2.25,2.25 0 0 1 4,12.75 V6.25 A2.25,2.25 0 0 1 6.25,4 H12.75 A2.25,2.25 0 0 1 15,6.25 V9" />
+</vector>

@@ -50,6 +50,63 @@ class KeyboardPointerContinuityTest {
         fun ordinals() = output.filter { it.key == OdictoKeyboardView.Key.BACKSPACE }.map { it.repeatOrdinal }
     }
 
+    @Test fun geometryChangesCancelEveryHoldAndPreservePage() {
+        for (change in listOf("wide", "narrow", "orientation", "padding", "density")) {
+            for (name in listOf("Space", "q", ",", "Backspace", "secondary")) for (wait in listOf(0L, 310L)) {
+                val t = Trial()
+                fun resize(width: Int) {
+                    t.view.requestLayout()
+                    t.view.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+                    t.view.layout(0, 0, t.view.measuredWidth, t.view.measuredHeight)
+                }
+                val width = (824 * t.context.resources.displayMetrics.density).toInt()
+                resize(width)
+                t.view.setUppercaseChoiceListener { { fail("stale uppercase accepted"); false } }
+                t.view.setDragListener({ _, _ -> fail("stale cursor movement") }, { true })
+                val primary = if (name == "secondary") "q" else name
+                t.send(MotionEvent.ACTION_DOWN, 7 to primary)
+                if (name == "secondary") t.send(MotionEvent.ACTION_POINTER_DOWN or (1 shl 8), 7 to "q", 12 to "Backspace")
+                t.advance(wait)
+                val before = t.output.toList()
+                val oldCap = t.key(primary)
+                val metrics = t.context.resources.displayMetrics
+                val oldDensity = metrics.density
+                val config = t.context.resources.configuration
+                val oldOrientation = config.orientation
+                try {
+                    when (change) {
+                        "orientation" -> {
+                            config.orientation = if (oldOrientation == 2) 1 else 2
+                            t.view.dispatchConfigurationChanged(config)
+                        }
+                        "padding" -> t.view.setPadding(9, 3, 13, 5)
+                        "density" -> metrics.density = oldDensity * 1.1f
+                    }
+                    resize(when (change) { "wide" -> width + 100; "narrow" -> (400 * oldDensity).toInt(); else -> width })
+                    assertNotSame(oldCap, t.key(primary))
+                    t.advance(500)
+                    t.send(MotionEvent.ACTION_MOVE, 7 to primary)
+                    t.send(MotionEvent.ACTION_UP, 7 to primary)
+                    if (name == "secondary") t.send(MotionEvent.ACTION_UP, 12 to "Backspace")
+                    assertEquals("$change/$name/$wait", before, t.output)
+                    assertNull(t.view.visiblePreview())
+                    t.send(MotionEvent.ACTION_DOWN, 20 to "q")
+                    t.send(MotionEvent.ACTION_UP, 20 to "q")
+                    assertEquals(before.size + 1, t.output.size)
+                    t.view.showPage(OdictoKeyboardView.Page.SYMBOLS)
+                    resize(width)
+                    t.view.setPadding(1, 2, 3, 4)
+                    resize(width)
+                    assertNotNull(t.key("₹"))
+                } finally {
+                    metrics.density = oldDensity
+                    config.orientation = oldOrientation
+                    t.view.cancelTouch()
+                }
+            }
+        }
+    }
+
     @Test fun blockedGateRetainsHoldAndOrdinalUntilEvidenceReturns() {
         val t = Trial()
         var ready = false

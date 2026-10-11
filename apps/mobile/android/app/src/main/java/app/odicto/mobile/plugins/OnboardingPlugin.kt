@@ -18,6 +18,27 @@ import com.getcapacitor.annotation.CapacitorPlugin
 
 @CapacitorPlugin(name = "OdictoOnboarding")
 class OnboardingPlugin : Plugin() {
+    /**
+     * The keyboard picker is a system dialog over the app, so the page never leaves the screen
+     * and has no moment to re-check. Android reports the change here instead; the page re-reads
+     * status on "statusChanged". The event carries no data.
+     */
+    private val keyboardWatcher = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) { notifyListeners("statusChanged", JSObject()) }
+    }
+
+    override fun load() {
+        super.load()
+        for (key in listOf(Settings.Secure.DEFAULT_INPUT_METHOD, Settings.Secure.ENABLED_INPUT_METHODS)) {
+            runCatching { context.contentResolver.registerContentObserver(Settings.Secure.getUriFor(key), false, keyboardWatcher) }
+        }
+    }
+
+    override fun handleOnDestroy() {
+        runCatching { context.contentResolver.unregisterContentObserver(keyboardWatcher) }
+        super.handleOnDestroy()
+    }
+
     @PluginMethod fun status(call: PluginCall) {
         // ENABLED_INPUT_METHODS is restricted to system/legacy-target apps on modern Android.
         // Use InputMethodManager's public list so onboarding cannot crash the process.

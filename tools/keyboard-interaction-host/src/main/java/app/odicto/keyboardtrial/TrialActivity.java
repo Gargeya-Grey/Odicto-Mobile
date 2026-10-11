@@ -22,6 +22,8 @@ public final class TrialActivity extends Activity {
     TextView results;
     String seed = "";
     boolean transientReads;
+    int editorActionCalls;
+    int enterKeyEvents;
     boolean readsUnavailable() {
         long elapsed = android.os.SystemClock.uptimeMillis()-probe.start;
         return transientReads && probe.running && elapsed >= 150 && elapsed < 750;
@@ -36,7 +38,14 @@ public final class TrialActivity extends Activity {
 
     public void onCreate(Bundle state) {
         super.onCreate(null);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        String preview = getIntent().getStringExtra("geometry_preview");
+        boolean geometryPreview = "portrait".equals(preview) || "landscape".equals(preview);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        if (geometryPreview) {
+            setRequestedOrientation("portrait".equals(preview)
+                ? android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                : android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+        } else getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(12, 24, 12, 8);
@@ -70,7 +79,8 @@ public final class TrialActivity extends Activity {
         root.addView(scroll, new LinearLayout.LayoutParams(-1, dp(90)));
         setContentView(root);
         active = first;
-        prepare(generated());
+        if (geometryPreview && getIntent().getBooleanExtra("spelling_preview", false)) prepareCorrectionProfile("normal");
+        else prepare(generated());
     }
 
     static String generated() {
@@ -100,13 +110,52 @@ public final class TrialActivity extends Activity {
         active.setSelection(active.length());
         focus(active);
         ime().restartInput(active);
+        editorActionCalls = 0;
+        enterKeyEvents = 0;
         probe.start();
+    }
+    void prepareCorrectionProfile(String profile) {
+        int inputType = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE;
+        int options = EditorInfo.IME_ACTION_NONE | EditorInfo.IME_FLAG_NO_EXTRACT_UI;
+        boolean singleLine = false;
+        switch (profile) {
+            case "normal": break;
+            case "password":
+                inputType = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD;
+                singleLine = true;
+                break;
+            case "email":
+                inputType = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS;
+                singleLine = true;
+                break;
+            case "uri":
+                inputType = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI;
+                singleLine = true;
+                break;
+            case "noSuggestions": inputType |= InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS; break;
+            case "noLearning": options |= EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING; break;
+            default: throw new IllegalArgumentException();
+        }
+        active = first;
+        first.setInputType(inputType);
+        first.setSingleLine(singleLine);
+        first.setImeOptions(options);
+        second.setInputType(InputType.TYPE_CLASS_TEXT);
+        second.setSingleLine(true);
+        second.setImeOptions(EditorInfo.IME_ACTION_NONE | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+        prepare("seed ");
     }
     String report(String scenario, boolean exact, int expected) {
         String value = probe.finish(scenario, exact, expected, active.length());
         results.setText(value);
         Log.i(TAG, value);
         return value;
+    }
+    public void onWindowFocusChanged(boolean focused) {
+        super.onWindowFocusChanged(focused);
+        if (focused && active != null && getIntent().hasExtra("geometry_preview")) {
+            active.post(() -> focus(active));
+        }
     }
     protected void onResume() { super.onResume(); resumed=true; Choreographer.getInstance().postFrameCallback(frame); }
     protected void onPause() { resumed=false; Choreographer.getInstance().removeFrameCallback(frame); super.onPause(); }
@@ -152,7 +201,14 @@ public final class TrialActivity extends Activity {
         public boolean deleteSurroundingText(int b,int a) { return timed(probe.apply, () -> super.deleteSurroundingText(b,a)); }
         public boolean deleteSurroundingTextInCodePoints(int b,int a) { return timed(probe.apply, () -> super.deleteSurroundingTextInCodePoints(b,a)); }
         public boolean setSelection(int s,int e) { return timed(probe.apply, () -> super.setSelection(s,e)); }
-        public boolean sendKeyEvent(KeyEvent e) { return timed(probe.apply, () -> super.sendKeyEvent(e)); }
+        public boolean sendKeyEvent(KeyEvent e) {
+            if (e.getKeyCode() == KeyEvent.KEYCODE_ENTER) enterKeyEvents++;
+            return timed(probe.apply, () -> super.sendKeyEvent(e));
+        }
+        public boolean performEditorAction(int action) {
+            editorActionCalls++;
+            return super.performEditorAction(action);
+        }
         public CharSequence getTextBeforeCursor(int n,int f) { return timed(probe.read, () -> readsUnavailable() ? null : super.getTextBeforeCursor(n,f)); }
         public CharSequence getTextAfterCursor(int n,int f) { return timed(probe.read, () -> readsUnavailable() ? null : super.getTextAfterCursor(n,f)); }
         public CharSequence getSelectedText(int f) { return timed(probe.read, () -> readsUnavailable() ? null : super.getSelectedText(f)); }
