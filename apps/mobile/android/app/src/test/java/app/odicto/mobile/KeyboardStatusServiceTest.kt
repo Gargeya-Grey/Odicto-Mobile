@@ -21,20 +21,22 @@ import java.time.Duration
 @RunWith(RobolectricTestRunner::class)
 @LooperMode(LooperMode.Mode.PAUSED)
 class KeyboardStatusServiceTest {
+    private data class Geometry(val height: Int, val controls: List<Rect>, val keys: List<Rect>, val tools: Rect)
     private fun children(view: View): List<View> = listOf(view) + if (view is ViewGroup) (0 until view.childCount).flatMap { children(view.getChildAt(it)) } else emptyList()
-    private fun measure(root: View, width: Int = 360, maximum: Int = 800): Pair<Int, List<Rect>> {
+    private fun measure(root: View, width: Int = 360, maximum: Int = 800): Geometry {
         val density = root.resources.displayMetrics.density
         repeat(2) {
+            children(root).forEach { it.forceLayout() }
             root.measure(View.MeasureSpec.makeMeasureSpec((width * density).toInt(), View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec((maximum * density).toInt(), View.MeasureSpec.AT_MOST))
             root.layout(0, 2000 - root.measuredHeight, root.measuredWidth, 2000)
         }
         val persistent = children(root).filter { it.contentDescription in listOf("Raw transcription with Groq", "AI answer", "Live transcription") || it.id == R.id.ime_polish || it.id == R.id.function_row }
-        return root.height to persistent.map { view ->
-            var x = view.left; var y = view.top
-            var parent = view.parent
-            while (parent is View) { x += parent.left; y += parent.top; parent = parent.parent }
-            Rect(x, y, x + view.width, y + view.height)
+        fun bounds(view: View) = Rect(0, 0, view.width, view.height).also {
+            (root as ViewGroup).offsetDescendantRectToMyCoords(view, it)
+            it.offset(0, -root.height)
         }
+        val keys = children(root.findViewById(R.id.ime_keyboard)).filter { it.contentDescription in listOf("q", "Space", "Backspace") }
+        return Geometry(root.height, persistent.map(::bounds), keys.map(::bounds), bounds(root.findViewById(R.id.function_row)))
     }
     private fun render(service: OdictoImeService) {
         service.javaClass.getDeclaredMethod("renderTopStatus").apply { isAccessible = true }.invoke(service)
@@ -43,35 +45,47 @@ class KeyboardStatusServiceTest {
         service.javaClass.getDeclaredMethod("showPolishStatus", String::class.java, Boolean::class.javaPrimitiveType).apply { isAccessible = true }.invoke(service, message, busy)
     }
 
-    @Test fun bottomAnchoredGeometrySurvivesStatesPanelsAndExpiryAtRegularCompactAndLandscapeSizes() {
+    @Test fun activeMessagesStayStableAndExpiryRemovesTheHeaderAtRegularCompactAndConstrainedSizes() {
         val previous = VoiceSession.state.value
         VoiceSession.update { VoiceUi() }
         val owner = Robolectric.buildService(OdictoImeService::class.java).create()
         try {
             val service = owner.get()
             val root = service.onCreateInputView()
+            root.findViewById<View>(R.id.ime_keyboard_toggle).performClick()
             service.onWindowShown()
             val status = root.findViewById<TextView>(R.id.ime_polish_status)
             for ((width, height) in listOf(300 to 800, 360 to 800, 420 to 800, 720 to 220)) {
-                val baseline = measure(root, width, height)
-                for (phase in listOf("connecting", "recording", "processing", "done", "error", "notice", "idle")) {
+                VoiceSession.update { VoiceUi() }; shadowOf(Looper.getMainLooper()).idle(); polish(service, "")
+                val idle = measure(root, width, height)
+                assertEquals(View.GONE, root.findViewById<View>(R.id.ime_assistance).visibility)
+                var active: Geometry? = null
+                for (phase in listOf("connecting", "recording", "processing", "done", "error", "notice")) {
                     VoiceSession.update { VoiceUi(phase = phase, resultId = phase, message = "Long warning\n".repeat(30), finalText = if (phase == "done") "synthetic" else "", delivery = DeliveryOutcome.REJECTED_STALE) }
                     shadowOf(Looper.getMainLooper()).idle()
                     render(service)
-                    assertEquals("$width/$height/$phase", baseline, measure(root, width, height))
+                    val current = measure(root, width, height)
+                    if (active == null) active = current else assertEquals("$width/$height/$phase", active, current)
+                    assertEquals("bottom tools stay anchored as content appears", idle.tools, current.tools)
+                    if (height >= 800) {
+                        assertTrue("an unconstrained content row must add height", current.height > idle.height)
+                        assertEquals("keys stay bottom-anchored where no height compression is needed", idle.keys, current.keys)
+                    }
+                    assertEquals(View.VISIBLE, status.visibility)
                     assertEquals(1, status.maxLines)
                     assertFalse(status.isClickable)
                     assertFalse(status.text.contains('\n'))
                 }
                 polish(service, "Copied")
-                assertEquals(baseline, measure(root, width, height))
+                assertEquals(active, measure(root, width, height))
                 shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(3000))
                 assertEquals(View.INVISIBLE, status.visibility)
-                assertEquals(baseline, measure(root, width, height))
+                assertEquals(View.GONE, root.findViewById<View>(R.id.ime_assistance).visibility)
+                assertEquals("expiry restores the empty geometry", idle, measure(root, width, height))
                 for (panel in listOf(R.id.emoji_panel, R.id.clipboard_panel)) {
                     root.findViewById<View>(R.id.ime_keyboard).visibility = View.INVISIBLE
                     root.findViewById<View>(panel).visibility = View.VISIBLE
-                    assertEquals(baseline, measure(root, width, height))
+                    assertEquals(idle, measure(root, width, height))
                     root.findViewById<View>(panel).visibility = View.GONE
                     root.findViewById<View>(R.id.ime_keyboard).visibility = View.VISIBLE
                 }
@@ -93,24 +107,36 @@ class KeyboardStatusServiceTest {
         } finally { owner.destroy(); VoiceSession.update { previous } }
     }
 
-    @Test fun scaledFontsReserveTheirSingleLineBeforeAnyMessage() {
+    @Test fun scaledFontMessagesUseOneLineAndIdleTakesNoStatusSpace() {
+        val previous = VoiceSession.state.value
+        VoiceSession.update { VoiceUi() }
         val owner = Robolectric.buildService(OdictoImeService::class.java).create()
         val service = owner.get()
         val resources = service.resources
         val original = android.content.res.Configuration(resources.configuration)
+        val originalMetrics = android.util.DisplayMetrics().apply { setTo(resources.displayMetrics) }
         try {
             @Suppress("DEPRECATION")
             resources.updateConfiguration(android.content.res.Configuration(original).apply { fontScale = 2f }, resources.displayMetrics)
             val root = service.onCreateInputView()
             val baseline = measure(root, 300, 220)
+            assertEquals(View.GONE, root.findViewById<View>(R.id.ime_assistance).visibility)
             polish(service, "A long warning\n".repeat(30))
-            assertEquals(baseline, measure(root, 300, 220))
+            val populated = measure(root, 300, 220)
+            assertTrue(populated.height > baseline.height)
+            val status = root.findViewById<TextView>(R.id.ime_polish_status)
+            assertEquals(1, status.maxLines)
+            assertFalse(status.text.contains('\n'))
+            assertTrue(status.height >= status.lineHeight)
+            polish(service, "Copied")
+            assertEquals(populated, measure(root, 300, 220))
             polish(service, "")
             assertEquals(baseline, measure(root, 300, 220))
         } finally {
             @Suppress("DEPRECATION")
-            resources.updateConfiguration(original, resources.displayMetrics)
+            resources.updateConfiguration(original, originalMetrics)
             owner.destroy()
+            VoiceSession.update { previous }
         }
     }
 
@@ -157,6 +183,7 @@ class KeyboardStatusServiceTest {
         try {
             val service = owner.get()
             val root = service.onCreateInputView()
+            root.findViewById<View>(R.id.ime_keyboard_toggle).performClick()
             service.onWindowShown()
             val baseline = measure(root)
             // Seed only a synthetic retained result; provider/delivery guards have their own coordinator tests.

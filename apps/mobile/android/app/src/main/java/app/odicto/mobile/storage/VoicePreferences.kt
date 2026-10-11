@@ -21,6 +21,8 @@ data class KeySettings(
     val recentEmoji: List<String> = emptyList(),
     val pinnedClips: List<String> = emptyList(),
     val clipHistory: List<String> = emptyList(),
+    val tapTolerance: Int = 2,
+    val autocorrectEnabled: Boolean = false,
 ) {
     companion object {
         const val SIZE_SMALL = "small"
@@ -79,6 +81,8 @@ object VoicePreferences {
         return settings.keys.hapticLevel
     }
 
+    fun toleranceOf(settings: VoiceSettings): Int = settings.keys.tapTolerance.coerceIn(0, 2)
+
     @Synchronized fun initialize(context: Context) {
         if (started) return
         started = true
@@ -122,6 +126,8 @@ object VoicePreferences {
                             keySize = preferences[stringPreferencesKey("voice_key_size")]
                                 ?.takeIf { it in KeySettings.SIZES } ?: KeySettings.SIZE_MEDIUM,
                             keyFont = keyFont,
+                            tapTolerance = ((preferences.asMap().entries.firstOrNull { it.key.name == "voice_tap_tolerance" }?.value as? Int) ?: 2).coerceIn(0, 2),
+                            autocorrectEnabled = preferences[booleanPreferencesKey("voice_autocorrect_enabled")] ?: false,
                             pinnedEmoji = readList(preferences, "voice_pinned_emoji", SEPARATOR, MAX_PINNED),
                             recentEmoji = readList(preferences, "voice_recent_emoji", SEPARATOR, MAX_RECENT),
                             pinnedClips = readList(preferences, "voice_pinned_clips", CLIP_SEPARATOR, MAX_PINNED),
@@ -147,15 +153,19 @@ object VoicePreferences {
             p[intPreferencesKey("voice_haptic_level")] = value.keys.hapticLevel
             p[stringPreferencesKey("voice_key_size")] = value.keys.keySize
             p[stringPreferencesKey("voice_key_font")] = value.keys.keyFont
+            p[intPreferencesKey("voice_tap_tolerance")] = toleranceOf(value)
+            p[booleanPreferencesKey("voice_autocorrect_enabled")] = value.keys.autocorrectEnabled
             p[booleanPreferencesKey("voice_key_font_migrated")] = true
             p[stringPreferencesKey("voice_pinned_emoji")] = value.keys.pinnedEmoji.joinToString(SEPARATOR)
             p[stringPreferencesKey("voice_recent_emoji")] = value.keys.recentEmoji.joinToString(SEPARATOR)
         }
-        mutable.value = value
+        mutable.value = normalized(value)
     }
 
+    private fun normalized(value: VoiceSettings): VoiceSettings = value.copy(keys = value.keys.copy(tapTolerance = toleranceOf(value)))
+
     fun update(context: Context, transform: (VoiceSettings) -> VoiceSettings) {
-        val value = transform(mutable.value); mutable.value = value
+        val value = normalized(transform(mutable.value)); mutable.value = value
         scope.launch { save(context, value) }
     }
 

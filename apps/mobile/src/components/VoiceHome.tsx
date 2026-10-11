@@ -493,6 +493,47 @@ export function VoiceHome() {
               <div className="voice-separator" />
               <div className="voice-row voice-row-stacked">
                 <div>
+                  <h3>Tap tolerance</h3>
+                  <p id="tap-tolerance-help">
+                    Keep the visible gaps. Forgiving uses each key’s full touch
+                    cell; Precise uses only the visible key. Touch regions never
+                    overlap. This does not change hardware touch sensitivity.
+                  </p>
+                  <p>
+                    Using a screen protector on Samsung? Try Settings &gt;
+                    Display &gt; Touch sensitivity, if available. Odicto does
+                    not change this system setting.
+                  </p>
+                </div>
+                <div
+                  className="voice-segmented"
+                  role="radiogroup"
+                  aria-label="Tap tolerance"
+                  aria-describedby="tap-tolerance-help"
+                >
+                  {(
+                    [
+                      [0, 'Precise'],
+                      [1, 'Balanced'],
+                      [2, 'Forgiving'],
+                    ] as const
+                  ).map(([tolerance, label]) => (
+                    <button
+                      key={tolerance}
+                      type="button"
+                      role="radio"
+                      aria-checked={(settings?.tapTolerance ?? 2) === tolerance}
+                      disabled={!settings || saving}
+                      onClick={() => void save({ tapTolerance: tolerance })}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="voice-separator" />
+              <div className="voice-row voice-row-stacked">
+                <div>
                   <h3>Key font</h3>
                   <p>
                     System is the Android default. Google Sans Flex is the face
@@ -522,6 +563,35 @@ export function VoiceHome() {
                     </button>
                   ))}
                 </div>
+              </div>
+              <div className="voice-separator" />
+              <div className="voice-row">
+                <div>
+                  <h3>Autocorrect (English)</h3>
+                  <p id="autocorrect-help">
+                    Fix common typos on this device. Press Backspace after a
+                    correction to undo it. Suggestions appear with the keyboard
+                    expanded.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="voice-switch"
+                  role="switch"
+                  aria-checked={settings?.autocorrectEnabled ?? false}
+                  aria-label="Autocorrect (English)"
+                  aria-describedby="autocorrect-help"
+                  disabled={!settings || saving}
+                  onClick={() =>
+                    void save({
+                      autocorrectEnabled: !(
+                        settings?.autocorrectEnabled ?? false
+                      ),
+                    })
+                  }
+                >
+                  <span />
+                </button>
               </div>
               <div className="voice-separator" />
               <div className="voice-row">

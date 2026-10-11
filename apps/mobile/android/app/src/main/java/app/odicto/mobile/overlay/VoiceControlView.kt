@@ -25,8 +25,12 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
     var dragEnd: (() -> Unit)? = null
     var mirrored = false
         set(value) { if (field != value) { field = value; render(ui) } }
+    private val collapseTimer = Runnable { render(ui) }
     private var expanded = keyboard
+    private fun openOptions() { OverlayPresentation.reopen(); render(ui) }
     private var compactKeyboard = false
+    private var keyboardCellDp = 48
+    private var overlayHeightDp = Int.MAX_VALUE
     private var ui = VoiceSession.state.value
     private var held = false
     private var moving = false
@@ -70,6 +74,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         }
     }
     init {
+        if (!keyboard) OverlayPresentation.start(OverlayPresentation.recommendedTimeout(context))
         clipChildren = false; clipToPadding = false
         panel.addView(status); panel.addView(preview)
         addView(pill); addView(panel); listOf(back, settings, raw, ai, live, lock, cancel, copy, mic).forEach { it.compactSurface = keyboard; addView(it) }
@@ -86,7 +91,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
             }
             override fun performAccessibilityAction(host: View, action: Int, arguments: android.os.Bundle?): Boolean {
                 if (action == optionsAction && !ui.busy) {
-                    if (keyboard) openSettings() else { expanded = true; render(ui) }
+                    if (keyboard) openSettings() else openOptions()
                     return true
                 }
                 return super.performAccessibilityAction(host, action, arguments)
@@ -95,13 +100,23 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         mic.setOnTouchListener { _, event -> touch(event) }
         lock.setOnClickListener { VoiceSession.lock(); feedback(HapticFeedbackConstants.LONG_PRESS) }
         raw.setOnClickListener { choose("raw") }; ai.setOnClickListener { choose("ai") }; live.setOnClickListener { choose("live") }
-        back.setOnClickListener { expanded = false; if (!ui.busy) VoiceSession.update { VoiceUi(mode = VoicePreferences.state.value.mode) }; render(VoiceSession.state.value); feedback(HapticFeedbackConstants.CLOCK_TICK) }
+        back.setOnClickListener { OverlayPresentation.collapse(); render(ui); feedback(HapticFeedbackConstants.CLOCK_TICK) }
         settings.setOnClickListener { if (!ui.busy) openSettings() }
         cancel.setOnClickListener { VoiceSession.cancel(context); feedback(HapticFeedbackConstants.LONG_PRESS) }
         copy.setOnClickListener {
             if (keyboard && !keyboardCopyAllowed()) {
                 keyboardNotice("Copy unavailable in this field")
                 return@setOnClickListener
+            }
+            if (!keyboard) {
+                val allowed = try {
+                    DictationCoordinator.refreshTarget()
+                    !DictationCoordinator.protectedField.value && DictationCoordinator.activeEditorSession != null
+                } catch (_: Exception) { false }
+                if (!allowed) {
+                    Toast.makeText(context, "Copy unavailable in this field", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
             }
             val text = listOf(ui.finalText, ui.interim).filter { it.isNotBlank() }.joinToString(" ")
             if (text.isNotBlank()) {
@@ -111,8 +126,11 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
                         keyboardNotice("Copied")
                     } catch (_: Exception) { keyboardNotice("Could not copy result") }
                 } else {
-                    (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Odicto", text))
-                    Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                    val message = try {
+                        (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Odicto", text))
+                        "Copied"
+                    } catch (_: Exception) { "Could not copy result" }
+                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                 }
                 feedback(HapticFeedbackConstants.CLOCK_TICK)
             }
@@ -144,10 +162,23 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         view.layoutParams = LayoutParams(dp(w), dp(h)).apply { leftMargin = left; topMargin = dp(y) }
     }
     fun setKeyboardCompact(compact: Boolean) {
-        if (!keyboard || compactKeyboard == compact) return
-        compactKeyboard = compact
-        expanded = !compact
+        setKeyboardCellWidth(if (compact) 40 else 48)
+    }
+
+    fun setKeyboardCellWidth(widthDp: Int) {
+        if (!keyboard || keyboardCellDp == widthDp) return
+        keyboardCellDp = widthDp
+        compactKeyboard = widthDp < 48
+        expanded = !compactKeyboard
         lastLayout = ""
+        render(ui)
+    }
+
+    fun setOverlayAvailableHeight(heightPx: Int) {
+        if (keyboard) return
+        val heightDp = (heightPx / density).toInt()
+        if (overlayHeightDp == heightDp) return
+        overlayHeightDp = heightDp
         render(ui)
     }
 
@@ -155,17 +186,24 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         val previous = ui
         ui = value
         if (keyboard) { renderKeyboard(value, previous); return }
+        OverlayPresentation.observe(value)
+        val terminalVisible = OverlayPresentation.visible()
+        expanded = OverlayPresentation.options
+        removeCallbacks(collapseTimer)
+        if (isAttachedToWindow) OverlayPresentation.remaining()?.let { postDelayed(collapseTimer, it.coerceAtLeast(1)) }
         val showPreview = VoicePreferences.state.value.showTextPreview
         val explained = value.phase == "error" || value.phase == "notice"
-        val hasMessage = (value.mode != "live" && (value.busy || value.phase == "done")) || explained
-        val compactStatus = hasMessage && !showPreview && !explained
+        val retained = value.finalText.isNotBlank() || value.interim.isNotBlank()
+        val hasMessage = (value.busy && value.mode != "live") || terminalVisible || (expanded && (retained || explained))
+        val compactStatus = hasMessage && !showPreview && !explained && !expanded
         // An explanation must stay readable even with the transcript preview turned off, or the user only
         // sees a red X with no reason attached.
         val showStatus = showPreview || explained
         val shortWindow = resources.configuration.screenHeightDp < 480
-        val signature = "${value.phase}:${value.locked}:${value.mode}:$expanded:$mirrored:$compactKeyboard:${DictationCoordinator.activeEditorSession}:${VoicePreferences.state.value.mode}:$showPreview:$shortWindow"
+        val hasPanelSpace = overlayHeightDp >= if (shortWindow) 164 else 184
+        val signature = "${value.phase}:${value.locked}:${value.mode}:$expanded:$hasMessage:$retained:$mirrored:$compactKeyboard:${DictationCoordinator.activeEditorSession}:${VoicePreferences.state.value.mode}:$showPreview:$shortWindow:$hasPanelSpace"
         if (lastLayout == signature) {
-            if (!compactKeyboard && showPreview && hasMessage && (value.finalText != previous.finalText || value.interim != previous.interim)) updatePreview(value)
+            if (!compactKeyboard && hasPanelSpace && showPreview && hasMessage && (value.finalText != previous.finalText || value.interim != previous.interim)) updatePreview(value)
             if (!value.active && value.message != previous.message) status.text = value.message
             mic.level = value.level; return
         }
@@ -180,7 +218,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         }
         val full = expanded || hasMessage || keyboard || value.busy
         val newWidth = if (keyboard && compactKeyboard) 72 else if (full) 304 else 72
-        val newHeight = if (keyboard && compactKeyboard || !hasMessage || !showStatus || compactStatus) 72 else if (shortWindow) 164 else 184
+        val newHeight = if (!hasPanelSpace) 72 else if (expanded && hasMessage) { if (shortWindow) 164 else 184 } else if (!hasMessage || !showStatus || compactStatus) 72 else if (shortWindow) 164 else 184
         val changed = surfaceWidth != newWidth || surfaceHeight != newHeight
         surfaceWidth = newWidth; surfaceHeight = newHeight
         if (changed) resize?.invoke(dp(surfaceWidth), dp(surfaceHeight))
@@ -188,7 +226,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         val mx = surfaceWidth - 64
         listOf(pill, panel, back, settings, raw, ai, live, lock, cancel, copy).forEach { it.visibility = View.GONE }
         place(mic, mx, row, 56, 56)
-        if (!compactKeyboard && (expanded || keyboard) && !hasMessage && !value.busy) {
+        if (expanded && !value.busy) {
             pill.visibility = View.VISIBLE; place(pill, 4, row, 296, 56)
             listOf(back, settings, raw, ai, live).forEach { it.visibility = View.VISIBLE }
             place(back, 8, row + 8, 40, 40); place(settings, 52, row + 8, 40, 40)
@@ -205,12 +243,12 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         if (value.busy && !compactKeyboard) {
             cancel.visibility = View.VISIBLE; place(cancel, 128, row + 4, 48, 48)
         }
-        if (hasMessage && !compactKeyboard) {
+        if (hasMessage && !compactKeyboard && hasPanelSpace) {
             panel.visibility = if (showStatus) View.VISIBLE else View.GONE
             // Without a transcript, status shares the controls row instead of reserving a card.
             panel.background = if (compactStatus) null else round(0xF51B1B23.toInt(), 20f)
             panel.setPadding(dp(if (compactStatus) 4 else 16), dp(if (compactStatus) 0 else 12), dp(if (compactStatus) 4 else 16), dp(if (compactStatus) 0 else 12))
-            val panelWidth = if (compactStatus) 112 else 288
+            val panelWidth = if (expanded && retained) 224 else if (compactStatus) 112 else 288
             val panelHeight = if (compactStatus) 48 else surfaceHeight - 76
             val panelTop = if (compactStatus) row + 4 else 8
             place(panel, 8, panelTop, panelWidth, panelHeight)
@@ -225,15 +263,21 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
                 status.visibility = View.GONE
             }
         }
-        if ((!showPreview || compactKeyboard) && preview.text.isNotEmpty()) preview.text = ""
-        if (!compactKeyboard && !value.busy && hasMessage && (value.finalText.isNotBlank() || value.interim.isNotBlank())) { copy.visibility = View.VISIBLE; place(copy, 128, row + 4, 48, 48) }
-        if (!compactKeyboard && !value.busy && hasMessage) { back.visibility = View.VISIBLE; place(back, 184, row + 4, 48, 48) }
+        if ((!showPreview || compactKeyboard || !hasPanelSpace) && preview.text.isNotEmpty()) preview.text = ""
+        if (!value.busy && hasMessage && retained) {
+            copy.visibility = View.VISIBLE
+            if (expanded && !hasPanelSpace) {
+                settings.visibility = View.GONE
+                place(copy, 52, row + 8, 40, 40)
+            } else place(copy, if (expanded) 240 else 128, if (expanded) row - 56 else row + 4, 48, 48)
+        }
+        if (!value.busy && hasMessage && !expanded) { back.visibility = View.VISIBLE; place(back, 184, row + 4, 48, 48) }
         val mode = if (value.busy) value.mode else VoicePreferences.state.value.mode
         raw.highlighted = mode == "raw"; ai.highlighted = mode == "ai"; live.highlighted = mode == "live"
         raw.isEnabled = !value.busy; ai.isEnabled = !value.busy; live.isEnabled = !value.busy
         mic.kind = when {
-            !showPreview && value.phase == "done" && value.inserted -> "done"
-            !showPreview && explained -> "error"
+            hasMessage && !showPreview && value.phase == "done" && value.inserted -> "done"
+            hasMessage && !showPreview && explained -> "error"
             value.active && value.locked -> "finish"
             value.phase == "processing" || value.phase == "connecting" -> "wait"
             else -> "mic"
@@ -254,7 +298,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         mic.invalidate()
     }
     private fun renderKeyboard(value: VoiceUi, previous: VoiceUi) {
-        val cell = if (compactKeyboard) 40 else 48
+        val cell = keyboardCellDp
         val extra = value.busy || value.finalText.isNotBlank() || value.interim.isNotBlank()
         val width = cell * 6
         val changed = surfaceWidth != width || surfaceHeight != 48
@@ -335,7 +379,10 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
                     !ui.busy -> {
                         if (tapSequence.release(e.downTime, e.eventTime, false)) {
                             if (keyboard) openSettings()
-                            else { expanded = !expanded; render(ui); feedback(HapticFeedbackConstants.CLOCK_TICK) }
+                            else {
+                                if (expanded) OverlayPresentation.collapse() else OverlayPresentation.reopen()
+                                render(ui); feedback(HapticFeedbackConstants.CLOCK_TICK)
+                            }
                         }
                     }
                 }
@@ -350,7 +397,8 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         }
         return true
     }
-    override fun onDetachedFromWindow() { removeCallbacks(beginHold); super.onDetachedFromWindow() }
+    override fun onAttachedToWindow() { super.onAttachedToWindow(); if (!keyboard) render(ui) }
+    override fun onDetachedFromWindow() { removeCallbacks(collapseTimer); removeCallbacks(beginHold); super.onDetachedFromWindow() }
 
     private class Icon(context: Context, kind: String, description: String) : View(context) {
         var compactSurface = false

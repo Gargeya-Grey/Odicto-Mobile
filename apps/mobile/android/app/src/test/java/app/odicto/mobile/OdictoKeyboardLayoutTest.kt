@@ -39,6 +39,13 @@ import java.time.Duration
  */
 @RunWith(RobolectricTestRunner::class)
 class OdictoKeyboardLayoutTest {
+    @org.junit.Before fun preciseTargets() = kotlinx.coroutines.runBlocking {
+        app.odicto.mobile.storage.VoicePreferences.save(context, app.odicto.mobile.storage.VoiceSettings(keys = app.odicto.mobile.storage.KeySettings(tapTolerance = 0)))
+    }
+    @org.junit.After fun restoreTargets() = kotlinx.coroutines.runBlocking {
+        app.odicto.mobile.storage.VoicePreferences.save(context, app.odicto.mobile.storage.VoiceSettings())
+    }
+
     private val context get() = ApplicationProvider.getApplicationContext<android.content.Context>()
 
     private fun inflate(): View =
@@ -157,7 +164,7 @@ class OdictoKeyboardLayoutTest {
 
     @Test fun theToolbarSitsBelowTheKeysAndLettersStartWithANumberRow() {
         val root = inflate()
-        val column = root.findViewById<LinearLayout>(R.id.ime_column)
+        val column = root.findViewById<LinearLayout>(R.id.ime_typing_area)
         val toolbar = root.findViewById<View>(R.id.function_row)
         val grid = root.findViewById<View>(R.id.ime_content)
         val toolbarIndex = (0 until column.childCount).indexOfFirst { column.getChildAt(it) === toolbar }
@@ -187,7 +194,7 @@ class OdictoKeyboardLayoutTest {
             keyboard.measure(widthSpec, heightSpec)
             keyboard.layout(0, 0, 1080, 200)
 
-            val expectedRows = if (page == OdictoKeyboardView.Page.LETTERS) 5 else 4
+            val expectedRows = 5
             assertEquals("page $page row count", expectedRows, keyboard.childCount)
             val rowHeights = (0 until keyboard.childCount).map { keyboard.getChildAt(it).height }
             val letterRows = rowHeights.dropLast(1)
@@ -647,31 +654,39 @@ class OdictoKeyboardLayoutTest {
     }
 
     @Test fun emojiAndClipboardReplaceTheKeyGridInsteadOfCollapsing() {
-        val service = Robolectric.buildService(OdictoImeService::class.java).create().get()
-        val root = LayoutInflater.from(service).inflate(R.layout.ime_keyboard, null, false)
-        val controller = KeyboardController(service, root)
-        val info = EditorInfo().apply { inputType = InputType.TYPE_CLASS_TEXT }
-        controller.onStartInput(info)
-        val keyboard = root.findViewById<View>(R.id.ime_keyboard)
-        measure(root)
-        val keyHeight = keyboard.height
-        assertTrue("keys must have a height before a panel opens", keyHeight > 80)
+        val serviceOwner = Robolectric.buildService(OdictoImeService::class.java).create()
+        val service = serviceOwner.get()
+        val host = Robolectric.buildActivity(android.app.Activity::class.java).setup()
+        try {
+            val root = LayoutInflater.from(service).inflate(R.layout.ime_keyboard, null, false)
+            host.get().setContentView(root)
+            val controller = KeyboardController(service, root)
+            val info = EditorInfo().apply { inputType = InputType.TYPE_CLASS_TEXT }
+            controller.onStartInput(info)
+            val keyboard = root.findViewById<View>(R.id.ime_keyboard)
+            measure(root)
+            val keyHeight = keyboard.height
+            assertTrue("keys must have a height before a panel opens", keyHeight > 80)
 
-        root.findViewById<View>(R.id.function_emoji).performClick()
-        measure(root)
-        val emoji = root.findViewById<LinearLayout>(R.id.emoji_panel)
-        assertEquals(View.VISIBLE, emoji.visibility)
-        assertEquals(View.INVISIBLE, keyboard.visibility)
-        assertTrue("emoji panel collapsed to ${emoji.height}, keys were $keyHeight", emoji.height >= keyHeight - 4)
-        assertTrue("emoji panel must contain glyphs", containsEmoji(emoji))
-        assertFalse("emoji must not be forced onto Lora", emojiUsesLora(emoji))
+            root.findViewById<View>(R.id.function_emoji).performClick()
+            Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            measure(root)
+            val emoji = root.findViewById<LinearLayout>(R.id.emoji_panel)
+            assertEquals(View.VISIBLE, emoji.visibility)
+            assertEquals(View.INVISIBLE, keyboard.visibility)
+            assertTrue("emoji panel collapsed to ${emoji.height}, keys were $keyHeight", emoji.height >= keyHeight - 4)
+            assertTrue("emoji panel must contain glyphs", containsEmoji(emoji))
+            assertFalse("emoji must not be forced onto Lora", emojiUsesLora(emoji))
 
-        root.findViewById<View>(R.id.function_clipboard).performClick()
-        measure(root)
-        val clipboard = root.findViewById<View>(R.id.clipboard_panel)
-        assertEquals(View.VISIBLE, clipboard.visibility)
-        assertEquals(View.GONE, emoji.visibility)
-        assertTrue("clipboard panel collapsed to ${clipboard.height}", clipboard.height >= keyHeight - 4)
+            root.findViewById<View>(R.id.function_clipboard).performClick()
+            Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            measure(root)
+            val clipboard = root.findViewById<View>(R.id.clipboard_panel)
+            assertEquals(View.VISIBLE, clipboard.visibility)
+            assertEquals(View.GONE, emoji.visibility)
+            assertTrue("clipboard panel collapsed to ${clipboard.height}", clipboard.height >= keyHeight - 4)
+            controller.dispose()
+        } finally { host.pause().stop().destroy(); serviceOwner.destroy() }
     }
 
     private fun laidOutKeyboard(): OdictoKeyboardView {

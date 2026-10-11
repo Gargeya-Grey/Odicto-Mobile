@@ -16,6 +16,13 @@ import java.time.Duration
 
 @RunWith(RobolectricTestRunner::class)
 class KeyboardPrecisionViewTest {
+    @org.junit.Before fun preciseTargets() = kotlinx.coroutines.runBlocking {
+        app.odicto.mobile.storage.VoicePreferences.save(context, app.odicto.mobile.storage.VoiceSettings(keys = app.odicto.mobile.storage.KeySettings(tapTolerance = 0)))
+    }
+    @org.junit.After fun restoreTargets() = kotlinx.coroutines.runBlocking {
+        app.odicto.mobile.storage.VoicePreferences.save(context, app.odicto.mobile.storage.VoiceSettings())
+    }
+
     private val context get() = ApplicationProvider.getApplicationContext<Context>()
     private fun layout(view: View, dp: Int) {
         view.measure(View.MeasureSpec.makeMeasureSpec((dp * context.resources.displayMetrics.density).toInt(), View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
@@ -53,10 +60,14 @@ class KeyboardPrecisionViewTest {
         view.setOnKeyListener { pressed += it.output }
         for (page in OdictoKeyboardView.Page.entries) {
             view.showPage(page)
-            layout(view, 600)
+            layout(view, 616)
             val spaces = keys(view).filter { it.contentDescription == "Space" }
             assertEquals(2, spaces.size)
-            spaces.forEach { it.performClick() }
+            spaces.forEach {
+                val p = point(it)
+                touch(view, MotionEvent.ACTION_DOWN, p.first, p.second)
+                touch(view, MotionEvent.ACTION_UP, p.first, p.second)
+            }
             assertEquals(listOf(" ", " "), pressed)
             pressed.clear()
             for (row in 0 until view.childCount) {
@@ -66,7 +77,7 @@ class KeyboardPrecisionViewTest {
             }
             assertTrue(pressed.isEmpty())
         }
-        layout(view, 599)
+        layout(view, 615)
         assertEquals(1, keys(view).count { it.contentDescription == "Space" })
     }
     @Test fun busyStateKeepsShortSpaceTapButSuppressesDragging() {

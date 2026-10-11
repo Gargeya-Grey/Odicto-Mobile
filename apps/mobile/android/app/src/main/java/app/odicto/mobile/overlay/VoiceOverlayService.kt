@@ -20,6 +20,7 @@ class VoiceOverlayService : Service() {
     private val manager by lazy { getSystemService(WINDOW_SERVICE) as WindowManager }
     private var control: VoiceControlView? = null
     private var params: WindowManager.LayoutParams? = null
+    private var preferredBottom: Int? = null
     private var screenOff = false
     private var recovery: Job? = null
     private var recoveryAttempts = 0
@@ -41,11 +42,12 @@ class VoiceOverlayService : Service() {
         // window kills the process with ForegroundServiceDidNotStartInTimeException before any of
         // onStartCommand can run, and sticky restarts then loop on the same crash.
         if (!promote()) return
+        OverlayPresentation.start(OverlayPresentation.recommendedTimeout(this))
         VoicePreferences.initialize(this)
         val filter = IntentFilter().apply { addAction(Intent.ACTION_SCREEN_OFF); addAction(Intent.ACTION_SCREEN_ON); addAction(Intent.ACTION_USER_PRESENT) }
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, filter, RECEIVER_NOT_EXPORTED) else registerReceiver(receiver, filter)
         registered = true
-        scope.launch { combine(VoicePreferences.state, DictationCoordinator.protectedField, DictationCoordinator.state, DictationCoordinator.keyboardVisible) { _, _, _, _ -> Unit }.collect { refresh() } }
+        scope.launch { combine(VoicePreferences.state, DictationCoordinator.protectedField, DictationCoordinator.state, DictationCoordinator.keyboardVisible, DictationCoordinator.keyboardTopPx) { _, _, _, _, _ -> Unit }.collect { refresh() } }
         // Audio-level ticks only update an existing view; they do not recheck window permissions.
         scope.launch { VoiceSession.state.collect { control?.render(it) } }
     }
@@ -85,14 +87,23 @@ class VoiceOverlayService : Service() {
         stopSelf()
     }
     // The bubble stays on screen whenever the user enabled it and the permission is granted.
-    // Only the Odicto keyboard hides it, because that keyboard already shows the microphone.
+    // Both surfaces control the same VoiceSession; IME visibility never disables the bubble.
     private fun refresh() {
         if (VoicePreferences.ready.value && unusable()) { stop(); return }
-        if (!VoicePreferences.state.value.enabled || DictationCoordinator.keyboardVisible.value || screenOff || !Settings.canDrawOverlays(this)) { hide(); return }
+        if (!VoicePreferences.state.value.enabled || screenOff || !Settings.canDrawOverlays(this)) { hide(); return }
         if (getSystemService(KeyguardManager::class.java).isKeyguardLocked) { hide(); recover(); return }
+        // If even the mic cannot fit, the visible IME microphone remains the fallback.
+        if (bounds().second < (72 * resources.displayMetrics.density).toInt()) { hide(); return }
         if (control == null && DictationCoordinator.activeEditorSession == null) refreshTarget()
         if (control == null) show()
+        control?.setOverlayAvailableHeight(bounds().second)
         control?.render(VoiceSession.state.value)
+        val view = control ?: return
+        val layout = params ?: return
+        val previousY = layout.y
+        preferredBottom?.let { layout.y = it - layout.height }
+        clamp(layout)
+        if (layout.y != previousY) update(view, layout)
     }
     /**
      * Resolving the target reads the focused node across processes. Do it when the bubble is about to
@@ -107,8 +118,9 @@ class VoiceOverlayService : Service() {
     }
     private fun show() {
         val view = VoiceControlView(this)
-        val size = view.requiredWidth
         val bounds = bounds()
+        view.setOverlayAvailableHeight(bounds.second)
+        val size = view.requiredWidth
         val settings = VoicePreferences.state.value
         val layout = WindowManager.LayoutParams(size, view.requiredHeight,
             if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
@@ -120,17 +132,24 @@ class VoiceOverlayService : Service() {
             if (Build.VERSION.SDK_INT >= 28) layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER
         }
         control = view; params = layout
+        preferredBottom = layout.y + layout.height
         view.resize = { width, height ->
             val micAnchorX = if (view.mirrored) layout.x + view.dp(8) else layout.x + layout.width - view.dp(64)
-            layout.y -= height - layout.height
+            layout.y = (preferredBottom ?: (layout.y + layout.height)) - height
             layout.width = width
             layout.height = height
             layout.x = if (view.mirrored) micAnchorX - view.dp(8) else micAnchorX - (layout.width - view.dp(64))
             clamp(layout); update(view, layout)
         }
-        view.drag = { dx, dy -> layout.x += dx.toInt(); layout.y += dy.toInt(); clamp(layout); update(view, layout) }
+        view.drag = { dx, dy ->
+            layout.x += dx.toInt(); layout.y += dy.toInt()
+            clamp(layout)
+            if (dy.toInt() != 0) preferredBottom = layout.y + layout.height
+            update(view, layout)
+        }
         view.dragEnd = {
-            VoicePreferences.update(this) { it.copy(x = layout.x, y = layout.y) }
+            val preferredY = (preferredBottom ?: (layout.y + layout.height)) - layout.height
+            VoicePreferences.update(this) { it.copy(x = layout.x, y = preferredY) }
             view.mirrored = layout.x < bounds().first / 2
         }
         clamp(layout)
@@ -141,9 +160,15 @@ class VoiceOverlayService : Service() {
         if (Build.VERSION.SDK_INT >= 30) {
             val metrics = manager.currentWindowMetrics
             val inset = metrics.windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
-            return (metrics.bounds.width() - inset.left - inset.right) to (metrics.bounds.height() - inset.top - inset.bottom)
+            return (metrics.bounds.width() - inset.left - inset.right) to visibleHeight(metrics.bounds.height() - inset.top - inset.bottom, inset.top)
         }
-        return resources.displayMetrics.widthPixels to resources.displayMetrics.heightPixels
+        return resources.displayMetrics.widthPixels to visibleHeight(resources.displayMetrics.heightPixels, 0)
+    }
+    private fun visibleHeight(screenHeight: Int, topInset: Int): Int {
+        val keyboardTop = DictationCoordinator.keyboardTopPx.value
+        if (!DictationCoordinator.keyboardVisible.value || keyboardTop == null) return screenHeight
+        val gap = (8 * resources.displayMetrics.density).toInt()
+        return minOf(screenHeight, keyboardTop - topInset - gap).coerceAtLeast(0)
     }
     private fun clamp(layout: WindowManager.LayoutParams) {
         val (w, h) = bounds(); layout.x = layout.x.coerceIn(0, maxOf(0, w - layout.width)); layout.y = layout.y.coerceIn(0, maxOf(0, h - layout.height))
@@ -165,7 +190,7 @@ class VoiceOverlayService : Service() {
     }
     private fun hide() {
         val view = control ?: return
-        control = null; params = null
+        control = null; params = null; preferredBottom = null
         view.resize = null; view.drag = null; view.dragEnd = null
         // addView registers the root before isAttachedToWindow becomes true.
         // Remove that root even when focus/permissions change in the same frame.

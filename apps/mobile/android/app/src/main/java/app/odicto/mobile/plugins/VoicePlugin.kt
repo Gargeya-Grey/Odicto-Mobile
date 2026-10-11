@@ -34,7 +34,7 @@ class VoicePlugin : Plugin() {
                 val keys = withContext(Dispatchers.IO) { val store = SecureCredentialStore(context); Triple(!store.get("voice-gemini").isNullOrEmpty(), !store.get("voice-openrouter").isNullOrEmpty(), !store.get("voice-groq").isNullOrEmpty()) }
                 val show = activity?.intent?.getBooleanExtra("voice_settings", false) == true; activity?.intent?.removeExtra("voice_settings")
                 val model = settings.model.ifBlank { if (settings.provider == "openrouter") "poolside/laguna-xs-2.1:free" else "" }
-                call.resolve(JSObject().put("enabled", settings.enabled).put("mode", settings.mode).put("provider", settings.provider).put("model", model).put("liveModel", settings.liveModel).put("systemPrompt", settings.systemPrompt).put("polishModel", settings.polishModel).put("polishSystemPrompt", settings.polishSystemPrompt).put("haptics", settings.haptics).put("hapticLevel", VoicePreferences.levelOf(settings)).put("keySize", settings.keys.keySize).put("keyFont", settings.keys.keyFont).put("pinnedEmoji", JSArray().apply { settings.keys.pinnedEmoji.forEach { put(it) } }).put("showTextPreview", settings.showTextPreview).put("paused", settings.paused).put("geminiKeySet", keys.first).put("openrouterKeySet", keys.second).put("groqKeySet", keys.third).put("openSettings", show))
+                call.resolve(JSObject().put("enabled", settings.enabled).put("mode", settings.mode).put("provider", settings.provider).put("model", model).put("liveModel", settings.liveModel).put("systemPrompt", settings.systemPrompt).put("polishModel", settings.polishModel).put("polishSystemPrompt", settings.polishSystemPrompt).put("haptics", settings.haptics).put("hapticLevel", VoicePreferences.levelOf(settings)).put("keySize", settings.keys.keySize).put("keyFont", settings.keys.keyFont).put("tapTolerance", VoicePreferences.toleranceOf(settings)).put("autocorrectEnabled", settings.keys.autocorrectEnabled).put("pinnedEmoji", JSArray().apply { settings.keys.pinnedEmoji.forEach { put(it) } }).put("showTextPreview", settings.showTextPreview).put("paused", settings.paused).put("geminiKeySet", keys.first).put("openrouterKeySet", keys.second).put("groqKeySet", keys.third).put("openSettings", show))
             } catch (_: Exception) { call.reject("Could not read voice settings") }
         }
     }
@@ -82,12 +82,17 @@ class VoicePlugin : Plugin() {
         val hapticLevel = (call.getInt("hapticLevel") ?: currentKeys.hapticLevel).coerceIn(0, 3)
         val keySize = (call.getString("keySize") ?: currentKeys.keySize).takeIf { it in KeySettings.SIZES } ?: currentKeys.keySize
         val keyFont = (call.getString("keyFont") ?: currentKeys.keyFont).takeIf { it in KeySettings.FONTS } ?: currentKeys.keyFont
+        val suppliedTolerance = (call.data.opt("tapTolerance") as? Number)?.toDouble()
+        val tapTolerance = suppliedTolerance?.takeIf { it.isFinite() && it % 1.0 == 0.0 }
+            ?.coerceIn(0.0, 2.0)?.toInt() ?: currentKeys.tapTolerance.coerceIn(0, 2)
         val pinned = call.getArray("pinnedEmoji")?.toList<String>()
             ?: currentKeys.pinnedEmoji
         val nextKeys = currentKeys.copy(
             hapticLevel = hapticLevel,
             keySize = keySize,
             keyFont = keyFont,
+            tapTolerance = tapTolerance,
+            autocorrectEnabled = call.data.opt("autocorrectEnabled") as? Boolean ?: currentKeys.autocorrectEnabled,
             pinnedEmoji = pinned.map { it.trim() }.filter { it.isNotEmpty() }.distinct().take(VoicePreferences.MAX_PINNED),
         )
         scope.launch {
@@ -99,7 +104,11 @@ class VoicePlugin : Plugin() {
                         if (key != null) { if (key.isBlank()) keys.remove("voice-$name") else keys.put("voice-$name", key.trim()) }
                     }
                     val requestedModel = call.getString("model")?.trim()
-                    val model = if (provider == "openrouter") requestedModel?.ifBlank { "poolside/laguna-xs-2.1:free" } ?: "poolside/laguna-xs-2.1:free" else requestedModel ?: VoicePreferences.state.value.model
+                    val model = when {
+                        requestedModel != null -> if (provider == "openrouter") requestedModel.ifBlank { "poolside/laguna-xs-2.1:free" } else requestedModel
+                        provider == "openrouter" && provider != VoicePreferences.state.value.provider -> "poolside/laguna-xs-2.1:free"
+                        else -> VoicePreferences.state.value.model
+                    }
                     VoicePreferences.save(context, VoicePreferences.state.value.copy(systemPrompt = prompt, polishModel = polishModel, polishSystemPrompt = polishPrompt, enabled = call.getBoolean("enabled") ?: VoicePreferences.state.value.enabled, paused = call.getBoolean("paused") ?: VoicePreferences.state.value.paused, keys = nextKeys, mode = mode, provider = provider, model = model, liveModel = call.getString("liveModel")?.trim()?.ifBlank { "gemini-3.5-transcribe-live" } ?: VoicePreferences.state.value.liveModel, haptics = call.getBoolean("haptics") ?: VoicePreferences.state.value.haptics, showTextPreview = call.getBoolean("showTextPreview") ?: VoicePreferences.state.value.showTextPreview))
                 }
                 VoiceOverlayController.sync(context, scope)

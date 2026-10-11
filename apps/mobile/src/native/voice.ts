@@ -13,6 +13,8 @@ export type VoiceSettings = {
   haptics: boolean;
   /** 0 off, 1 light, 2 medium, 3 strong. Replaces the old boolean for the user. */
   hapticLevel: number;
+  tapTolerance: 0 | 1 | 2;
+  autocorrectEnabled: boolean;
   keySize: 'small' | 'medium' | 'large';
   keyFont: 'system' | 'sansflex';
   pinnedEmoji: string[];

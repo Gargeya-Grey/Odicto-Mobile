@@ -23,7 +23,8 @@ internal class DelayedEditorReplayFixture(initial: String) : AutoCloseable {
     val keyboard: OdictoKeyboardView = root.findViewById(R.id.ime_keyboard)
     val editor = Editor(View(service), initial)
     var connection: Editor = editor
-    val controller = KeyboardController(service, root) { connection }
+    var connectionAvailable = true
+    val controller = KeyboardController(service, root) { connection.takeIf { connectionAvailable } }
     private var downTime = 0L
     private var notified = initial.length
     private var nextNotification = 0L
@@ -57,6 +58,12 @@ internal class DelayedEditorReplayFixture(initial: String) : AutoCloseable {
 
     fun press(key: String) { downTime = SystemClock.uptimeMillis(); event(MotionEvent.ACTION_DOWN, key) }
     fun release(key: String) = event(MotionEvent.ACTION_UP, key)
+    fun moveSpace(steps: Int) {
+        val (x, y) = center("Space")
+        val distance = (4f * service.resources.displayMetrics.density).toInt().coerceAtLeast(1)
+        val event = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_MOVE, x + steps * distance, y, 0)
+        try { keyboard.dispatchTouchEvent(event) } finally { event.recycle() }
+    }
     fun tap(key: String) { press(key); release(key) }
 
     fun twoThumbs(first: String, second: String, primaryFirst: Boolean, remainingHoldMs: Long = 10) {
@@ -118,6 +125,8 @@ internal class DelayedEditorReplayFixture(initial: String) : AutoCloseable {
         var readCount = 0
         var metadataReadCount = 0
         var rejectWrites = false
+        var throwOnCommit = false
+        var beforeCursorRead: (() -> Unit)? = null
         var wordOverlapped = false
         val submissionTimes = mutableListOf<Long>()
         val appliedDeleteSizes = mutableListOf<Int>()
@@ -126,8 +135,22 @@ internal class DelayedEditorReplayFixture(initial: String) : AutoCloseable {
         override fun beginBatchEdit(): Boolean { batchDepth++; return true }
         override fun endBatchEdit(): Boolean { batchDepth--; check(batchDepth >= 0); return true }
         override fun getTextBeforeCursor(length: Int, flags: Int): CharSequence? {
+            beforeCursorRead?.invoke()
             readCount++
             return if (readable) readText.take(minOf(readCursor, readEnd)).takeLast(length) else null
+        }
+        val selections = mutableListOf<Int>()
+        var beforeRead: (() -> Unit)? = null
+        override fun getTextAfterCursor(length: Int, flags: Int): CharSequence? {
+            readCount++
+            beforeRead?.invoke()
+            return if (readable) readText.drop(maxOf(readCursor, readEnd)).take(length) else null
+        }
+        override fun setSelection(start: Int, end: Int): Boolean {
+            if (rejectWrites || start !in 0..text.length || end !in 0..text.length) return false
+            selections += start
+            pending += Pending(SystemClock.uptimeMillis() + delay, false) { cursor = start; selectionEnd = end }
+            return true
         }
         override fun getSelectedText(flags: Int): CharSequence = readText.substring(minOf(readCursor, readEnd), maxOf(readCursor, readEnd))
         override fun finishComposingText(): Boolean { finishCompositionCalls++; return true }
@@ -140,6 +163,8 @@ internal class DelayedEditorReplayFixture(initial: String) : AutoCloseable {
             return SurroundingText(readText.substring(from, to), readCursor - from, readEnd - from, from)
         }
         override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean {
+            if (throwOnCommit) throw IllegalStateException("Synthetic commit failure")
+            if (rejectWrites) return false
             val value = text.toString()
             pending += Pending(SystemClock.uptimeMillis() + delay, false) {
                 val start = minOf(cursor, selectionEnd)

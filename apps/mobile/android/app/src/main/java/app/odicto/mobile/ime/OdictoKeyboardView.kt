@@ -64,9 +64,13 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
     )
 
     private val handler = Handler(Looper.getMainLooper())
-    private var geometryWidth = -1
+    private data class GeometryInputs(val width: Int, val left: Int, val top: Int, val right: Int, val bottom: Int, val density: Float, val orientation: Int)
+    private var geometryInputs: GeometryInputs? = null
     private var geometryHeight = -1
     private var split = false
+    private var splitPitch = 0
+    private var splitEdge = 0
+    private var splitGap = 0
     private var spaceHold: Runnable? = null
     private var uppercaseCapture: ((KeySpec) -> (() -> Boolean)?)? = null
     private var uppercaseAccept: (() -> Boolean)? = null
@@ -133,7 +137,8 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
         repeating = false
     }
 
-    fun cancelTouch() {
+    fun cancelTouch(countInvalidation: Boolean = true) {
+        if (countInvalidation && (activeCell != null || secondaryCell != null)) KeyLatencyProbe.outcome(KeyLatencyProbe.Outcome.INTERACTION_INVALIDATED)
         spaceGesture?.cancel()
         spaceGesture = null
         releaseActive()
@@ -154,7 +159,7 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
         applyEnterFace()
     }
 
-    internal fun keyGapDp(): Float = KEY_GAP_DP
+    internal fun keyGapDp(): Float = 2f
 
     /** The character drawn above the pressed key, if a finger is down on one. */
     internal fun visiblePreview(): String? = magnifierText
@@ -262,29 +267,34 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
                     androidx.core.view.accessibility.AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_LONG_CLICK,
                     "Type uppercase ${spec.output.uppercase()}") { _, _ -> cap.performLongClick() }
             }
-            line.addView(cap, keyParams(weight))
+            val params = keyParams(if (split) 0f else weight)
+            if (split) params.width = (splitPitch * weight).toInt() - gapPx() * 2
+            line.addView(cap, params)
         }
         if (split) {
+            fun blank(pixels: Int) {
+                if (pixels > 0) line.addView(gapView(), LayoutParams(pixels, LayoutParams.MATCH_PARENT))
+            }
             val spaceIndex = row.indexOfFirst { it.key == Key.SPACE }
             val halves = if (spaceIndex >= 0) {
-                val space = row[spaceIndex].copy(weight = row[spaceIndex].weight / 2f)
-                (row.take(spaceIndex) + space) to (listOf(space) + row.drop(spaceIndex + 1))
+                (row.take(spaceIndex) + row[spaceIndex]) to (listOf(row[spaceIndex]) + row.drop(spaceIndex + 1))
             } else row.take((row.size + 1) / 2) to row.drop((row.size + 1) / 2)
-            val leftMargins = halves.first.size * gapPx() * 2
-            val rightMargins = halves.second.size * gapPx() * 2
-            val sideWidth = ((geometryWidth - paddingLeft - paddingRight - SPLIT_GAP_DP * density) / 2f)
-            // Thumb-reach inset on each outer edge, one key wide for the five-key halves, so the
-            // outermost columns sit inside a comfortable thumb arc instead of at the screen edge.
-            val edgeMargin = (sideWidth / 6f).toInt()
-            fun addHalf(half: List<KeySpec>, margins: Int) {
-                val total = half.sumOf { it.weight.toDouble() }.toFloat()
-                half.forEach { addKey(it, it.weight / total * (sideWidth - edgeMargin - margins).coerceAtLeast(1f)) }
+            val spaceUnits = SPLIT_COLUMNS - maxOf(halves.first.size - 1, halves.second.size - 1)
+            fun addHalf(half: List<KeySpec>, right: Boolean) {
+                val used = half.sumOf { if (it.key == Key.SPACE) spaceUnits else 1 }
+                val empty = (SPLIT_COLUMNS - used) * splitPitch
+                if (right && spaceIndex < 0) blank(empty)
+                half.forEach {
+                    addKey(it, if (it.key == Key.SPACE) spaceUnits.toFloat() else 1f)
+                    if (right && it.key == Key.SPACE) blank(empty)
+                }
+                if (!right) blank(empty)
             }
-            line.addView(gapView(), LayoutParams(edgeMargin, LayoutParams.MATCH_PARENT))
-            addHalf(halves.first, leftMargins)
-            line.addView(gapView(), LayoutParams((SPLIT_GAP_DP * density).toInt(), LayoutParams.MATCH_PARENT))
-            addHalf(halves.second, rightMargins)
-            line.addView(gapView(), LayoutParams(edgeMargin, LayoutParams.MATCH_PARENT))
+            blank(splitEdge)
+            addHalf(halves.first, false)
+            blank(splitGap)
+            addHalf(halves.second, true)
+            blank(splitEdge)
         } else {
             if (centeredNine) line.addView(gapView(), keyParams(0.5f))
             row.forEach { addKey(it) }
@@ -398,6 +408,9 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (!BuildConfig.DEBUG) return handleTouch(event)
+        if (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
+            KeyLatencyProbe.outcome(KeyLatencyProbe.Outcome.CONTACT_RECEIVED)
+        }
         val previous = touchEntryNanos
         val entry = android.os.SystemClock.elapsedRealtimeNanos()
         touchEntryNanos = entry
@@ -413,7 +426,7 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
             MotionEvent.ACTION_DOWN -> {
                 val touched = touchEntryNanos
                 requestUnbufferedDispatch(event)
-                cancelTouch()
+                cancelTouch(false)
                 primaryId = event.getPointerId(0)
                 pressAt(event.x, event.y, primary = true, touchAtNanos = touched)
                 return true
@@ -431,7 +444,7 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
                     clearSecondary()
                     secondaryId = event.getPointerId(index)
                     pressAt(event.getX(index), event.getY(index), primary = false, touchAtNanos = touched)
-                }
+                } else KeyLatencyProbe.outcome(KeyLatencyProbe.Outcome.EXTRA_CONTACT)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
@@ -488,11 +501,12 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
                     trackUppercase(event.x, event.y)
                     releasePrimary()
                 }
-                cancelTouch()
+                cancelTouch(false)
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
-                cancelTouch()
+                if (primaryId != -1 || secondaryId != -1) KeyLatencyProbe.outcome(KeyLatencyProbe.Outcome.PLATFORM_CANCEL)
+                cancelTouch(false)
                 return true
             }
         }
@@ -500,8 +514,28 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
     }
 
     private fun pressAt(x: Float, y: Float, primary: Boolean, touchAtNanos: Long) {
-        val cell = cellAt(x, y) ?: return
-        if (BuildConfig.DEBUG) KeyLatencyProbe.hit(touchAtNanos, android.os.SystemClock.elapsedRealtimeNanos())
+        val cell = cellAt(x, y)
+        if (cell == null) {
+            if (BuildConfig.DEBUG) {
+                val margin = gapPx()
+                val inMargin = cells.any {
+                    val row = it.cap.parent as View
+                    x >= it.cap.left + row.left - margin && x < it.cap.right + row.left + margin &&
+                        y >= it.cap.top + row.top - margin && y < it.cap.bottom + row.top + margin
+                }
+                KeyLatencyProbe.outcome(if (inMargin) KeyLatencyProbe.Outcome.KEY_MARGIN_MISS else KeyLatencyProbe.Outcome.STRUCTURAL_MISS)
+            }
+            return
+        }
+        if (BuildConfig.DEBUG) {
+            KeyLatencyProbe.outcome(KeyLatencyProbe.Outcome.KEY_CONTACT)
+            val row = cell.cap.parent as View
+            if (x < cell.cap.left + row.left || x >= cell.cap.right + row.left ||
+                y < cell.cap.top + row.top || y >= cell.cap.bottom + row.top) {
+                KeyLatencyProbe.outcome(KeyLatencyProbe.Outcome.MARGIN_RECOVERED)
+            }
+            KeyLatencyProbe.hit(touchAtNanos, android.os.SystemClock.elapsedRealtimeNanos())
+        }
         if (!primary) {
             secondaryCell = cell
             cell.cap.setPressedVisual(true)
@@ -774,7 +808,7 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
         releaseRepeat(primaryId)
     }
 
-    private fun gapPx(): Int = (KEY_GAP_DP * density).toInt().coerceAtLeast(1)
+    private fun gapPx(): Int = (keyGapDp() * density).toInt().coerceAtLeast(1)
 
     private fun cellAt(x: Float, y: Float): Cell? = cells.firstOrNull {
         x >= it.rect.left && x < it.rect.right && y >= it.rect.top && y < it.rect.bottom
@@ -782,9 +816,22 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val available = MeasureSpec.getSize(widthMeasureSpec)
-        if (available != geometryWidth) {
-            geometryWidth = available
-            split = (available - paddingLeft - paddingRight) / density >= 600f
+        val inputs = GeometryInputs(available, paddingLeft, paddingTop, paddingRight, paddingBottom, density, resources.configuration.orientation)
+        if (inputs != geometryInputs) {
+            geometryInputs = inputs
+            val content = (available - paddingLeft - paddingRight).coerceAtLeast(0)
+            val landscape = inputs.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+            val budget = if (landscape) content / density - SPLIT_PITCH_BUDGET * MIN_SPLIT_PITCH_DP
+                else content / density - PORTRAIT_UNSPLIT_DP
+            val gapDp = budget.coerceIn(0f, if (landscape) SPLIT_GAP_DP else PORTRAIT_GAP_DP)
+                .let { if (it < MIN_SPLIT_GAP_DP) 0f else it }
+            split = gapDp > 0f
+            val gap = (gapDp * density).toInt()
+            splitEdge = if (split) (content - gap) / SPLIT_PITCH_BUDGET else 0
+            splitPitch = (content - gap - splitEdge * 2) / (SPLIT_COLUMNS * 2)
+            val remainder = content - gap - splitEdge * 2 - splitPitch * SPLIT_COLUMNS * 2
+            splitEdge += remainder / 2
+            splitGap = gap + remainder % 2
             showPage(activePage)
         }
         val naturalHeight = rowHeightPx * (childCount - 1 + SPACE_ROW_SCALE)
@@ -805,6 +852,13 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
             cancelTouch()
             geometryHeight = measuredHeight
         }
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        cancelTouch()
+        geometryInputs = null
+        super.onConfigurationChanged(newConfig)
+        requestLayout()
     }
 
     private val density get() = resources.displayMetrics.density
@@ -831,12 +885,16 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
             super.onLayout(changed, left, top, right, bottom)
         }
         cells.clear()
+        val touchInset = 2 - VoicePreferences.toleranceOf(VoicePreferences.state.value)
+        val insetPx = if (touchInset == 0) 0 else (touchInset * density).toInt().coerceAtLeast(1)
+        val expansion = (gapPx() - insetPx).coerceAtLeast(0)
         for (row in 0 until childCount) {
             val line = getChildAt(row) as? LinearLayout ?: continue
             for (column in 0 until line.childCount) {
                 val cap = line.getChildAt(column) as? KeyCap ?: continue
                 cells += Cell(
-                    Rect(cap.left + line.left, cap.top + line.top, cap.right + line.left, cap.bottom + line.top),
+                    Rect(cap.left + line.left - expansion, cap.top + line.top - expansion,
+                        cap.right + line.left + expansion, cap.bottom + line.top + expansion),
                     cap.spec,
                     cap,
                 )
@@ -845,7 +903,7 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
     }
 
     private fun alignEnterWithBackspace(): Boolean {
-        if (enterMatched) return false
+        if (split || enterMatched) return false
         val backspace = findCap(Key.BACKSPACE) ?: return false
         val enter = findCap(Key.ENTER) ?: return false
         val enterRow = enter.parent as? LinearLayout ?: return false
@@ -1078,10 +1136,15 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
 
         private const val ROW_HEIGHT_WEIGHT = 0f
         private const val SHIFT_DOUBLE_MS = 400L
-        private const val KEY_GAP_DP = 2f
 
         /** Center gap of the split keyboard, wide enough that both thumbs stay on their own half. */
         private const val SPLIT_GAP_DP = 375f
+        private const val PORTRAIT_GAP_DP = 64f
+        private const val PORTRAIT_UNSPLIT_DP = 600f
+        private const val MIN_SPLIT_GAP_DP = 16f
+        private const val MIN_SPLIT_PITCH_DP = 48f
+        private const val SPLIT_PITCH_BUDGET = 12
+        private const val SPLIT_COLUMNS = 5
         private const val PUNCT_SHOW_MS = 170L
         private const val PUNCT_SLIDE_DP = 28f
         private const val PUNCT_CELL_DP = 34f
@@ -1122,7 +1185,8 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
 
         private val NUMBERS_LAYOUT: List<List<KeySpec>> = listOf(
             listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0").map { char(it) },
-            listOf("-", "/", ":", ";", "(", ")", "$", "&", "@").map { char(it) },
+            listOf("-", "/", ":", ";", "(", ")", "$", "&", "@", "\"").map { char(it) },
+            listOf("#", "%", "*", "+", "=", "_", "[", "]", "<", ">").map { char(it) },
             listOf(
                 control(Key.SYMBOLS, "#+=", 1.5f), char("."), char(","), char("?"), char("!"),
                 icon(Key.BACKSPACE, "Backspace", 1.5f, R.drawable.odicto_ic_backspace),
@@ -1135,6 +1199,7 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
         private val SYMBOLS_LAYOUT: List<List<KeySpec>> = listOf(
             listOf("₹", "€", "£", "¥", "¢", "•", "▪", "‣", "⁃", "◦").map { char(it) },
             listOf("→", "←", "↑", "↓", "↔", "↕", "▶", "◀", "▲", "▼").map { char(it) },
+            listOf("{", "}", "\\", "|", "~", "^", "“", "”", "‘", "’").map { char(it) },
             listOf(
                 control(Key.NUMBERS, "123", 1.5f), char("`"), char("¡"), char("𝕏"), char("™"),
                 icon(Key.BACKSPACE, "Backspace", 1.5f, R.drawable.odicto_ic_backspace),

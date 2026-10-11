@@ -59,8 +59,10 @@ class OdictoImeDeviceTest {
         assertFalse(EditorPolicy.permits(protected))
         assertFalse(EditorPolicy.emojiPermits(protected))
         assertFalse(EditorPolicy.clipboardPermits(protected))
-        // Typing is still allowed: the user is not prevented from entering their own words.
-        assertTrue(EditorPolicy.manualPermits(protected))
+        // Context-reading typing assistance stays off; direct key commits are covered by the
+        // controller's protected-field/no-read regression, not this assistance predicate.
+        assertFalse(EditorPolicy.manualPermits(protected))
+        assertFalse(EditorPolicy.typingAssistPermits(protected))
     }
 
     @Test fun theClipboardIsEmptyUntilItIsExplicitlyOpened() {

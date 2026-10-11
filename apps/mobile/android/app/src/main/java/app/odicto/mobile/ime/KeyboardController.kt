@@ -72,6 +72,23 @@ class KeyboardController(
     /** Null until a cursor move. A typing run then needs no read of the field. */
     private var sentenceCap: Boolean? = null
     private val hideNoticeTask = Runnable { hideNotice() }
+    private var appearance: Triple<String, String, Int>? = null
+    private var typingExpanded = false
+    private var spellingWord: SpellingWord? = null
+    private var keepOriginal: SpellingWord? = null
+    private data class CorrectionUndo(val original: String, val replacement: SpellingWord)
+    private var correctionUndo: CorrectionUndo? = null
+    private val spellingStrip = SpellingStrip(root.findViewById(R.id.ime_suggestions), ::chooseSpelling) { feedback(); undoSpelling() }
+
+    fun refreshAppearance() {
+        refreshSpelling()
+        val settings = VoicePreferences.state.value
+        val next = Triple(settings.keys.keySize, settings.keys.keyFont, VoicePreferences.toleranceOf(settings))
+        if (appearance == next) return
+        appearance = next
+        cancelTouch()
+        keyboard.refreshAppearance()
+    }
 
     init {
         keyboard.setOnKeyListener(::onKey)
@@ -111,6 +128,8 @@ class KeyboardController(
     }
 
     fun onStartInput(info: EditorInfo?) {
+        clearSpelling()
+        refreshAppearance()
         keyboard.cancelTouch()
         resetCursorWindow()
         invalidateHeldLetter()
@@ -134,10 +153,12 @@ class KeyboardController(
         closePanels()
         hideNotice()
         syncMicButton()
+        refreshSpelling()
     }
 
     fun onFinishInput() {
         editorInfo = null
+        clearSpelling()
         keyboard.cancelTouch()
         finishDeleteBurst()
         editorSession.reset(null, -1, -1)
@@ -182,9 +203,10 @@ class KeyboardController(
 
     fun stopRepeating() { keyboard.stopRepeating(); finishDeleteBurst() }
     fun cancelTouch() { keyboard.cancelTouch(); finishDeleteBurst() }
-    fun dispose() { onFinishInput(); voiceControl = null }
+    fun dispose() { onFinishInput(); spellingStrip.dispose(); voiceControl = null }
 
     fun onExternalEdit(start: Int, end: Int) {
+        clearSpelling()
         cancelTouch()
         editorSession.reset(connectionProvider(), start, end)
         invalidateHeldLetter()
@@ -196,6 +218,11 @@ class KeyboardController(
     }
 
     private fun onKey(spec: OdictoKeyboardView.KeySpec) {
+        KeyLatencyProbe.outcome(when (spec.key) {
+            OdictoKeyboardView.Key.CHARACTER -> KeyLatencyProbe.Outcome.CHARACTER_DISPATCH
+            OdictoKeyboardView.Key.SPACE -> KeyLatencyProbe.Outcome.SPACE_DISPATCH
+            else -> KeyLatencyProbe.Outcome.OTHER_DISPATCH
+        })
         invalidateHeldLetter()
         resetCursorWindow()
         val connection = connectionProvider()
@@ -205,7 +232,10 @@ class KeyboardController(
             finishDeleteBurst()
             return
         }
-        if (connection == null) return
+        if (connection == null) {
+            KeyLatencyProbe.outcome(KeyLatencyProbe.Outcome.NO_CONNECTION)
+            return
+        }
         if (editorSession.connection !== connection) {
             onExternalEdit(-1, -1)
         }
@@ -214,7 +244,26 @@ class KeyboardController(
             OdictoKeyboardView.Key.ENTER, OdictoKeyboardView.Key.BACKSPACE -> service.cancelFieldPolish()
             else -> Unit
         }
-        val assist = EditorPolicy.typingAssistPermits(editorInfo)
+        val epoch = editorSession.epoch
+        if (spec.key == OdictoKeyboardView.Key.SPACE && editorSession.ambiguous &&
+            spellingWord != null && spellingEligible()) {
+            // An older typing callback can arrive before the latest one and leave the cursor
+            // uncertain. Reconcile with the host before discarding our word. The replacement
+            // still checks the original word and exact range; a callback alone is not evidence.
+            refreshEditor(connection)
+            if (connectionProvider() !== connection || editorSession.epoch != epoch) return
+        }
+        if (editorSession.ambiguous && spec.key != OdictoKeyboardView.Key.BACKSPACE) {
+            editorTail.clear()
+            selectionStart = -1
+            selectionEnd = -1
+            sentenceCap = false
+            lastWasSpace = false
+        }
+        val assist = EditorPolicy.typingAssistPermits(editorInfo) && !editorSession.ambiguous
+        if (spec.key != OdictoKeyboardView.Key.BACKSPACE) correctionUndo = null
+        if (spec.key == OdictoKeyboardView.Key.CHARACTER || spec.key == OdictoKeyboardView.Key.ENTER ||
+            spec.key == OdictoKeyboardView.Key.BACKSPACE) keepOriginal = null
         if (spec.key != OdictoKeyboardView.Key.BACKSPACE && deleteBurst) deleteRepeat.waitForEvidence()
         when (spec.key) {
             OdictoKeyboardView.Key.CHARACTER -> {
@@ -225,15 +274,27 @@ class KeyboardController(
                     )
                     if (cap) text = text.uppercase()
                 }
-                write(connection, text, spec)
+                write(connection, text, spec, epoch)
                 sentenceCap = if (assist) when {
                     text.endsWith("\n") || text.endsWith(". ") || text.endsWith("! ") || text.endsWith("? ") -> true
                     text.lastOrNull()?.let { it.isLetter() || it.isDigit() } == true -> false
                     else -> null
                 } else false
                 lastWasSpace = false
+                updateSpellingWord()
             }
             OdictoKeyboardView.Key.SPACE -> {
+                val word = spellingWord
+                val replacement = word?.takeIf { it != keepOriginal && spellingAllowed() }
+                    ?.let { EnglishSpelling.typoCorrection(it.text) }
+                keepOriginal = null
+                if (word != null && replacement != null && replaceSpelling(connection, word, "$replacement ") != SpellingEdit.SKIPPED) {
+                    lastWasSpace = true
+                    sentenceCap = false
+                    refreshSpelling()
+                    return
+                }
+                clearSpelling()
                 val before = if (assist) editorTail.textBefore(8) { readBefore(connection, TAIL) } else ""
                 if (lastWasSpace && TypingAssist.periodForSecondSpace(before)) {
                     deleteBackwards(connection)
@@ -245,6 +306,7 @@ class KeyboardController(
                 lastWasSpace = true
             }
             OdictoKeyboardView.Key.ENTER -> {
+                clearSpelling()
                         if (enterKind != ImeActions.Kind.NEWLINE && connection.performEditorAction(enterKind.code)) {
                     editorTail.clear()
                     sentenceCap = if (assist) null else false
@@ -255,6 +317,16 @@ class KeyboardController(
                 lastWasSpace = false
             }
             OdictoKeyboardView.Key.BACKSPACE -> {
+                if (spec.repeatOrdinal == 0 && undoSpelling()) {
+                    // Undo consumes only the initial press. A continuing hold still owns repeat.
+                    if (keepOriginal != null && connectionProvider() === connection && spellingAllowed()) {
+                        deleteConnection = connection
+                        deleteBurst = true
+                        deleteRepeat.start(editorSession.epoch)
+                    }
+                    return
+                }
+                clearSpelling()
                 if (spec.repeatOrdinal == 0) {
                     finishDeleteBurst()
                     deleteConnection = connection
@@ -271,10 +343,167 @@ class KeyboardController(
             OdictoKeyboardView.Key.LETTERS -> show(OdictoKeyboardView.Page.LETTERS)
             OdictoKeyboardView.Key.SWITCH -> switchKeyboard()
         }
+        refreshSpelling()
     }
 
-    private fun write(connection: InputConnection, text: String, spec: OdictoKeyboardView.KeySpec? = null) {
-        if (editorSession.ambiguous && !refreshEditor(connection)) return
+    fun onKeyboardPresentationChanged(expanded: Boolean) {
+        typingExpanded = expanded
+        if (!expanded) clearSpelling()
+        refreshSpelling()
+    }
+
+    fun refreshSpelling() {
+        val allowed = spellingAllowed()
+        if (!allowed) {
+            spellingWord = null; correctionUndo = null; keepOriginal = null
+        }
+        spellingStrip.render(allowed && keyboard.visibility == View.VISIBLE,
+            spellingWord?.text, correctionUndo?.original)
+    }
+
+    fun setSpellingStatusVisible(visible: Boolean) = spellingStrip.setStatusVisible(visible)
+
+    private fun spellingEligible(): Boolean = typingExpanded && VoicePreferences.state.value.keys.autocorrectEnabled &&
+        EditorPolicy.autocorrectPermits(service.currentInputEditorInfo ?: editorInfo) &&
+        editorSession.composingStart < 0 && gestureAllowed()
+
+    private fun spellingAllowed(): Boolean = spellingEligible() && !editorSession.ambiguous
+
+    private fun clearSpelling(updateView: Boolean = true) {
+        spellingWord = null; correctionUndo = null; keepOriginal = null
+        if (updateView) spellingStrip.render(false, null, null)
+    }
+
+    private fun updateSpellingWord() {
+        spellingWord = if (spellingAllowed() && selectionStart == selectionEnd)
+            SpellingWord.atCursor(editorTail.knownSuffix(), selectionStart, editorSession.epoch) else null
+    }
+
+    private fun chooseSpelling(replacement: String) {
+        val word = spellingWord ?: return
+        val connection = connectionProvider() ?: return
+        if (!spellingAllowed()) { clearSpelling(); return }
+        feedback()
+        replaceSpelling(connection, word, replacement)
+        refreshSpelling()
+    }
+
+    private fun undoSpelling(): Boolean {
+        val undo = correctionUndo ?: return false
+        val connection = connectionProvider() ?: return false
+        val result = replaceSpelling(connection, undo.replacement, undo.original, remember = false)
+        if (result == SpellingEdit.APPLIED) {
+            keepOriginal = SpellingWord(undo.original, selectionStart, editorSession.epoch)
+            spellingWord = keepOriginal
+            lastWasSpace = false
+            sentenceCap = false
+        }
+        correctionUndo = null
+        refreshSpelling()
+        return result != SpellingEdit.SKIPPED
+    }
+
+    private enum class SpellingEdit { SKIPPED, APPLIED, UNVERIFIED }
+
+    /** Only a fresh, bounded host read can authorize a replacement; the cached tail is not proof. */
+    private fun spellingRangeMatches(connection: InputConnection, word: SpellingWord): Boolean {
+        if (!spellingAllowed() || connectionProvider() !== connection || editorSession.connection !== connection ||
+            word.epoch != editorSession.epoch || selectionStart != word.end || selectionEnd != word.end) return false
+        val matches = runCatching {
+            val before: String
+            val after: String
+            val start: Int
+            val end: Int
+            if (Build.VERSION.SDK_INT >= 31) {
+                val read = connection.getSurroundingText(word.text.length + 1, 1, 0) ?: return@runCatching false
+                if (read.offset < 0 || read.selectionStart !in 0..read.text.length || read.selectionEnd !in 0..read.text.length) return@runCatching false
+                start = read.offset + read.selectionStart; end = read.offset + read.selectionEnd
+                before = read.text.take(read.selectionStart).toString()
+                after = read.text.drop(read.selectionEnd).toString()
+            } else {
+                val read = connection.getExtractedText(ExtractedTextRequest().apply { hintMaxChars = 96 }, 0) ?: return@runCatching false
+                if (read.startOffset < 0) return@runCatching false
+                start = read.startOffset + read.selectionStart; end = read.startOffset + read.selectionEnd
+                before = connection.getTextBeforeCursor(word.text.length + 1, 0)?.toString() ?: return@runCatching false
+                after = connection.getTextAfterCursor(1, 0)?.toString() ?: return@runCatching false
+            }
+            val prefix = before.removeSuffix(word.text)
+            start == word.end && end == start && before.endsWith(word.text) &&
+                (prefix.isNotEmpty() && (prefix.last().isWhitespace() || prefix.last() in "(\"“") || start == word.text.length) &&
+                (after.isEmpty() || !after[0].isLetterOrDigit() && after[0] !in "_@/")
+        }.getOrDefault(false)
+        return matches && spellingAllowed() && connectionProvider() === connection && editorSession.epoch == word.epoch
+    }
+
+    private fun replaceSpelling(connection: InputConnection, word: SpellingWord, replacement: String, remember: Boolean = true): SpellingEdit {
+        if (!spellingRangeMatches(connection, word)) { clearSpelling(); return SpellingEdit.SKIPPED }
+        invalidateHeldLetter()
+        finishDeleteBurst()
+        var began = false
+        var selected = false
+        val accepted = try {
+            began = connection.beginBatchEdit()
+            spellingAllowed() && connectionProvider() === connection && editorSession.epoch == word.epoch &&
+                connection.setSelection(word.end - word.text.length, word.end).also { selected = it } &&
+                spellingAllowed() && connectionProvider() === connection && editorSession.epoch == word.epoch &&
+                connection.commitText(replacement, 1)
+        } catch (_: Exception) { false }
+        finally { if (began) runCatching { connection.endBatchEdit() } }
+        // Each caller renders the final correction/Undo state in this same dispatch. Publishing
+        // an empty row here would briefly resize the IME between two populated states.
+        clearSpelling(updateView = false)
+        if (!accepted || connectionProvider() !== connection || editorSession.epoch != word.epoch) {
+            // A rejected commit may leave our temporary range selected. Collapse it only if fresh
+            // host evidence still shows that exact original range, never move a changed user cursor.
+            if (selected && connectionProvider() === connection && editorSession.epoch == word.epoch &&
+                spellingAllowed()) runCatching {
+                val stillSelected = if (Build.VERSION.SDK_INT >= 31) {
+                    val current = connection.getSurroundingText(0, 0, 0)
+                    current != null && current.offset >= 0 &&
+                        current.offset + current.selectionStart == word.end - word.text.length &&
+                        current.offset + current.selectionEnd == word.end && current.text.toString() == word.text
+                } else {
+                    val current = connection.getExtractedText(ExtractedTextRequest().apply { hintMaxChars = 96 }, 0)
+                    current != null && current.startOffset >= 0 &&
+                        current.startOffset + current.selectionStart == word.end - word.text.length &&
+                        current.startOffset + current.selectionEnd == word.end && connection.getSelectedText(0)?.toString() == word.text
+                }
+                if (stillSelected &&
+                    connectionProvider() === connection && editorSession.epoch == word.epoch && spellingAllowed()) {
+                    connection.setSelection(word.end, word.end)
+                }
+            }
+            editorTail.clear()
+            editorSession.ambiguous = true
+            notice("Couldn't confirm the correction. Check the word.")
+            return SpellingEdit.UNVERIFIED
+        }
+        editorTail.afterDelete(word.end, word.text.length)
+        val cursor = word.end - word.text.length + replacement.length
+        editorTail.afterInsert(word.end - word.text.length, replacement)
+        selectionStart = cursor; selectionEnd = cursor
+        editorSession.submitted(EditorSessionState.Snapshot(cursor, cursor, editorTail.knownSuffix(), editorTail.complete), 0, false, SystemClock.uptimeMillis())
+        val replaced = SpellingWord(replacement, cursor, word.epoch)
+        if (!spellingRangeMatches(connection, replaced)) {
+            editorTail.clear()
+            editorSession.ambiguous = true
+            notice("Couldn't confirm the correction. Check the word.")
+            return SpellingEdit.UNVERIFIED
+        }
+        if (remember) correctionUndo = CorrectionUndo(word.text, replaced)
+        return SpellingEdit.APPLIED
+    }
+
+    private fun write(connection: InputConnection, text: String, spec: OdictoKeyboardView.KeySpec? = null, epoch: Long = editorSession.epoch) {
+        if (connectionProvider() !== connection || editorSession.connection !== connection || editorSession.epoch != epoch) {
+            KeyLatencyProbe.outcome(KeyLatencyProbe.Outcome.STALE_SESSION)
+            return
+        }
+        if (editorSession.ambiguous) {
+            editorTail.clear()
+            selectionStart = -1
+            selectionEnd = -1
+        }
         // A voice composing span must be closed or this commit replaces the dictated word.
         // Ordinary typing has no span, and asking the field to finish one is a round trip per letter.
         val replacing = selectionStart >= 0 && selectionEnd >= 0 && selectionEnd != selectionStart
@@ -284,10 +513,21 @@ class KeyboardController(
             editorSession.composingStart = -1
             editorSession.composingEnd = -1
         }
+        if (connectionProvider() !== connection || editorSession.connection !== connection || editorSession.epoch != epoch) {
+            KeyLatencyProbe.outcome(KeyLatencyProbe.Outcome.STALE_SESSION)
+            return
+        }
         val measure = BuildConfig.DEBUG && spec?.key == OdictoKeyboardView.Key.CHARACTER && spec.touchAtNanos > 0
+        KeyLatencyProbe.outcome(KeyLatencyProbe.Outcome.COMMIT_ATTEMPT)
         val commitStart = if (measure) SystemClock.elapsedRealtimeNanos() else 0L
-        val accepted = runCatching { connection.commitText(text, 1) }.getOrDefault(false)
+        val result = runCatching { connection.commitText(text, 1) }
         val commitEnd = if (measure) SystemClock.elapsedRealtimeNanos() else 0L
+        val accepted = result.getOrDefault(false)
+        KeyLatencyProbe.outcome(when {
+            result.isFailure -> KeyLatencyProbe.Outcome.COMMIT_EXCEPTION
+            accepted -> KeyLatencyProbe.Outcome.COMMIT_ACCEPTED
+            else -> KeyLatencyProbe.Outcome.COMMIT_REJECTED
+        })
         if (!accepted) {
                 editorTail.clear()
             selectionStart = -1
@@ -468,44 +708,55 @@ class KeyboardController(
             return
         }
         val connection = connectionProvider() ?: return
-        if (selectionStart < 0 || selectionEnd < 0) return
+        clearSpelling()
+        if (editorSession.connection !== connection || selectionStart < 0 || selectionEnd < 0) return
+        var epoch = editorSession.epoch
         service.cancelFieldPolish()
-        if (selectionStart != selectionEnd) {
-            val edge = if (horizontal < 0 || vertical < 0) selectionStart else selectionEnd
-            if (connection.setSelection(edge, edge)) {
-                selectionStart = edge
-                selectionEnd = edge
-                editorSession.reset(connection, edge, edge)
-                editorTail.clear()
-            }
-            return
-        }
-        val result = if (horizontal != 0) {
-            val (text, offset) = surroundingText(connection) ?: return
-            CursorNavigator.characterInWindow(text, offset, selectionStart, horizontal)
-        } else {
-            val extracted = connection.getExtractedText(ExtractedTextRequest().apply { hintMaxChars = MAX_DOCUMENT }, 0)
-            val text = extracted?.text?.toString()
-            if (extracted == null || extracted.startOffset != 0 || extracted.partialStartOffset != -1 || text == null || text.length > MAX_DOCUMENT) {
-                notice("This field does not support cursor jumping.")
+        val selected = selectionStart != selectionEnd
+        val window = if (!selected && horizontal != 0) surroundingText(connection) ?: return else null
+        val steps = if (selected || horizontal == 0) 1 else abs(horizontal).coerceAtMost(SURROUNDING * 2)
+        repeat(steps) {
+            if (connectionProvider() !== connection || editorSession.epoch != epoch || !gestureAllowed()) return
+            val result = if (selected) {
+                val edge = if (horizontal < 0 || vertical < 0) minOf(selectionStart, selectionEnd) else maxOf(selectionStart, selectionEnd)
+                edge to edge
+            } else if (window != null) {
+                CursorNavigator.characterInWindow(window.first, window.second, selectionStart, if (horizontal < 0) -1 else 1)
+            } else {
+                val extracted = runCatching { connection.getExtractedText(ExtractedTextRequest().apply { hintMaxChars = MAX_DOCUMENT }, 0) }.getOrNull()
+                val text = extracted?.text?.toString()
+                if (extracted == null || extracted.startOffset != 0 || extracted.partialStartOffset != -1 || text == null || text.length > MAX_DOCUMENT) {
+                    notice("This field does not support cursor jumping.")
+                    return
+                }
+                val edge = if (vertical > 0) text.length else 0
+                edge to edge
+            } ?: return
+            if (result.first == selectionStart && result.second == selectionEnd) return
+            if (connectionProvider() !== connection || editorSession.epoch != epoch || !gestureAllowed()) return
+            val started = SystemClock.elapsedRealtimeNanos()
+            if (!runCatching { connection.setSelection(result.first, result.second) }.getOrDefault(false)) {
+                resetCursorWindow()
                 return
             }
-            val edge = if (vertical > 0) text.length else 0
-            edge to edge
-        } ?: return
-        val started = SystemClock.elapsedRealtimeNanos()
-        if (runCatching { connection.setSelection(result.first, result.second) }.getOrDefault(false)) {
+            if (connectionProvider() !== connection || editorSession.epoch != epoch) return
+            val composingStart = editorSession.composingStart
+            val composingEnd = editorSession.composingEnd
             selectionStart = result.first
             selectionEnd = result.second
             editorSession.reset(connection, selectionStart, selectionEnd)
+            editorSession.composingStart = composingStart
+            editorSession.composingEnd = composingEnd
+            epoch = editorSession.epoch
             cursorMovedAt = SystemClock.uptimeMillis()
             cursorAcknowledgments.addLast(result.first)
             while (cursorAcknowledgments.size > 64) cursorAcknowledgments.removeFirst()
             editorTail.clear()
             sentenceCap = null
+            lastWasSpace = false
+            invalidateHeldLetter()
+            feedback()
             if (BuildConfig.DEBUG) KeyLatencyProbe.cursor(started, SystemClock.elapsedRealtimeNanos())
-        } else {
-            resetCursorWindow()
         }
     }
 
@@ -568,8 +819,10 @@ class KeyboardController(
     }
 
     private fun show(next: OdictoKeyboardView.Page) {
+        clearSpelling()
         keyboard.stopRepeating()
         keyboard.showPage(next)
+        refreshSpelling()
     }
 
     private fun toggleVoice() {
@@ -611,6 +864,7 @@ class KeyboardController(
      * buttons remain a toggle.
      */
     private fun showPanel(panel: View) {
+        clearSpelling()
         val slot = root.findViewById<View>(R.id.ime_content)
         val height = keyboard.height.coerceAtLeast(keyboard.measuredHeight)
         // A match_parent panel inside a wrap_content slot measures as nothing, so the clipboard
@@ -636,6 +890,7 @@ class KeyboardController(
         clipboardPanel.visibility = View.GONE
         clipboardPanel.removeAllViews()
         clipboard.close()
+        refreshSpelling()
     }
 
     /**
@@ -646,12 +901,12 @@ class KeyboardController(
      * or unpin.
      */
     private fun buildEmojiPanel() {
-        val scroll = ScrollView(context)
+        val scroll = ScrollView(context).apply { contentDescription = "Emoji list" }
         val column = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(6), dp(4), dp(6), dp(4))
         }
-        column.addView(emojiFilters())
+        emojiPanel.addView(emojiFilters())
         if (emojiPage == PAGE_RECENT) {
             val keys = VoicePreferences.state.value.keys
             if (keys.pinnedEmoji.isNotEmpty()) {
@@ -660,16 +915,16 @@ class KeyboardController(
                 column.addView(divider())
             }
             column.addView(sectionLabel("Recent"))
-            val recent = keys.recentEmoji.ifEmpty { EmojiCatalog.recent }.take(EmojiCatalog.PAGE_SIZE)
+            val recent = (keys.recentEmoji + EmojiCatalog.recent).distinct().take(EmojiCatalog.PAGE_SIZE)
             column.addView(emojiRow(recent))
         } else {
             val page = EmojiCatalog.categories.firstOrNull { it.label == emojiPage }
-            if (page != null) column.addView(emojiRow(page.emoji.take(EmojiCatalog.PAGE_SIZE)))
+            if (page != null) column.addView(emojiRow(page.emoji))
         }
         scroll.addView(column)
         emojiPanel.addView(scroll, android.widget.LinearLayout.LayoutParams(
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            0, 1f,
         ))
     }
 
@@ -682,21 +937,32 @@ class KeyboardController(
     }
 
     private fun emojiFilters(): View {
-        val row = android.widget.HorizontalScrollView(context).apply { isHorizontalScrollBarEnabled = false }
+        val row = android.widget.HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = false
+            contentDescription = "Emoji categories"
+        }
         val line = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
         val choices = listOf(PAGE_RECENT) + EmojiCatalog.categories.map { it.label }
         for (choice in choices) {
             val selected = choice == emojiPage
             line.addView(TextView(context).apply {
                 text = choice
+                contentDescription = "Emoji category $choice"
+                isSelected = selected
                 textSize = 13f
                 typeface = OdictoKeyboardView.typefaceFor(context)
                 setTextColor(if (selected) 0xFFFFFFFF.toInt() else 0xFF8E8E98.toInt())
+                gravity = android.view.Gravity.CENTER
+                minHeight = dp(48)
                 setPadding(dp(10), dp(6), dp(10), dp(6))
                 setOnClickListener {
+                    val scrollX = row.scrollX
                     emojiPage = choice
                     emojiPanel.removeAllViews()
                     buildEmojiPanel()
+                    (emojiPanel.getChildAt(0) as? android.widget.HorizontalScrollView)?.let { filters ->
+                        filters.post { filters.scrollTo(scrollX, 0) }
+                    }
                 }
             })
         }
@@ -761,10 +1027,17 @@ class KeyboardController(
     fun showClipboardNotice(message: String) = notice(message)
 
     private fun commitEmoji(text: String) {
+        val info = service.currentInputEditorInfo ?: editorInfo
+        val reason = EditorPolicy.emojiRefusal(info)
+        if (reason != null) { notice(reason); return }
+        val connection = connectionProvider() ?: return
+        service.cancelFieldPolish()
+        onExternalEdit(selectionStart, selectionEnd)
+        write(connection, text)
+        // Retain category, scroll position and tile identity so consecutive taps stay predictable.
         VoicePreferences.update(context) { settings ->
             settings.copy(keys = VoicePreferences.rememberEmoji(text, settings.keys))
         }
-        commit(text)
     }
 
     private fun commit(text: String) {
