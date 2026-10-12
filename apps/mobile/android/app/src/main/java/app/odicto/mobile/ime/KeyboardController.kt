@@ -186,6 +186,15 @@ class KeyboardController(
             onExternalEdit(start, end)
             return
         }
+        // Fields without typing assistance (Odicto's own fields, number and phone fields) cannot be
+        // read, so their cursor report is the only sign a held backspace's delete landed. Password
+        // and no-learning fields keep their bounded hold.
+        if (!EditorPolicy.typingAssistPermits(editorInfo) && EditorPolicy.manualPermits(editorInfo) &&
+            editorSession.acknowledgeBlindDelete(oldStart, oldEnd, start, end)) {
+            selectionStart = start
+            selectionEnd = end
+            return
+        }
         if (editorSession.locateUnknownDelete(start, end)) {
             selectionStart = start
             selectionEnd = end
@@ -465,38 +474,55 @@ class KeyboardController(
 
     private enum class SpellingEdit { SKIPPED, APPLIED, UNVERIFIED }
 
+    /**
+     * How a fresh read placed the word. ABSOLUTE: the host gave the cursor's position in the field.
+     * RELATIVE: the host gave only the text around a collapsed cursor (the platform's default
+     * [InputConnection.getSurroundingText] has no offset, and many editors keep that default).
+     */
+    private enum class SpellingRange { NONE, ABSOLUTE, RELATIVE }
+
     /** Only a fresh, bounded host read can authorize a replacement; the cached tail is not proof. */
-    private fun spellingRangeMatches(connection: InputConnection, word: SpellingWord): Boolean {
+    private fun spellingRange(connection: InputConnection, word: SpellingWord): SpellingRange {
         if (!spellingAllowed() || connectionProvider() !== connection || editorSession.connection !== connection ||
-            word.epoch != editorSession.epoch || selectionStart != word.end || selectionEnd != word.end) return false
-        val matches = runCatching {
+            word.epoch != editorSession.epoch || selectionStart != word.end || selectionEnd != word.end) return SpellingRange.NONE
+        val range = runCatching {
             val before: String
             val after: String
-            val start: Int
-            val end: Int
+            var start = -1
+            var end = -1
             if (Build.VERSION.SDK_INT >= 31) {
-                val read = connection.getSurroundingText(word.text.length + 1, 1, 0) ?: return@runCatching false
-                if (read.offset < 0 || read.selectionStart !in 0..read.text.length || read.selectionEnd !in 0..read.text.length) return@runCatching false
-                start = read.offset + read.selectionStart; end = read.offset + read.selectionEnd
+                val read = connection.getSurroundingText(word.text.length + 1, 1, 0) ?: return@runCatching SpellingRange.NONE
+                if (read.selectionStart !in 0..read.text.length || read.selectionEnd !in 0..read.text.length ||
+                    read.selectionStart != read.selectionEnd) return@runCatching SpellingRange.NONE
+                if (read.offset >= 0) { start = read.offset + read.selectionStart; end = read.offset + read.selectionEnd }
                 before = read.text.take(read.selectionStart).toString()
                 after = read.text.drop(read.selectionEnd).toString()
             } else {
-                val read = connection.getExtractedText(ExtractedTextRequest().apply { hintMaxChars = 96 }, 0) ?: return@runCatching false
-                if (read.startOffset < 0) return@runCatching false
-                start = read.startOffset + read.selectionStart; end = read.startOffset + read.selectionEnd
-                before = connection.getTextBeforeCursor(word.text.length + 1, 0)?.toString() ?: return@runCatching false
-                after = connection.getTextAfterCursor(1, 0)?.toString() ?: return@runCatching false
+                val read = connection.getExtractedText(ExtractedTextRequest().apply { hintMaxChars = 96 }, 0)
+                if (read != null && read.startOffset >= 0) { start = read.startOffset + read.selectionStart; end = read.startOffset + read.selectionEnd }
+                else if (!connection.getSelectedText(0).isNullOrEmpty()) return@runCatching SpellingRange.NONE
+                before = connection.getTextBeforeCursor(word.text.length + 1, 0)?.toString() ?: return@runCatching SpellingRange.NONE
+                after = connection.getTextAfterCursor(1, 0)?.toString() ?: return@runCatching SpellingRange.NONE
             }
+            val absolute = start >= 0
             val prefix = before.removeSuffix(word.text)
-            start == word.end && end == start && before.endsWith(word.text) &&
-                (prefix.isNotEmpty() && (prefix.last().isWhitespace() || prefix.last() in "(\"“") || start == word.text.length) &&
+            // Without an offset, the tracked cursor is the only evidence that the word starts the field.
+            val fieldStart = if (absolute) start == word.text.length else prefix.isEmpty() && word.end == word.text.length
+            val matches = (!absolute || start == word.end && end == start) && before.endsWith(word.text) &&
+                (prefix.isNotEmpty() && (prefix.last().isWhitespace() || prefix.last() in "(\"“") || fieldStart) &&
                 (after.isEmpty() || !after[0].isLetterOrDigit() && after[0] !in "_@/")
-        }.getOrDefault(false)
-        return matches && spellingAllowed() && connectionProvider() === connection && editorSession.epoch == word.epoch
+            when {
+                !matches -> SpellingRange.NONE
+                absolute -> SpellingRange.ABSOLUTE
+                else -> SpellingRange.RELATIVE
+            }
+        }.getOrDefault(SpellingRange.NONE)
+        return if (spellingAllowed() && connectionProvider() === connection && editorSession.epoch == word.epoch) range else SpellingRange.NONE
     }
 
     private fun replaceSpelling(connection: InputConnection, word: SpellingWord, replacement: String, remember: Boolean = true): SpellingEdit {
-        if (!spellingRangeMatches(connection, word)) { clearSpelling(); return SpellingEdit.SKIPPED }
+        val range = spellingRange(connection, word)
+        if (range == SpellingRange.NONE) { clearSpelling(); return SpellingEdit.SKIPPED }
         invalidateHeldLetter()
         finishDeleteBurst()
         var began = false
@@ -504,9 +530,15 @@ class KeyboardController(
         val accepted = try {
             began = connection.beginBatchEdit()
             spellingAllowed() && connectionProvider() === connection && editorSession.epoch == word.epoch &&
-                connection.setSelection(word.end - word.text.length, word.end).also { selected = it } &&
-                spellingAllowed() && connectionProvider() === connection && editorSession.epoch == word.epoch &&
-                connection.commitText(replacement, 1)
+                if (range == SpellingRange.ABSOLUTE) {
+                    connection.setSelection(word.end - word.text.length, word.end).also { selected = it } &&
+                        spellingAllowed() && connectionProvider() === connection && editorSession.epoch == word.epoch &&
+                        connection.commitText(replacement, 1)
+                } else {
+                    // No offset to select by: the read proved the word ends at a collapsed cursor.
+                    // A refused commit is reported below, never re-sent: its delivery is unknown.
+                    connection.deleteSurroundingText(word.text.length, 0) && connection.commitText(replacement, 1)
+                }
         } catch (_: Exception) { false }
         finally { if (began) runCatching { connection.endBatchEdit() } }
         // Each caller renders the final correction/Undo state in this same dispatch. Publishing
@@ -544,7 +576,7 @@ class KeyboardController(
         selectionStart = cursor; selectionEnd = cursor
         editorSession.submitted(EditorSessionState.Snapshot(cursor, cursor, editorTail.knownSuffix(), editorTail.complete), 0, false, SystemClock.uptimeMillis())
         val replaced = SpellingWord(replacement, cursor, word.epoch)
-        if (!spellingRangeMatches(connection, replaced)) {
+        if (spellingRange(connection, replaced) == SpellingRange.NONE) {
             editorTail.clear()
             editorSession.ambiguous = true
             notice("Couldn't confirm the correction. Check the word.")
