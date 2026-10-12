@@ -26,17 +26,23 @@ $token = gh auth token --user $Account
 if ($LASTEXITCODE -ne 0 -or -not $token) { throw "gh has no login for $Account. Run: gh auth login" }
 $env:GH_TOKEN = $token
 
+$keytool = Get-Command keytool -ErrorAction SilentlyContinue
+if (-not $keytool -and $env:JAVA_HOME) { $keytool = Get-Command (Join-Path $env:JAVA_HOME 'bin\keytool.exe') -ErrorAction SilentlyContinue }
+
+try {
 if (Test-Path $keystore) {
     if (-not (Test-Path $passwordFile)) { throw "$keystore exists but $passwordFile is missing. Restore it from your backup." }
     $saved = @{}
-    foreach ($line in Get-Content $passwordFile) { $k, $v = $line -split '=', 2; $saved[$k] = $v }
+    foreach ($line in Get-Content $passwordFile) { $k, $v = $line -split '=', 2; $saved[$k.Trim()] = "$v".Trim() }
     if (-not $saved['password'] -or -not $saved['alias']) { throw "$passwordFile is not in alias=/password= form." }
     $password = $saved['password']
     $Alias = $saved['alias']
+    if ($keytool) {
+        & $keytool.Source -list -keystore $keystore -storepass $password -alias $Alias | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "The saved password does not open $keystore. Restore both files from the same backup." }
+    }
     Write-Host "Reusing the existing key at $keystore."
 } else {
-    $keytool = Get-Command keytool -ErrorAction SilentlyContinue
-    if (-not $keytool -and $env:JAVA_HOME) { $keytool = Get-Command (Join-Path $env:JAVA_HOME 'bin\keytool.exe') -ErrorAction SilentlyContinue }
     if (-not $keytool) { throw 'keytool not found. Put JDK 21 bin on PATH or set JAVA_HOME.' }
 
     New-Item -ItemType Directory -Force $OutDir | Out-Null
@@ -68,3 +74,7 @@ Write-Host ""
 Write-Host "Done. Four secrets are set on $Repo."
 Write-Host "BACK UP this folder now (key + password): $OutDir"
 Write-Host "Losing it means testers must uninstall to get later versions."
+} finally {
+    # The token is for this script only; do not leave it in the caller's window.
+    Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue
+}
