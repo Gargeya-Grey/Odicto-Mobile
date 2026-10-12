@@ -1,0 +1,47 @@
+name: Bug report
+description: Something in Odicto does not work as expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not paste API keys, transcripts of private text, or screenshots that show them.
+  - type: input
+    id: version
+    attributes:
+      label: Odicto version
+      description: From the release you installed, for example v1.1.0.
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Phone and Android version
+      placeholder: Pixel 8, Android 15
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Keyboard typing
+        - Voice (Raw / AI / Live)
+        - Floating microphone
+        - Text polish
+        - Clipboard or emoji
+        - Setup or settings
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: App you were typing in
+      placeholder: WhatsApp, Chrome, Gmail
+  - type: textarea
+    id: steps
+    attributes:
+      label: What happened
+      description: Steps to reproduce, what you expected, and what happened instead.
+    validations:
+      required: true

@@ -8,6 +8,17 @@ Odicto is an Android voice input app with a native keyboard microphone, an optio
 
 Settings includes touch feedback, an optional text preview, provider configuration, and local history. The floating control hides while the Odicto keyboard is visible. Settings and native controls support portrait and landscape layouts.
 
+## Download and try it
+
+1. On your Android phone (Android 6.0 or newer), open the [latest release](https://github.com/Gargeya-Grey/Odicto-Mobile/releases) and download the `Odicto-v*.apk` file.
+2. Open the file and allow the install when Android asks.
+3. Open Odicto, enable the Odicto keyboard, and grant the microphone permission.
+4. Add your own [Groq API key](https://console.groq.com/keys) in **Settings → Connections**.
+
+Already have a build you installed from Android Studio or USB? Android will refuse this APK because the signing key differs. Uninstalling the old build first deletes its saved keys, settings and history, so note your keys before you do it.
+
+Odicto is in beta. Please [report bugs and send feedback](https://github.com/Gargeya-Grey/Odicto-Mobile/issues/new/choose) with your phone model and Android version. To contribute code, read [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Stack
 
 - `apps/mobile`: React, Vite, Capacitor, Kotlin Android IME/overlay/recording
@@ -39,7 +50,7 @@ npm run android:sync
 npm run android:open
 ```
 
-From `apps/mobile/android`, run `gradlew.bat testDebugUnitTest assembleDebug` on Windows, or `./gradlew testDebugUnitTest assembleDebug` elsewhere, with JDK 21 and SDK 35 configured. Install `app/build/outputs/apk/debug/app-debug.apk` on the phone, enter provider keys in Settings → API connections, and complete Android setup to enable the keyboard and permissions. USB is only needed for installation and debugging.
+From `apps/mobile/android`, run `gradlew.bat testDebugUnitTest assembleDebug` on Windows, or `./gradlew testDebugUnitTest assembleDebug` elsewhere, with JDK 21 and SDK 35 configured. Install `app/build/outputs/apk/debug/app-debug.apk` on the phone, enter provider keys in Settings → Connections, and complete Android setup to enable the keyboard and permissions. USB is only needed for installation and debugging.
 
 Keep the root `package-lock.json` as the single npm lockfile. Local environment files, signing keys, generated builds, and diagnostic screenshots are excluded from Git. Device testing details and known validation limits are recorded in [Android development](docs/android-development.md) and [S24 Ultra checks](docs/s24-ultra-testing.md).
 
@@ -52,3 +63,7 @@ Older `app.odicto.mobile.legacy` installations have separate local data. Install
 iOS, accounts, billing, and managed production services are deferred. Tablet viewport checks do not establish physical-tablet microphone or IME reliability.
 
 See `docs/architecture.md`, `docs/android-development.md`, `docs/environment.md`, and `docs/privacy-and-security.md`.
+
+## License
+
+[Apache License 2.0](LICENSE).
