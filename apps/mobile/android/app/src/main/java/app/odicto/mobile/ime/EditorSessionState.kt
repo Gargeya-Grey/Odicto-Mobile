@@ -81,6 +81,27 @@ internal class EditorSessionState {
         return true
     }
 
+    /**
+     * A field that cannot answer reads reports a blind delete only through its new cursor. Accept a
+     * collapsed cursor one code point (1..2 units) behind the previous one as the oldest pending
+     * blind delete landing, so a held backspace keeps its credit. The previous cursor is the host's
+     * own [oldStart] when it gives one, else the last observed cursor; with neither, the report is
+     * accepted, since a blind delete removes text wherever the cursor is.
+     */
+    fun acknowledgeBlindDelete(oldStart: Int, oldEnd: Int, start: Int, end: Int): Boolean {
+        val edit = edits.firstOrNull() ?: return false
+        if (start != end || start < 0 || edit.units == 0 || edit.after.start >= 0 || edit.after.suffix != null) return false
+        val previous = if (oldStart >= 0) Snapshot(oldStart, oldEnd, null) else observed
+        if (previous.start >= 0 && (previous.start != previous.end || previous.start - start !in 1..2)) return false
+        edits.removeFirst()
+        observed = Snapshot(start, end, null)
+        if (edits.isEmpty()) predicted = observed
+        recent.addLast(observed)
+        while (recent.size > 32) recent.removeFirst()
+        ambiguous = false
+        return true
+    }
+
     fun acknowledgeTyping(oldStart: Int, oldEnd: Int, start: Int, end: Int): Boolean {
         if (start != end || oldStart < 0 || !plausible(oldStart, oldEnd)) return false
         val index = edits.indexOfLast { it.units == 0 && it.after.start == start && it.after.end == end }

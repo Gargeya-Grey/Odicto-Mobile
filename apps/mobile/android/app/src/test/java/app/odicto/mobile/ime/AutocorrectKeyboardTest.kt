@@ -32,10 +32,17 @@ class AutocorrectKeyboardTest {
         var readable = true
         var beforeRead: (() -> Unit)? = null
         var rejectCommit = false
+        /** Refuse only the next commit, as a host that drops one edit. */
+        var rejectNextCommit = false
+        /** Answer reads without a field offset, as the platform's default getSurroundingText does. */
+        var offsetKnown = true
         var batches = 0
         override fun beginBatchEdit(): Boolean { batches++; return true }
         override fun endBatchEdit(): Boolean { batches--; return true }
-        override fun commitText(text: CharSequence?, cursor: Int): Boolean = !rejectCommit && super.commitText(text, cursor)
+        override fun commitText(text: CharSequence?, cursor: Int): Boolean {
+            if (rejectNextCommit) { rejectNextCommit = false; return false }
+            return !rejectCommit && super.commitText(text, cursor)
+        }
         override fun getTextBeforeCursor(length: Int, flags: Int): CharSequence? { reads++; return if (readable) super.getTextBeforeCursor(length, flags) else null }
         override fun getSurroundingText(before: Int, after: Int, flags: Int): SurroundingText? {
             reads++
@@ -45,13 +52,13 @@ class AutocorrectKeyboardTest {
             val end = Selection.getSelectionEnd(editable)
             val from = (minOf(start, end) - before).coerceAtLeast(0)
             val to = (maxOf(start, end) + after).coerceAtMost(editable!!.length)
-            return SurroundingText(editable!!.subSequence(from, to), start - from, end - from, from)
+            return SurroundingText(editable!!.subSequence(from, to), start - from, end - from, if (offsetKnown) from else -1)
         }
         fun seed(text: String) { editable!!.replace(0, editable!!.length, text); Selection.setSelection(editable, text.length) }
         fun text() = editable.toString()
     }
 
-    private class Fixture(enabled: Boolean = true, type: Int = InputType.TYPE_CLASS_TEXT, options: Int = 0) : AutoCloseable {
+    private class Fixture(enabled: Boolean = true, type: Int = InputType.TYPE_CLASS_TEXT, options: Int = 0, packageName: String? = null) : AutoCloseable {
         @Suppress("UNCHECKED_CAST")
         private val preferences = VoicePreferences::class.java.getDeclaredField("mutable").apply { isAccessible = true }.get(null) as MutableStateFlow<VoiceSettings>
         private val previous = preferences.value
@@ -61,7 +68,7 @@ class AutocorrectKeyboardTest {
         val host = Host(View(owner.get()))
         var active: Host = host
         val controller: KeyboardController
-        val info = EditorInfo().apply { inputType = type; imeOptions = options; initialSelStart = 5; initialSelEnd = 5 }
+        val info = EditorInfo().apply { inputType = type; imeOptions = options; initialSelStart = 5; initialSelEnd = 5; this.packageName = packageName }
         init {
             VoiceSession.update { VoiceUi() }
             preferences.value = previous.copy(keys = previous.keys.copy(autocorrectEnabled = enabled))
@@ -80,6 +87,34 @@ class AutocorrectKeyboardTest {
         }
         fun type(text: String, notify: Boolean = true) { text.forEach { tap(if (it == ' ') "Space" else it.toString(), notify) } }
         fun restart() { info.initialSelStart = Selection.getSelectionStart(host.editable); info.initialSelEnd = info.initialSelStart; controller.onStartInput(info) }
+        /** Holds backspace for [millis], reporting each cursor change the way the host would. */
+        fun holdBackspace(millis: Long) {
+            val keyboard = root.findViewById<OdictoKeyboardView>(R.id.ime_keyboard)
+            keyboard.measure(View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(2400, View.MeasureSpec.AT_MOST))
+            keyboard.layout(0, 0, keyboard.measuredWidth, keyboard.measuredHeight)
+            val key = descendants(keyboard).single { it.contentDescription == "Backspace" }
+            val bounds = android.graphics.Rect()
+            key.getDrawingRect(bounds)
+            keyboard.offsetDescendantRectToMyCoords(key, bounds)
+            val at = android.os.SystemClock.uptimeMillis()
+            fun event(action: Int) {
+                val event = android.view.MotionEvent.obtain(at, android.os.SystemClock.uptimeMillis(), action, bounds.exactCenterX(), bounds.exactCenterY(), 0)
+                try { keyboard.dispatchTouchEvent(event) } finally { event.recycle() }
+            }
+            var reported = Selection.getSelectionStart(active.editable)
+            fun report() {
+                val now = Selection.getSelectionStart(active.editable)
+                if (now != reported) controller.onSelectionChanged(reported, reported, now, now, -1, -1)
+                reported = now
+            }
+            event(android.view.MotionEvent.ACTION_DOWN)
+            report()
+            repeat((millis / 10).toInt()) {
+                shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(10))
+                report()
+            }
+            event(android.view.MotionEvent.ACTION_UP)
+        }
         fun button(label: String): View? = descendants(root.findViewById(R.id.ime_suggestions)).firstOrNull { it.contentDescription == label }
         override fun close() { controller.dispose(); owner.destroy(); preferences.value = previous; VoiceSession.update { previousVoice } }
     }
@@ -391,6 +426,55 @@ class AutocorrectKeyboardTest {
             f.type("xyz")
             choice.performClick()
             assertEquals("seed because xyz", f.host.text())
+        }
+    }
+
+    @Test fun suggestionTapReplacesTheWordWhenTheEditorGivesNoOffset() {
+        Fixture().use { f ->
+            f.host.offsetKnown = false
+            f.type("becuase")
+            repeat(150) {
+                if (f.button("Suggestion because") == null) {
+                    Thread.sleep(10)
+                    shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(20))
+                }
+            }
+            val choice = f.button("Suggestion because")
+            assertNotNull("bundled dictionary supplies local spelling choice", choice)
+            choice!!.performClick()
+            assertEquals("seed because ", f.host.text())
+            assertNotNull(f.button("Undo autocorrect"))
+            f.type("teh ")
+            assertEquals("space applies the correction without an offset too", "seed because the ", f.host.text())
+            assertEquals(0, f.host.batches)
+        }
+    }
+
+    @Test fun relativeReplacementReportsARefusedCommitAndNeverResendsIt() {
+        Fixture().use { f ->
+            f.host.offsetKnown = false
+            f.type("teh")
+            f.host.rejectNextCommit = true
+            f.tap("Space")
+            assertEquals("no automatic retry of an unknown delivery", "seed ", f.host.text())
+            assertEquals("Couldn't confirm the correction. Check the word.", f.root.findViewById<android.widget.TextView>(R.id.ime_notice).text.toString())
+            assertEquals(0, f.host.batches)
+            assertNull(f.button("Undo autocorrect"))
+        }
+    }
+
+    @Test fun holdingBackspaceKeepsDeletingInFieldsThatCannotBeRead() {
+        listOf(
+            { Fixture(packageName = app.odicto.mobile.BuildConfig.APPLICATION_ID) },
+            { Fixture(type = InputType.TYPE_CLASS_NUMBER) },
+        ).forEach { make ->
+            make().use { f ->
+                f.host.readable = false
+                f.host.seed("0123456789012345")
+                f.restart()
+                f.holdBackspace(700)
+                assertTrue("a held backspace must delete more than one character: ${f.host.text()}", f.host.text().length <= 10)
+            }
         }
     }
 
