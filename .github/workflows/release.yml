@@ -20,6 +20,7 @@ concurrency:
 
 jobs:
   release:
+    if: github.ref == 'refs/heads/main'
     # The lockfile pins a Windows-only devDependency, so npm ci needs a Windows runner.
     runs-on: windows-latest
     timeout-minutes: 45
@@ -39,6 +40,7 @@ jobs:
           $tag = "v$($Matches[1])"
           gh release view $tag 2>$null
           if ($LASTEXITCODE -eq 0) { throw "Release $tag already exists. Bump versionCode and versionName first." }
+          if (git ls-remote --tags origin "refs/tags/$tag") { throw "Tag $tag already exists without a release. Delete the tag or bump the version." }
           $global:LASTEXITCODE = 0
           "tag=$tag" >> $env:GITHUB_OUTPUT
 
@@ -66,11 +68,17 @@ jobs:
 
       - name: Install and build the web app
         run: |
-          npm ci --include=dev --include=optional
-          npm run build --workspace @odicto/contracts
-          npm run build --workspace @odicto/domain
-          npm run build --workspace @odicto/mobile
-          npm run android:sync
+          $commands = @(
+            'npm ci --include=dev --include=optional',
+            'npm run build --workspace @odicto/contracts',
+            'npm run build --workspace @odicto/domain',
+            'npm run build --workspace @odicto/mobile',
+            'npm run android:sync'
+          )
+          foreach ($command in $commands) {
+            Invoke-Expression $command
+            if ($LASTEXITCODE -ne 0) { throw "$command failed" }
+          }
 
       - name: Test and build the signed APK
         working-directory: apps/mobile/android
@@ -102,7 +110,7 @@ jobs:
           $name = "Odicto-$tag.apk"
           Copy-Item $apk "out/$name"
           $hash = (Get-FileHash "out/$name" -Algorithm SHA256).Hash.ToLower()
-          "$hash  $name" | Set-Content -Encoding ascii "out/$name.sha256"
+          [IO.File]::WriteAllText("$PWD/out/$name.sha256", "$hash  $name`n")
           "name=$name" >> $env:GITHUB_OUTPUT
 
       - name: Publish the GitHub Release

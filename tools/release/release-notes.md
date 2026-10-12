@@ -3,7 +3,9 @@
 1. On your Android phone (Android 6.0 or newer), download the `.apk` file below.
 2. Open it. If Android asks, allow your browser or file manager to install unknown apps.
 3. Open Odicto and follow the setup: enable the Odicto keyboard and grant the microphone permission.
-4. Add your own [Groq API key](https://console.groq.com/keys) in **Settings → API connections**. Gemini and OpenRouter keys are optional (AI and Live modes, Text polish).
+4. Add your own [Groq API key](https://console.groq.com/keys) in **Settings → Connections**. Gemini and OpenRouter keys are optional (AI and Live modes, Text polish).
+
+If a self-built (debug) Odicto is already installed, Android refuses this APK: the signing key differs. Uninstalling the old build deletes its saved keys, settings and history.
 
 Keys stay on your phone in Android Keystore. Voice requests go straight from the phone to the provider you pick. Odicto has no server and collects nothing.
 

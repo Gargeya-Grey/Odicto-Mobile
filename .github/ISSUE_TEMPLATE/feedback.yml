@@ -1,6 +1,6 @@
 name: Feedback or idea
 description: Tell us what feels good, what feels wrong, or what you want next.
-labels: [feedback]
+labels: [enhancement]
 body:
   - type: textarea
     id: feedback
