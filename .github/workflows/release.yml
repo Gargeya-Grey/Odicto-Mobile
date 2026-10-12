@@ -1,0 +1,119 @@
+# Builds a signed release APK and publishes it as a GitHub Release.
+# Run it by hand from the Actions tab. The tag is v<versionName> from app/build.gradle,
+# so bump versionCode and versionName before each release.
+name: Release APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: Mark the release as a pre-release (beta)
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # The lockfile pins a Windows-only devDependency, so npm ci needs a Windows runner.
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version and refuse an existing tag
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $gradle = Get-Content apps/mobile/android/app/build.gradle -Raw
+          if ($gradle -notmatch 'versionName "([0-9]+\.[0-9]+\.[0-9]+)"') { throw 'versionName must be MAJOR.MINOR.PATCH' }
+          $tag = "v$($Matches[1])"
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) { throw "Release $tag already exists. Bump versionCode and versionName first." }
+          $global:LASTEXITCODE = 0
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Check signing secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ODICTO_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ODICTO_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ODICTO_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ODICTO_KEY_PASSWORD }}
+        run: |
+          foreach ($name in 'KEYSTORE_BASE64', 'KEYSTORE_PASSWORD', 'KEY_ALIAS', 'KEY_PASSWORD') {
+            if (-not [Environment]::GetEnvironmentVariable($name)) { throw "Missing secret ODICTO_$name. Run tools/release/create-signing-key.ps1." }
+          }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - name: Install and build the web app
+        run: |
+          npm ci --include=dev --include=optional
+          npm run build --workspace @odicto/contracts
+          npm run build --workspace @odicto/domain
+          npm run build --workspace @odicto/mobile
+          npm run android:sync
+
+      - name: Test and build the signed APK
+        working-directory: apps/mobile/android
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ODICTO_KEYSTORE_BASE64 }}
+          ODICTO_KEYSTORE_PASSWORD: ${{ secrets.ODICTO_KEYSTORE_PASSWORD }}
+          ODICTO_KEY_ALIAS: ${{ secrets.ODICTO_KEY_ALIAS }}
+          ODICTO_KEY_PASSWORD: ${{ secrets.ODICTO_KEY_PASSWORD }}
+        run: |
+          $env:ODICTO_KEYSTORE_FILE = Join-Path $env:RUNNER_TEMP 'odicto-release.p12'
+          [IO.File]::WriteAllBytes($env:ODICTO_KEYSTORE_FILE, [Convert]::FromBase64String($env:KEYSTORE_BASE64))
+          try {
+            ./gradlew.bat :app:testDebugUnitTest :app:assembleRelease --no-daemon
+            if ($LASTEXITCODE -ne 0) { throw 'Gradle failed' }
+          } finally {
+            Remove-Item $env:ODICTO_KEYSTORE_FILE -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Verify the signature and package the release files
+        id: apk
+        run: |
+          $tag = '${{ steps.version.outputs.tag }}'
+          $apk = 'apps/mobile/android/app/build/outputs/apk/release/app-release.apk'
+          if (-not (Test-Path $apk)) { throw 'Signed APK not found; signing did not run.' }
+          $buildTools = Get-ChildItem "$env:ANDROID_HOME/build-tools" -Directory | Where-Object { $_.Name -match '^\d+\.\d+\.\d+$' } | Sort-Object { [version]$_.Name } | Select-Object -Last 1
+          & "$($buildTools.FullName)/apksigner.bat" verify --print-certs $apk
+          if ($LASTEXITCODE -ne 0) { throw 'apksigner verify failed' }
+          New-Item -ItemType Directory -Force out | Out-Null
+          $name = "Odicto-$tag.apk"
+          Copy-Item $apk "out/$name"
+          $hash = (Get-FileHash "out/$name" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name" | Set-Content -Encoding ascii "out/$name.sha256"
+          "name=$name" >> $env:GITHUB_OUTPUT
+
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ steps.version.outputs.tag }}'
+          $name = '${{ steps.apk.outputs.name }}'
+          $flags = @()
+          if ('${{ inputs.prerelease }}' -eq 'true') { $flags += '--prerelease' }
+          gh release create $tag "out/$name" "out/$name.sha256" `
+            --target $env:GITHUB_SHA --title "Odicto $tag" `
+            --notes-file tools/release/release-notes.md --generate-notes @flags
+          if ($LASTEXITCODE -ne 0) { throw 'gh release create failed' }
