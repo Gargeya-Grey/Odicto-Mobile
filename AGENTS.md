@@ -32,3 +32,4 @@
 - Android permissions, IME, overlay, foreground recording, or device tests: read `docs/android-development.md` and `docs/research/mobile-platform-constraints.md`.
 - API configuration, deployment, providers, database, or quotas: read `docs/environment.md`.
 - Data handling, BYOK, logging, disclosures, or billing: read `docs/privacy-and-security.md`.
+- Releases, version bumps, or release signing: read `CONTRIBUTING.md#releases-maintainer`.
