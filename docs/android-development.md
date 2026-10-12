@@ -6,9 +6,9 @@ Install Android Studio, its JDK 21 runtime (required by Capacitor 7), Android SD
 
 ## Activation test
 
-Test the debug build on a physical device first; it is what ships. This checklist describes required checks, not passed results. Record actual evidence separately in [S24 Ultra testing](s24-ultra-testing.md); source changes and automated coverage alone do not establish that X insertion is fixed or physical interaction checks passed. Use synthetic content and never publish a test post. Verify visible output or an honest unverified/rejected state with Copy/history recovery, without automatic retries.
+Develop with the debug build; testers install the signed release APK from GitHub Releases. Run this checklist on the release APK before sharing a release. This checklist describes required checks, not passed results. Record actual evidence separately in [S24 Ultra testing](s24-ultra-testing.md); source changes and automated coverage alone do not establish that X insertion is fixed or physical interaction checks passed. Use synthetic content and never publish a test post. Verify visible output or an honest unverified/rejected state with Copy/history recovery, without automatic retries.
 
-1. Install the debug APK on a physical device.
+1. Install the APK under test on a physical device.
 2. Grant microphone and notification permission.
 3. Enable Odicto under system keyboard settings, then select it as the current keyboard.
 4. Focus a normal text field. Confirm only the voice bar appears, then expand with the top-left keyboard button, type a sentence, and collapse again. Switch fields and verify the bar starts collapsed. Dictate with the keyboard microphone and the enabled floating microphone while both surfaces remain visible.
