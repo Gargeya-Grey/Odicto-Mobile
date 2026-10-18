@@ -81,7 +81,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
      */
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         super.onLayout(changed, left, top, right, bottom)
-        if (keyboard || Build.VERSION.SDK_INT < 29) return
+        if (keyboard || micDetached || Build.VERSION.SDK_INT < 29) return
         if (gestureRect.left == mic.left && gestureRect.top == mic.top && gestureRect.right == mic.right && gestureRect.bottom == mic.bottom) return
         gestureRect.set(mic.left, mic.top, mic.right, mic.bottom)
         systemGestureExclusionRects = listOf(android.graphics.Rect(gestureRect))
@@ -98,6 +98,23 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
     private val status = TextView(context).apply { setTextColor(accentInk); setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, cardText(12f)); typeface = Typeface.create("sans-serif-medium", 0); accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
     private val preview = TextView(context).apply { setTextColor(strongInk); setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, cardText(15f)); maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, dp(5), 0, 0) }
     private val mic = Icon(context, "mic", "Hold to speak. Double tap for options.")
+    private var micDetached = false
+    private var micFade: ValueAnimator? = null
+    private var lastOptionsShown = false
+    private var resizeJob: Runnable? = null
+    private var windowW = 0
+    private var windowH = 0
+
+    /**
+     * Takes the microphone out of this view so the owner can give it a window of its own that never changes size. A window that
+     * grows toward the left also moves its left edge, and for a frame or two the screen shows the old picture at the new place: an
+     * icon in that window flashes or jumps. Alone in a fixed window it cannot. This view is then only the drawer and its card, which
+     * start out empty, so a late frame shows nothing wrong. The keyboard header keeps its microphone inside.
+     */
+    fun detachMic(): View {
+        if (!micDetached && !keyboard) { removeView(mic); micDetached = true }
+        return mic
+    }
     private val lock = Icon(context, "lock", "Lock recording hands-free")
     private val raw = Icon(context, "raw", "Raw transcription with Groq")
     private val ai = Icon(context, "ai", "AI answer")
@@ -108,8 +125,6 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
     private val copy = Icon(context, "copy", "Copy available text")
     private val pill = PillView(context, cardFill, cardStroke, dp(1).toFloat())
     private var pillReveal: ValueAnimator? = null
-    private var micFade: ValueAnimator? = null
-    private var lastOptionsShown = false
     /** Keyboard header only: the jade chip behind the active mode. It glides to a new mode instead of jumping. */
     private val indicator = View(context).apply { background = round(jadeFill, 13f); visibility = GONE }
     private var indicatorIndex = -1
@@ -313,6 +328,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         }
         fun fixed(view: View, x: Int, y: Int, w: Int, h: Int) { pending += Pending(view, x, y, w, h) }
         val copyInRow = stacked && !value.busy && hasMessage && retained
+        // Even when the microphone lives in its own window its slot still counts: it is what the window is sized around.
         fixed(mic, 0, row, OverlayGeometry.MIC_DP, 56)
         if (optionsShown) {
             val controls = listOf(back, settings, raw, ai, live)
@@ -398,6 +414,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         val fromRight = box.width - (box.micOffset + OverlayGeometry.MIC_DP) == OverlayGeometry.INSET_DP && box.micOffset != OverlayGeometry.INSET_DP
         val windowWidthPx = dp(box.width); val windowHeightPx = dp(newHeight)
         for (item in pending) {
+            if (micDetached && item.view === mic) continue
             item.view.layoutParams = LayoutParams(dp(item.w), dp(item.h)).apply {
                 leftMargin = dp(item.x + box.micOffset); topMargin = dp(item.y)
                 bottomMargin = windowHeightPx - topMargin - height
@@ -414,7 +431,15 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
                 item.view.pivotY = dp(if (side == OverlayGeometry.Side.ABOVE || item.view === panel) item.h else item.h / 2).toFloat()
             }
         }
-        if (changed) resize?.invoke(dp(surfaceWidth), dp(surfaceHeight), dp(micOffsetDp))
+        if (changed) {
+            val w = dp(surfaceWidth); val h = dp(surfaceHeight); val off = dp(micOffsetDp)
+            resizeJob?.let { removeCallbacks(it) }; resizeJob = null
+            val apply = Runnable { resizeJob = null; windowW = w; windowH = h; resize?.invoke(w, h, off) }
+            // Growing happens at once: the new area is empty until the drawer animates into it. Shrinking waits a few frames, so the
+            // drawer is already gone from the window when its frame jumps; otherwise the old picture would be shown at the new place.
+            val shrinking = micDetached && isAttachedToWindow && windowW > 0 && w <= windowW && h <= windowH && (w < windowW || h < windowH)
+            if (shrinking) { resizeJob = apply; postDelayed(apply, 64) } else apply.run()
+        }
         val mode = if (value.busy) value.mode else VoicePreferences.state.value.mode
         raw.highlighted = mode == "raw"; ai.highlighted = mode == "ai"; live.highlighted = mode == "live"
         raw.isEnabled = !value.busy; ai.isEnabled = !value.busy; live.isEnabled = !value.busy
@@ -426,8 +451,8 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
             else -> "mic"
         }
         mic.highlighted = value.active; mic.level = value.level
-        // Without a field the mic is dimmed. Over the options pill it is dimmed by colour instead of alpha, because a see-through
-        // disc would show the pill's end behind it.
+        // Without a field the mic is faded (half transparent). Over the open drawer it is dimmed by colour instead, because a see-through
+        // disc would show the drawer's end behind it; the change between the two eases rather than switching.
         val noField = !value.busy && DictationCoordinator.activeEditorSession == null
         fadeMic(if (noField && !optionsShown) 0.5f else 1f, animate = optionsShown != lastOptionsShown)
         lastOptionsShown = optionsShown
@@ -449,7 +474,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
             val drawer = optionsShown
             val rowControls = listOf(back, settings, raw, ai, live)
             val micCentreX = dp(box.micOffset) + dp(OverlayGeometry.MIC_DP) / 2
-            val micCentreY = (mic.layoutParams as LayoutParams).topMargin + dp(OverlayGeometry.MIC_DP) / 2
+            val micCentreY = dp(row) + dp(OverlayGeometry.MIC_DP) / 2
             for (piece in pieces.filter { it.visibility == View.VISIBLE && it !in wasShown }) {
                 val card = piece === panel || piece === pill
                 piece.animate().cancel()
@@ -500,7 +525,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
             .setStartDelay(30L * rank).setDuration(380L).setInterpolator(PressSurface.SMOOTH_OUT).start()
     }
 
-    /** The microphone's opacity eases when the drawer opens or closes, so the icon never flashes between its idle and active looks. */
+    /** The microphone's fade eases when the drawer opens or closes, so the icon never switches abruptly between its faded and dimmed looks. */
     private fun fadeMic(target: Float, animate: Boolean) {
         micFade?.cancel(); micFade = null
         if (mic.alpha == target) return
@@ -512,6 +537,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
             start()
         }
     }
+
     /** A touch on the open options keeps them open a while longer. */
     override fun dispatchTouchEvent(e: MotionEvent): Boolean {
         if (!keyboard && e.actionMasked == MotionEvent.ACTION_DOWN && OverlayPresentation.options) {
@@ -687,7 +713,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         return true
     }
     override fun onAttachedToWindow() { super.onAttachedToWindow(); if (!keyboard) render(ui) }
-    override fun onDetachedFromWindow() { removeCallbacks(collapseTimer); removeCallbacks(beginHold); super.onDetachedFromWindow() }
+    override fun onDetachedFromWindow() { removeCallbacks(collapseTimer); removeCallbacks(beginHold); resizeJob?.let { removeCallbacks(it) }; resizeJob = null; super.onDetachedFromWindow() }
 
     /**
      * The options drawer's body. [reveal] 0..1 grows it outward from [anchor] (the microphone's centre along the pill) to its full

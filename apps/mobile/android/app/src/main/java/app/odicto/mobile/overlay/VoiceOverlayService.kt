@@ -7,6 +7,7 @@ import android.graphics.PixelFormat
 import android.os.*
 import android.provider.Settings
 import android.view.*
+import android.widget.FrameLayout
 import androidx.core.app.NotificationCompat
 import app.odicto.mobile.MainActivity
 import app.odicto.mobile.R
@@ -22,6 +23,9 @@ class VoiceOverlayService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val manager by lazy { getSystemService(WINDOW_SERVICE) as WindowManager }
     private var control: VoiceControlView? = null
+    /** The microphone alone, in a window that never changes size: see [VoiceControlView.detachMic]. It sits above [control]'s window. */
+    private var micHost: FrameLayout? = null
+    private var micParams: WindowManager.LayoutParams? = null
     private var params: WindowManager.LayoutParams? = null
     private var preferredBottom: Int? = null
     private var anchorMicLeft = 0
@@ -157,6 +161,22 @@ class VoiceOverlayService : Service() {
             gravity = Gravity.TOP or Gravity.LEFT
             if (Build.VERSION.SDK_INT >= 28) layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER
         }
+        // The microphone leaves the drawer's view for a window of its own, added second so it is drawn above the drawer.
+        val mic = view.detachMic()
+        val micSize = view.dp(OverlayGeometry.MIC_DP)
+        val host = FrameLayout(this).also { it.addView(mic, FrameLayout.LayoutParams(micSize, micSize)) }
+        val hostParams = WindowManager.LayoutParams(micSize, micSize,
+            if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT).apply {
+            gravity = Gravity.TOP or Gravity.LEFT
+            if (Build.VERSION.SDK_INT >= 28) layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER
+        }
+        if (Build.VERSION.SDK_INT >= 29) host.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+            // Keep the system's Back gesture off the microphone so it can sit at the very edge.
+            v.systemGestureExclusionRects = listOf(android.graphics.Rect(0, 0, v.width, v.height))
+        }
+        micHost = host; micParams = hostParams
         control = view; params = layout
         lastGeometry = geometryKey()
         placeFromAnchors(view, layout, update = false)
@@ -203,7 +223,12 @@ class VoiceOverlayService : Service() {
             saveAnchors(view)
             view.setPlacement(anchorMicLeft, bounds().first)
         }
-        try { manager.addView(view, layout); view.render(VoiceSession.state.value) }
+        try {
+            manager.addView(view, layout)
+            placeMic(view, layout)
+            manager.addView(host, hostParams)
+            view.render(VoiceSession.state.value)
+        }
         catch (_: Exception) { hide(); recover() }
     }
     private fun micLeftOf(view: VoiceControlView, layout: WindowManager.LayoutParams): Int = layout.x + view.micOffsetPx
@@ -286,7 +311,23 @@ class VoiceOverlayService : Service() {
         layout.x = layout.x.coerceIn(-overhang, maxOf(-overhang, w - layout.width + overhang)); layout.y = layout.y.coerceIn(0, maxOf(0, h - layout.height))
     }    private fun update(view: View, layout: WindowManager.LayoutParams) {
         if (view !== control) return
-        try { manager.updateViewLayout(view, layout) } catch (_: Exception) { hide(); recover() }
+        try { manager.updateViewLayout(view, layout) } catch (_: Exception) { hide(); recover(); return }
+        (view as? VoiceControlView)?.let { placeMic(it, layout) }
+    }
+
+    /**
+     * The microphone's own window sits exactly where the microphone is: its left edge is the anchor, and its bottom is 8dp above the
+     * drawer window's bottom (the drawer window always grows upward from there). Nothing about the drawer's size is involved, so the
+     * microphone cannot move or flash when the drawer opens or closes.
+     */
+    private fun placeMic(view: VoiceControlView, layout: WindowManager.LayoutParams) {
+        val host = micHost ?: return
+        val p = micParams ?: return
+        val x = anchorMicLeft
+        val y = layout.y + layout.height - view.dp(OverlayGeometry.MIC_DP + OverlayGeometry.INSET_DP)
+        if (p.x == x && p.y == y) return
+        p.x = x; p.y = y
+        if (host.isAttachedToWindow) try { manager.updateViewLayout(host, p) } catch (_: Exception) { hide(); recover() }
     }
     // A failed window update or an unlock broadcast arriving before Keyguard clears
     // must not leave an enabled bubble absent until an unrelated state change.
@@ -302,7 +343,9 @@ class VoiceOverlayService : Service() {
     private fun hide() {
         val view = control ?: return
         control = null; params = null; preferredBottom = null
+        val host = micHost; micHost = null; micParams = null
         view.resize = null; view.dragStart = null; view.drag = null; view.dragEnd = null
+        if (host != null) try { manager.removeViewImmediate(host) } catch (_: IllegalArgumentException) {}
         // addView registers the root before isAttachedToWindow becomes true.
         // Remove that root even when focus/permissions change in the same frame.
         try { manager.removeViewImmediate(view) } catch (_: IllegalArgumentException) {}

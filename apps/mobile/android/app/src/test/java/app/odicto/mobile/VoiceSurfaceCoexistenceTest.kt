@@ -54,7 +54,9 @@ class VoiceSurfaceCoexistenceTest {
             DictationCoordinator.keyboardTopPx.value = 120
             shadowOf(Looper.getMainLooper()).idle()
             assertTrue("busy chrome must fit a short viewport", placement().y + placement().height <= 112)
-            for (surface in listOf(strip, control()!!)) {
+            // The floating microphone has a window of its own, so it is found there; the keyboard's strip still holds its own.
+            val micHost = overlay.get().javaClass.getDeclaredField("micHost").apply { isAccessible = true }.get(overlay.get()) as android.widget.FrameLayout
+            for (surface in listOf<android.view.ViewGroup>(strip, micHost)) {
                 assertTrue((0 until surface.childCount).map { surface.getChildAt(it) }.any {
                     it.visibility == View.VISIBLE && it.contentDescription == "Finish recording"
                 })
