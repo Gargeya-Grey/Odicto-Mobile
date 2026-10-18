@@ -35,6 +35,7 @@ class AudioCaptureService : Service() {
     private var timeout: Job? = null
     private var audioBytes = 0L
     private var startedAt = 0L
+    private var releasedAt = 0L
     private val backlog = AudioBacklog(MAX_BACKLOG_FRAMES)
     private val verbose by lazy { (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0 }
     override fun onBind(intent: Intent?): IBinder? = null
@@ -82,7 +83,8 @@ class AudioCaptureService : Service() {
                 if (ended || (operation.isNotEmpty() && !VoiceSession.owns(operation))) return@launch
                 val created = DirectVoiceTransport(config, operation, editor, { event -> scope.launch { receive(event.toString()) } }, log = { if (verbose) android.util.Log.i(TAG, "transport: $it") })
                 transport = created
-                created.open()
+                // The shared HTTP client is built on first use; keep that and the Live socket setup off the main thread.
+                withContext(Dispatchers.IO) { created.open() }
             } catch (e: VoiceConfigurationException) { error(e.message ?: "Check your voice settings.") }
             catch (_: Exception) { error("Cannot connect. Check your connection and voice settings.") }
         }
@@ -107,7 +109,7 @@ class AudioCaptureService : Service() {
                     ended = true; timeout?.cancel()
                     val output = event.getString("text"); val transcript = event.getString("transcript")
                     val outcome = DictationCoordinator.deliver(editor, output, operation)
-                    if (verbose) android.util.Log.i(TAG, "result after ${SystemClock.uptimeMillis() - startedAt}ms, recorded=${audioBytes / 32}ms, outcome=$outcome")
+                    if (verbose) android.util.Log.i(TAG, "result after ${SystemClock.uptimeMillis() - startedAt}ms, release->result=${SystemClock.uptimeMillis() - releasedAt}ms, recorded=${audioBytes / 32}ms, outcome=$outcome")
                     VoiceSession.completed(operation, output, outcome)
                     scope.launch {
                         try {
@@ -179,7 +181,7 @@ class AudioCaptureService : Service() {
     }
     private fun finish() {
         if (finishing || ended) return
-        finishing = true
+        finishing = true; releasedAt = SystemClock.uptimeMillis()
         val audio = recorder
         // A release before the microphone opened has nothing to transcribe. Ending the session here keeps
         // the service from staying started with no transport left to shut it down.

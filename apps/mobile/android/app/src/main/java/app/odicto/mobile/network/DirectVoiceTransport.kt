@@ -8,7 +8,6 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.util.concurrent.TimeUnit
 import okio.ByteString.Companion.toByteString
 
 data class DirectVoiceConfig(
@@ -33,17 +32,15 @@ class DirectVoiceTransport(
     private val operation: String,
     private val editor: Long,
     private val event: (JSONObject) -> Unit,
-    private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
-        .callTimeout(40, TimeUnit.SECONDS).pingInterval(20, TimeUnit.SECONDS)
-        .followRedirects(false).followSslRedirects(false).build(),
-    private val socketFactory: WebSocket.Factory = client,
-    private val closeConnections: () -> Unit = { client.connectionPool.evictAll() },
+    client: OkHttpClient? = null,
+    socketFactory: WebSocket.Factory? = null,
     private val log: (String) -> Unit = {},
 ) {
+    private val client by lazy { client ?: HttpClients.voice }
+    private val socketFactory by lazy { socketFactory ?: HttpClients.live }
     @Volatile private var cancelled = false
     @Volatile private var call: Call? = null
-    private var socket: WebSocket? = null
+    @Volatile private var socket: WebSocket? = null
     private var pcm = ByteArrayOutputStream()
     @Volatile private var transcript = ""
     @Volatile private var liveInterim = ""
@@ -218,15 +215,11 @@ class DirectVoiceTransport(
     @Synchronized fun cancel() {
         if (cancelled) return
         cancelled = true; pcm = ByteArrayOutputStream(); transcript = ""
-        // Cancellation silences callbacks immediately. TLS socket close may write
-        // close_notify bytes, so all network teardown must stay off the UI thread.
-        // Use the request-owned executor: service scope cancellation cannot skip it.
-        client.dispatcher.executorService.execute {
-            try {
-                call?.cancel(); socket?.cancel(); client.dispatcher.cancelAll()
-                closeConnections()
-            } finally { client.dispatcher.executorService.shutdown() }
-        }
+        // Cancellation silences callbacks immediately. TLS socket close may write close_notify bytes, so teardown stays
+        // off the caller (often the UI thread). Only this session's call and socket close: the pool is shared, and its
+        // warm connections serve the next dictation.
+        val active = call; val live = socket
+        if (active != null || live != null) client.dispatcher.executorService.execute { active?.cancel(); live?.cancel() }
     }
     private fun checkSetting(valid: Boolean, message: () -> String) { if (!valid) throw VoiceConfigurationException(message()) }
     private class ProviderFailure(message: String) : Exception(message)

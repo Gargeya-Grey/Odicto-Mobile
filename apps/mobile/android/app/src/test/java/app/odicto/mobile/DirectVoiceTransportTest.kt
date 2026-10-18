@@ -100,26 +100,43 @@ class DirectVoiceTransportTest {
             try { transport.open(); fail("Oversized context accepted") } catch (_: VoiceConfigurationException) {} finally { transport.cancel() }
         }
     }
-    @Test fun cancellationClosesConnectionsOffCallerThreadAndOnlyOnce() {
+    @Test fun cancellationClosesOnlyThisSessionOffCallerThreadAndKeepsTheSharedClient() {
         val caller = Thread.currentThread()
         val closed = java.util.concurrent.CountDownLatch(1)
         val cleanupThread = java.util.concurrent.atomic.AtomicReference<Thread>()
         val closures = java.util.concurrent.atomic.AtomicInteger()
+        val ws = object : WebSocket {
+            override fun request() = Request.Builder().url("https://generativelanguage.googleapis.com/").build()
+            override fun queueSize() = 0L
+            override fun send(text: String) = true
+            override fun send(bytes: okio.ByteString) = true
+            override fun close(code: Int, reason: String?) = true
+            override fun cancel() { cleanupThread.set(Thread.currentThread()); closures.incrementAndGet(); closed.countDown() }
+        }
         val client = OkHttpClient()
-        val transport = DirectVoiceTransport(DirectVoiceConfig("raw", groqKey = "test"), "op", 1, {}, client,
-            closeConnections = {
-                cleanupThread.set(Thread.currentThread())
-                closures.incrementAndGet()
-                closed.countDown()
-            })
+        val transport = DirectVoiceTransport(DirectVoiceConfig("live", liveKey = "test"), "op", 1, {}, client,
+            socketFactory = WebSocket.Factory { _, _ -> ws })
         transport.open()
         transport.cancel()
         transport.cancel()
         assertFalse(transport.sendAudio(ByteArray(32), 32))
         assertTrue(closed.await(3, java.util.concurrent.TimeUnit.SECONDS))
         assertNotSame("TLS close must not run on the service/UI caller", caller, cleanupThread.get())
-        assertTrue(client.dispatcher.executorService.awaitTermination(3, java.util.concurrent.TimeUnit.SECONDS))
         assertEquals(1, closures.get())
+        assertFalse("the shared dispatcher keeps serving the next dictation", client.dispatcher.executorService.isShutdown)
+    }
+    @Test fun aSecondDictationReusesTheFirstOnesConnection() {
+        LocalHttpServer("{\"text\":\"Hello\"}").use { server ->
+            val client = OkHttpClient.Builder()
+                .addInterceptor { chain -> chain.proceed(chain.request().newBuilder().url("http://127.0.0.1:${server.port}/").build()) }.build()
+            repeat(2) {
+                val events = mutableListOf<JSONObject>()
+                val transport = DirectVoiceTransport(DirectVoiceConfig("raw", groqKey = "test"), "op$it", 1, { event -> events.add(event) }, client)
+                transport.open(); transport.sendAudio(ByteArray(3200), 3200); transport.finish(); transport.cancel()
+                assertEquals("Hello", events.last().getString("text"))
+            }
+            assertEquals("the second dictation skips DNS, TCP and TLS", 1, server.connections.get())
+        }
     }
     @Test fun liveAcceptsBinaryJsonFramesLikeTheDesktopClient() {
         val events = mutableListOf<JSONObject>()

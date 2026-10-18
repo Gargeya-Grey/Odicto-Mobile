@@ -3,13 +3,13 @@ package app.odicto.mobile.plugins
 import app.odicto.mobile.dictation.VoiceSession
 import app.odicto.mobile.ime.FieldPolishClient
 import app.odicto.mobile.ime.Haptics
+import app.odicto.mobile.network.HttpClients
 import app.odicto.mobile.overlay.VoiceOverlayController
 import app.odicto.mobile.storage.*
 import com.getcapacitor.*
 import com.getcapacitor.annotation.CapacitorPlugin
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
@@ -17,7 +17,7 @@ import java.util.concurrent.TimeUnit
 @CapacitorPlugin(name = "OdictoVoice")
 class VoicePlugin : Plugin() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val openRouterClient = OkHttpClient.Builder().callTimeout(15, TimeUnit.SECONDS).build()
+    private val openRouterClient by lazy { HttpClients.shared.newBuilder().callTimeout(15, TimeUnit.SECONDS).build() }
     override fun load() {
         VoicePreferences.initialize(context)
         VoiceOverlayController.sync(context, scope)
