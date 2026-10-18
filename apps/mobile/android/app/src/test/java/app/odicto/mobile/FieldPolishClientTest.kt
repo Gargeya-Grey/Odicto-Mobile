@@ -1,5 +1,7 @@
 package app.odicto.mobile
 
+import app.odicto.mobile.dictation.PromptComposer
+import app.odicto.mobile.dictation.PromptMode
 import app.odicto.mobile.ime.FieldPolishClient
 import app.odicto.mobile.ime.FieldPolishResult
 import kotlinx.coroutines.CoroutineStart
@@ -57,7 +59,7 @@ class FieldPolishClientTest {
     @Test fun customModelAndPromptAreUsedWithoutFallbackAndFormattingIsKept() = runBlocking {
         val requests = mutableListOf<Request>()
         val result = client(body = reply("  Line one\nLine two  "), requests = requests)
-            .correct("input", model = "custom/model", systemPrompt = "Custom prompt", apiKey = "key")
+            .correct("input", model = "custom/model", systemPrompt = "Custom prompt", apiKey = "key", promptMode = PromptMode.REPLACE)
         assertEquals(FieldPolishResult.Success("  Line one\nLine two  "), result)
         val buffer = Buffer()
         synchronized(requests) { requests.single() }.body!!.writeTo(buffer)
@@ -66,6 +68,17 @@ class FieldPolishClientTest {
         assertEquals("Custom prompt", payload.getJSONArray("messages").getJSONObject(0).getString("content"))
     }
 
+    @Test fun appendModeKeepsTheBuiltInRulesAndAddsTheUsersNotesAfterThem() = runBlocking {
+        val requests = mutableListOf<Request>()
+        client(body = reply("Fixed"), requests = requests)
+            .correct("input", systemPrompt = "My name is Asha. Keep 'Odicto' as written.", apiKey = "key", promptMode = PromptMode.APPEND)
+        val buffer = Buffer()
+        synchronized(requests) { requests.single() }.body!!.writeTo(buffer)
+        val system = JSONObject(buffer.readUtf8()).getJSONArray("messages").getJSONObject(0).getString("content")
+        assertTrue(system.startsWith(FieldPolishClient.DEFAULT_SYSTEM_PROMPT))
+        assertTrue(system.endsWith("My name is Asha. Keep 'Odicto' as written."))
+        assertTrue(system.contains(PromptComposer.POLISH_NOTES_INTRO))
+    }
     @Test fun invalidInputIsRejectedWithoutNetwork() = runBlocking {
         val client = FieldPolishClient(OkHttpClient.Builder().addInterceptor { throw AssertionError("Unexpected request") }.build())
         val cases = listOf(

@@ -74,6 +74,7 @@ class AudioCaptureService : Service() {
                     DirectVoiceConfig(mode = mode, provider = settings.provider, model = settings.model, liveModel = settings.liveModel,
                         selectedText = if (mode == "ai") selectedText else "",
                         systemPrompt = if (mode == "ai") settings.systemPrompt else "",
+                        systemPromptMode = app.odicto.mobile.dictation.PromptMode.forStored(settings.systemPromptMode, settings.systemPrompt),
                         groqKey = if (mode != "live") credentials.get("voice-groq").orEmpty() else "",
                         answerKey = if (mode == "ai") credentials.get("voice-${settings.provider}").orEmpty() else "",
                         liveKey = if (mode == "live") credentials.get("voice-gemini").orEmpty() else "")

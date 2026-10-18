@@ -106,8 +106,10 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
     private val back = Icon(context, "back", "Collapse voice controls")
     private val cancel = Icon(context, "cancel", "Cancel recording")
     private val copy = Icon(context, "copy", "Copy available text")
-    private val pill = View(context).apply { background = round(cardFill, OverlayGeometry.OPTIONS_HEIGHT_DP / 2f) }
+    private val pill = PillView(context, cardFill, cardStroke, dp(1).toFloat())
     private var pillReveal: ValueAnimator? = null
+    private var micFade: ValueAnimator? = null
+    private var lastOptionsShown = false
     /** Keyboard header only: the jade chip behind the active mode. It glides to a new mode instead of jumping. */
     private val indicator = View(context).apply { background = round(jadeFill, 13f); visibility = GONE }
     private var indicatorIndex = -1
@@ -388,8 +390,24 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         val box = OverlayGeometry.bounds(pending.minOf { it.x }, pending.maxOf { it.x + it.w })
         val changed = surfaceWidth != box.width || surfaceHeight != newHeight || micOffsetDp != box.micOffset
         surfaceWidth = box.width; surfaceHeight = newHeight; micOffsetDp = box.micOffset
+        // The window grows around the microphone but the microphone must not move, and the system applies the window's new frame and
+        // this layout in separate frames. Every piece is therefore placed from the window edges that stay a fixed distance from the
+        // microphone: the bottom always (the window grows upward), and the right edge when it grows leftward or the left edge when it
+        // grows rightward. Measured from those edges, a piece is in the right place whichever of the old and new window frames is
+        // on screen, so the disc cannot be drawn displaced for a frame. The left margin is kept for anything that reads the position.
+        val fromRight = box.width - (box.micOffset + OverlayGeometry.MIC_DP) == OverlayGeometry.INSET_DP && box.micOffset != OverlayGeometry.INSET_DP
+        val windowWidthPx = dp(box.width); val windowHeightPx = dp(newHeight)
         for (item in pending) {
-            item.view.layoutParams = LayoutParams(dp(item.w), dp(item.h)).apply { leftMargin = dp(item.x + box.micOffset); topMargin = dp(item.y) }
+            item.view.layoutParams = LayoutParams(dp(item.w), dp(item.h)).apply {
+                leftMargin = dp(item.x + box.micOffset); topMargin = dp(item.y)
+                bottomMargin = windowHeightPx - topMargin - height
+                if (fromRight) {
+                    gravity = Gravity.BOTTOM or Gravity.END
+                    rightMargin = windowWidthPx - leftMargin - width
+                } else {
+                    gravity = Gravity.BOTTOM or Gravity.START
+                }
+            }
             if (item.view === panel || item.view === pill) {
                 // Origin-aware: it opens from the edge nearest the microphone.
                 item.view.pivotX = dp(when (side) { OverlayGeometry.Side.LEFT -> item.w; OverlayGeometry.Side.RIGHT -> 0; OverlayGeometry.Side.ABOVE -> item.w / 2 }).toFloat()
@@ -411,7 +429,8 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         // Without a field the mic is dimmed. Over the options pill it is dimmed by colour instead of alpha, because a see-through
         // disc would show the pill's end behind it.
         val noField = !value.busy && DictationCoordinator.activeEditorSession == null
-        mic.alpha = if (noField && !optionsShown) 0.5f else 1f
+        fadeMic(if (noField && !optionsShown) 0.5f else 1f, animate = optionsShown != lastOptionsShown)
+        lastOptionsShown = optionsShown
         mic.dimmed = noField && optionsShown
         mic.contentDescription = when {
             keyboard && compactKeyboard && value.busy && !value.active -> "Cancel voice processing"
@@ -425,14 +444,17 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
             // transitions.dev dropdown/modal open: what appears fades and scales in on the smooth-out curve, cards
             // barely and buttons a little more, with a 40ms stagger so a row unfolds instead of popping.
             var stagger = 0
-            pillReveal?.cancel(); pill.clipBounds = null
-            val beside = optionsShown && !stacked
+            pillReveal?.cancel(); pill.reveal = 1f; pill.translationY = 0f
+            // The drawer comes out of the microphone: the microphone itself never moves.
+            val drawer = optionsShown
             val rowControls = listOf(back, settings, raw, ai, live)
+            val micCentreX = dp(box.micOffset) + dp(OverlayGeometry.MIC_DP) / 2
+            val micCentreY = (mic.layoutParams as LayoutParams).topMargin + dp(OverlayGeometry.MIC_DP) / 2
             for (piece in pieces.filter { it.visibility == View.VISIBLE && it !in wasShown }) {
                 val card = piece === panel || piece === pill
                 piece.animate().cancel()
-                if (beside && piece === pill) { revealPill(side == OverlayGeometry.Side.LEFT); continue }
-                if (beside && piece in rowControls) { emerge(piece, rowControls.size - 1 - rowControls.indexOf(piece), box.micOffset); continue }
+                if (drawer && piece === pill) { growPill(micCentreX, micCentreY); continue }
+                if (drawer && piece in rowControls) { emerge(piece, rowControls.size - 1 - rowControls.indexOf(piece), micCentreX, micCentreY); continue }
                 piece.alpha = 0f
                 piece.scaleX = if (card) 0.97f else 0.85f; piece.scaleY = piece.scaleX
                 piece.translationY = if (piece === panel) dp(8).toFloat() else 0f
@@ -445,29 +467,51 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         }
         mic.invalidate()
     }
-    /** The pill grows out from under the microphone: a wipe from the mic's end, so its rounded shape never squashes. */
-    private fun revealPill(fromRight: Boolean) {
-        val w = pill.layoutParams.width; val h = pill.layoutParams.height
+    /**
+     * The drawer's body starts hidden behind the microphone and grows outward from its centre to full size, keeping rounded ends
+     * the whole way. When it sits above the microphone it also rises out from behind it. Nothing fades: it is the same shape
+     * getting bigger, so it reads as coming from inside the icon.
+     */
+    private fun growPill(micCentreX: Int, micCentreY: Int) {
+        val lp = pill.layoutParams as LayoutParams
+        pill.anchor = (micCentreX - lp.leftMargin).toFloat().coerceIn(0f, lp.width.toFloat())
+        val pillCentreY = lp.topMargin + lp.height / 2
+        val rise = (micCentreY - pillCentreY).toFloat()
         pill.alpha = 1f; pill.scaleX = 1f; pill.scaleY = 1f
-        fun clip(shown: Int) = android.graphics.Rect(if (fromRight) w - shown else 0, 0, if (fromRight) w else shown, h)
-        pill.clipBounds = clip(0)
+        pill.reveal = 0f; pill.translationY = rise
         pillReveal = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 320L; interpolator = PressSurface.SMOOTH_OUT
-            addUpdateListener { pill.clipBounds = clip((w * (it.animatedValue as Float)).toInt()) }
-            addListener(object : android.animation.AnimatorListenerAdapter() { override fun onAnimationEnd(a: android.animation.Animator) { pill.clipBounds = null } })
+            duration = 420L; interpolator = PressSurface.SMOOTH_OUT
+            addUpdateListener { pill.reveal = it.animatedValue as Float; pill.translationY = rise * (1f - it.animatedValue as Float) }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(a: android.animation.Animator) { pill.reveal = 1f; pill.translationY = 0f }
+                override fun onAnimationCancel(a: android.animation.Animator) { pill.reveal = 1f; pill.translationY = 0f }
+            })
             start()
         }
     }
 
-    /** A control slides out from beneath the microphone to its place, the nearest first, fading and growing as it goes. */
-    private fun emerge(piece: View, rank: Int, micOffsetDp: Int) {
+    /** A control slides out from the microphone's centre to its place, the nearest first, growing and fading in as it goes. */
+    private fun emerge(piece: View, rank: Int, micCentreX: Int, micCentreY: Int) {
         val lp = piece.layoutParams as LayoutParams
-        val toMic = (dp(micOffsetDp) + dp(OverlayGeometry.MIC_DP) / 2) - (lp.leftMargin + lp.width / 2)
-        piece.alpha = 0f; piece.scaleX = 0.6f; piece.scaleY = 0.6f; piece.translationX = toMic.toFloat()
-        piece.animate().alpha(1f).scaleX(1f).scaleY(1f).translationX(0f)
-            .setStartDelay(20L * rank).setDuration(300L).setInterpolator(PressSurface.SMOOTH_OUT).start()
+        val dx = micCentreX - (lp.leftMargin + lp.width / 2)
+        val dy = micCentreY - (lp.topMargin + lp.height / 2)
+        piece.alpha = 0f; piece.scaleX = 0.4f; piece.scaleY = 0.4f; piece.translationX = dx.toFloat(); piece.translationY = dy.toFloat()
+        piece.animate().alpha(1f).scaleX(1f).scaleY(1f).translationX(0f).translationY(0f)
+            .setStartDelay(30L * rank).setDuration(380L).setInterpolator(PressSurface.SMOOTH_OUT).start()
     }
 
+    /** The microphone's opacity eases when the drawer opens or closes, so the icon never flashes between its idle and active looks. */
+    private fun fadeMic(target: Float, animate: Boolean) {
+        micFade?.cancel(); micFade = null
+        if (mic.alpha == target) return
+        if (!animate || !PressSurface.canAnimate(this)) { mic.alpha = target; return }
+        micFade = ValueAnimator.ofFloat(mic.alpha, target).apply {
+            duration = 260L; interpolator = PressSurface.SMOOTH_OUT
+            addUpdateListener { mic.alpha = it.animatedValue as Float }
+            addListener(object : android.animation.AnimatorListenerAdapter() { override fun onAnimationCancel(a: android.animation.Animator) { mic.alpha = target } })
+            start()
+        }
+    }
     /** A touch on the open options keeps them open a while longer. */
     override fun dispatchTouchEvent(e: MotionEvent): Boolean {
         if (!keyboard && e.actionMasked == MotionEvent.ACTION_DOWN && OverlayPresentation.options) {
@@ -645,6 +689,34 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
     override fun onAttachedToWindow() { super.onAttachedToWindow(); if (!keyboard) render(ui) }
     override fun onDetachedFromWindow() { removeCallbacks(collapseTimer); removeCallbacks(beginHold); super.onDetachedFromWindow() }
 
+    /**
+     * The options drawer's body. [reveal] 0..1 grows it outward from [anchor] (the microphone's centre along the pill) to its full
+     * width, with half-circle ends at every size. With a background set (the keyboard header's mode strip) it just draws that.
+     */
+    private class PillView(context: Context, private val fill: Int, private val stroke: Int, private val strokePx: Float) : View(context) {
+        var reveal = 1f
+            set(value) { field = value; invalidate() }
+        var anchor = 0f
+            set(value) { field = value; invalidate() }
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val rect = android.graphics.RectF()
+
+        override fun onDraw(c: Canvas) {
+            super.onDraw(c)
+            if (background != null) return
+            val w = width.toFloat(); val h = height.toFloat()
+            val a = anchor.coerceIn(0f, w)
+            rect.set(a - reveal * a, 0f, a + reveal * (w - a), h)
+            if (rect.width() <= 0f) return
+            val half = strokePx / 2f
+            rect.inset(half, half)
+            val radius = minOf(rect.height(), rect.width()) / 2f
+            paint.style = Paint.Style.FILL; paint.color = fill
+            c.drawRoundRect(rect, radius, radius, paint)
+            paint.style = Paint.Style.STROKE; paint.strokeWidth = strokePx; paint.color = stroke
+            c.drawRoundRect(rect, radius, radius, paint)
+        }
+    }
     private class Icon(context: Context, kind: String, description: String) : View(context) {
         private val palette = InkColors(context)
         var compactSurface = false

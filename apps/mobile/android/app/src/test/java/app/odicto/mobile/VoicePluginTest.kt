@@ -11,6 +11,7 @@ import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -107,6 +108,36 @@ class VoicePluginTest {
         assertEquals("Fixture polish prompt", disabled.result!!.getString("polishSystemPrompt"))
     }
 
+    @Test fun promptModesRoundTripAndAnOmittedOrUnknownModeNeverChangesTheSavedOne() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        kotlinx.coroutines.runBlocking {
+            VoicePreferences.save(context, app.odicto.mobile.storage.VoiceSettings(systemPrompt = "Fixture voice prompt", polishSystemPrompt = "Fixture polish prompt"))
+        }
+        VoicePreferences.initialize(context)
+        val plugin = VoicePlugin()
+        fun status(): JSObject { val c = Call(); plugin.status(c); await(c); return c.result!! }
+        fun save(patch: JSObject): Call { val c = Call(patch); plugin.save(c); await(c); return c }
+
+        assertEquals("append", status().getString("systemPromptMode"))
+        assertEquals("append", status().getString("polishSystemPromptMode"))
+
+        assertNull(save(JSObject().put("systemPromptMode", "replace").put("polishSystemPromptMode", "replace")).error)
+        assertEquals("replace", status().getString("systemPromptMode"))
+        assertEquals("replace", status().getString("polishSystemPromptMode"))
+
+        assertNull(save(JSObject().put("keySize", "large")).error)
+        assertEquals("a save that does not mention the mode keeps it", "replace", status().getString("systemPromptMode"))
+
+        val refused = Call(JSObject().put("systemPromptMode", "sepia")).also { plugin.save(it) }
+        val deadline = System.nanoTime() + 5_000_000_000
+        while (!refused.finished && System.nanoTime() < deadline) { shadowOf(Looper.getMainLooper()).idle(); Thread.sleep(10) }
+        assertNotNull("an unknown mode is refused", refused.error)
+        assertEquals("replace", status().getString("systemPromptMode"))
+
+        assertNull(save(JSObject().put("systemPromptMode", "append")).error)
+        assertEquals("append", status().getString("systemPromptMode"))
+        assertEquals("the other prompt's mode is untouched", "replace", status().getString("polishSystemPromptMode"))
+    }
     @Test fun toleranceOnlySavePreservesCustomProviderModel() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         kotlinx.coroutines.runBlocking {

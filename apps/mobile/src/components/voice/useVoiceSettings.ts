@@ -16,8 +16,10 @@ export const FORM_FIELDS = [
   'model',
   'liveModel',
   'systemPrompt',
+  'systemPromptMode',
   'polishModel',
   'polishSystemPrompt',
+  'polishSystemPromptMode',
 ] as const;
 export type FormField = (typeof FORM_FIELDS)[number];
 export type FormValues = Pick<VoiceSettings, FormField>;

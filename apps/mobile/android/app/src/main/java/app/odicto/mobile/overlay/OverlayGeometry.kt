@@ -11,10 +11,11 @@ package app.odicto.mobile.overlay
  */
 internal object OverlayGeometry {
     const val MIC_DP = 56
-    /** Space kept around the microphone when nothing else is open. */
+    /**
+     * Space kept around the window's contents, open or not. It is the same either way on purpose: the edge the microphone sits
+     * against must be the same distance from the disc in every state, so growing the window never shifts the disc.
+     */
     const val INSET_DP = 8
-    /** Space kept around the whole group once something is open. */
-    const val GROUP_MARGIN_DP = 4
     const val SCREEN_MARGIN_DP = 8f
     /**
      * The full options pill reaches this far left of the mic. It is as tall as the mic and ends exactly at the mic's far
@@ -59,13 +60,15 @@ internal object OverlayGeometry {
 
     /**
      * Left edge of a card or stacked row of [widthDp]. Beside the microphone it lines up with the
-     * microphone's outer edge; above it, it is centred. Either way it is then slid to stay on screen.
+     * microphone's outer edge. Above it, it lines up with the microphone's left edge and grows rightward, or with its right edge and
+     * grows leftward when the screen has no room on the right: so one edge of the window stays a fixed distance from the microphone
+     * and the microphone cannot shift while the window changes. Either way it is then slid to stay on screen.
      */
     fun slideOnScreen(side: Side, micLeftDp: Float, screenWidthDp: Float, widthDp: Int): Int {
         val wanted = when (side) {
             Side.LEFT -> MIC_DP - widthDp
             Side.RIGHT -> 0
-            Side.ABOVE -> MIC_DP / 2 - widthDp / 2
+            Side.ABOVE -> if (micLeftDp + widthDp <= screenWidthDp - SCREEN_MARGIN_DP) 0 else MIC_DP - widthDp
         }
         val minScreen = SCREEN_MARGIN_DP
         val maxScreen = (screenWidthDp - widthDp - SCREEN_MARGIN_DP).coerceAtLeast(minScreen)
@@ -90,8 +93,7 @@ internal object OverlayGeometry {
     fun bounds(minX: Int, maxX: Int): Bounds {
         val low = minOf(0, minX)
         val high = maxOf(MIC_DP, maxX)
-        val margin = if (low < 0 || high > MIC_DP) GROUP_MARGIN_DP else INSET_DP
-        return Bounds(width = high - low + 2 * margin, micOffset = margin - low)
+        return Bounds(width = high - low + 2 * INSET_DP, micOffset = INSET_DP - low)
     }
 
     /** A placement is saved as a share of the room it moves in, in millionths, so no pixel is lost to rounding. */

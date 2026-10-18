@@ -7,8 +7,11 @@ export type VoiceSettings = {
   model: string;
   liveModel: string;
   systemPrompt: string;
+  /** How the AI prompt combines with Odicto's built-in instructions. */
+  systemPromptMode: 'append' | 'replace';
   polishModel: string;
   polishSystemPrompt: string;
+  polishSystemPromptMode: 'append' | 'replace';
   groqKeySet: boolean;
   haptics: boolean;
   /** 0 off, 1 light, 2 medium, 3 strong. Replaces the old boolean for the user. */

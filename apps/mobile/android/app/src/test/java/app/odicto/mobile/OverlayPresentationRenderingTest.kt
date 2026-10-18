@@ -76,8 +76,8 @@ class OverlayPresentationRenderingTest {
         advance(2000)
         publish(view, VoiceUi(phase = "recording", mode = "raw"))
         advance(5000)
-        // The window is exactly as wide as what is open: a 288dp card plus the microphone and margins.
-        assertEquals(view.dp(296), view.layoutParams.width)
+        // The window is exactly as wide as what is open: a 288dp card plus the microphone and the 8dp margins.
+        assertEquals(view.dp(304), view.layoutParams.width)
         assertTrue(buttons(view).any { it.contentDescription == "Finish recording" })
     }
 
@@ -163,8 +163,8 @@ class OverlayPresentationRenderingTest {
     fun accessibilityTimeoutExtendsActualCollapse() = attached { view, _ ->
         publish(view, VoiceUi(phase = "notice", resultId = "accessible", message = "Notice"))
         advance(3000)
-        // The window is exactly as wide as what is open: a 288dp card plus the microphone and margins.
-        assertEquals(view.dp(296), view.layoutParams.width)
+        // The window is exactly as wide as what is open: a 288dp card plus the microphone and the 8dp margins.
+        assertEquals(view.dp(304), view.layoutParams.width)
         advance(3000)
         assertEquals(view.dp(72), view.layoutParams.width)
     }
@@ -177,8 +177,8 @@ class OverlayPresentationRenderingTest {
             view.resize = { w, h, _ -> view.layoutParams = view.layoutParams.apply { width = w; height = h } }
             view.render(VoiceUi(phase = "done", resultId = "completion", finalText = "Retained", message = "Check field before pasting"))
             shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(2999))
-            // The window is exactly as wide as what is open: a 288dp card plus the microphone and margins.
-            assertEquals(view.dp(296), view.layoutParams.width)
+            // The window is exactly as wide as what is open: a 288dp card plus the microphone and the 8dp margins.
+            assertEquals(view.dp(304), view.layoutParams.width)
             shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(1))
             view.measure(View.MeasureSpec.makeMeasureSpec(view.layoutParams.width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(view.layoutParams.height, View.MeasureSpec.EXACTLY))
             view.layout(0, 0, view.measuredWidth, view.measuredHeight)

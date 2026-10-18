@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { modelGroups, modelLabel, MAX_MODEL_ID } from '../../lib/modelGroups';
 import type { Appearance, Point } from '../../lib/theme';
+import { PROMPT_MODE_OPTIONS, promptHint } from '../../lib/promptMode';
 import { checkResultLine, updateSettingLine } from '../../lib/updateCard';
 import { formatRelativeTime } from '../../lib/relativeTime';
 import type { OnboardingStatus } from '../../native/onboarding';
@@ -430,20 +431,36 @@ export function SettingsPage({
           <Row
             title="AI system prompt"
             asLabel
-            info="Saved on this device and sent only with AI requests. Leave blank to use Odicto's built-in instructions, which already handle editing and drafting, keep your language, and return only the text to insert. A prompt you write replaces them. Maximum 8,000 characters; selected text is limited to 20,000 characters."
+            info="Saved on this device and sent only with AI requests. Odicto's built-in instructions already handle editing and drafting, keep your language, and return only the text to insert. Choose 'Add to Odicto's rules' to put your own notes (your name, role, tone) after them, or 'Replace them' to write the whole prompt yourself. Maximum 8,000 characters; selected text is limited to 20,000 characters."
+            hint={promptHint(
+              draft.value('systemPromptMode') ?? 'append',
+              (draft.value('systemPrompt') ?? '').trim() !== '',
+              'ai',
+            )}
             below={({ id, describedBy }) => (
-              <textarea
-                id={id}
-                className="voice-input"
-                value={draft.value('systemPrompt') ?? ''}
-                onChange={(event) =>
-                  draft.setFields({ systemPrompt: event.target.value })
-                }
-                maxLength={8000}
-                rows={4}
-                aria-describedby={describedBy}
-                placeholder="Blank uses the built-in instructions. Example of your own: Reply in British English and keep it brief."
-              />
+              <>
+                <Segmented
+                  label="How your AI prompt is used"
+                  options={PROMPT_MODE_OPTIONS}
+                  value={draft.value('systemPromptMode') ?? 'append'}
+                  onChange={(systemPromptMode) =>
+                    draft.setFields({ systemPromptMode })
+                  }
+                />
+                <textarea
+                  id={id}
+                  className="voice-input"
+                  style={{ marginTop: 10 }}
+                  value={draft.value('systemPrompt') ?? ''}
+                  onChange={(event) =>
+                    draft.setFields({ systemPrompt: event.target.value })
+                  }
+                  maxLength={8000}
+                  rows={4}
+                  aria-describedby={describedBy}
+                  placeholder="For example: I'm Asha, a product designer. Keep replies warm and brief."
+                />
+              </>
             )}
           />
           <Row
@@ -572,20 +589,36 @@ export function SettingsPage({
           <Row
             title="Text polish system prompt"
             asLabel
-            info="Leave the prompt blank to use the built-in rules: fix spelling, grammar, punctuation and capitalization only, keep your wording, tone and language (including Hinglish), and leave names, links, @mentions and emojis alone. A prompt you write replaces them. A model can still make mistakes; review its result. Fields over 20,000 characters are refused rather than partially rewritten."
+            info="The built-in rules clean up dictation: they remove um, uh and other fillers, stutters and false starts, then fix spelling, grammar, punctuation and capitalization while keeping your wording, tone and language (including Hinglish) and leaving names, links, @mentions and emojis alone. Choose 'Add to Odicto's rules' to add your own notes after them (for example spellings to keep), or 'Replace them' to write the whole prompt yourself. A model can still make mistakes; review its result. Fields over 20,000 characters are refused rather than partially rewritten."
+            hint={promptHint(
+              draft.value('polishSystemPromptMode') ?? 'append',
+              (draft.value('polishSystemPrompt') ?? '').trim() !== '',
+              'polish',
+            )}
             below={({ id, describedBy }) => (
-              <textarea
-                id={id}
-                className="voice-input"
-                value={draft.value('polishSystemPrompt') ?? ''}
-                onChange={(event) =>
-                  draft.setFields({ polishSystemPrompt: event.target.value })
-                }
-                maxLength={8000}
-                rows={4}
-                aria-describedby={describedBy}
-                placeholder="Blank uses the built-in proofreading rules."
-              />
+              <>
+                <Segmented
+                  label="How your Polish prompt is used"
+                  options={PROMPT_MODE_OPTIONS}
+                  value={draft.value('polishSystemPromptMode') ?? 'append'}
+                  onChange={(polishSystemPromptMode) =>
+                    draft.setFields({ polishSystemPromptMode })
+                  }
+                />
+                <textarea
+                  id={id}
+                  className="voice-input"
+                  style={{ marginTop: 10 }}
+                  value={draft.value('polishSystemPrompt') ?? ''}
+                  onChange={(event) =>
+                    draft.setFields({ polishSystemPrompt: event.target.value })
+                  }
+                  maxLength={8000}
+                  rows={4}
+                  aria-describedby={describedBy}
+                  placeholder="For example: Keep 'Odicto' and my name, Asha, exactly as written."
+                />
+              </>
             )}
           />
         </Group>

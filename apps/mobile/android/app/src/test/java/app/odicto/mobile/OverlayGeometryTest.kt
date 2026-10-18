@@ -55,7 +55,9 @@ class OverlayGeometryTest {
     @Test fun besideTheMicrophoneTheCardLinesUpWithItsOuterEdge() {
         assertEquals(OverlayGeometry.MIC_DP - 288, OverlayGeometry.slideOnScreen(Side.LEFT, 347f, screen, 288))
         assertEquals(0, OverlayGeometry.slideOnScreen(Side.RIGHT, 20f, screen, 288))
-        assertEquals(OverlayGeometry.MIC_DP / 2 - 144, OverlayGeometry.slideOnScreen(Side.ABOVE, 180f, screen, 288))
+        // Above the microphone the row grows rightward from the mic's left edge when it fits, else leftward from its right edge.
+        assertEquals(0, OverlayGeometry.slideOnScreen(Side.ABOVE, 20f, screen, 232))
+        assertEquals(OverlayGeometry.MIC_DP - 232, OverlayGeometry.slideOnScreen(Side.ABOVE, 300f, screen, 232))
     }
 
     @Test fun mirroringAReachesPiecesAcrossTheMicrophone() {
@@ -76,11 +78,11 @@ class OverlayGeometryTest {
 
     @Test fun theWindowWrapsEverythingWithTheMicrophoneInsideItAtAKnownOffset() {
         val box = OverlayGeometry.bounds(-OverlayGeometry.OPTIONS_REACH_DP, OverlayGeometry.MIC_DP)
-        assertEquals(OverlayGeometry.OPTIONS_REACH_DP + OverlayGeometry.MIC_DP + 8, box.width)
-        assertEquals(OverlayGeometry.OPTIONS_REACH_DP + 4, box.micOffset)
+        assertEquals(OverlayGeometry.OPTIONS_REACH_DP + OverlayGeometry.MIC_DP + 16, box.width)
+        assertEquals(OverlayGeometry.OPTIONS_REACH_DP + 8, box.micOffset)
         val stacked = OverlayGeometry.bounds(-100, 132)
-        assertEquals(232 + 8, stacked.width)
-        assertEquals(104, stacked.micOffset)
+        assertEquals(232 + 16, stacked.width)
+        assertEquals(108, stacked.micOffset)
         assertNotNull(stacked)
     }
 
@@ -116,5 +118,38 @@ class OptionsPillGeometryTest {
         val after = 0 - lastEnd
         assertEquals("equal space before the first control and between the last and the disc", before, after)
         assertTrue("room to breathe", before >= 8)
+    }
+}
+
+class AnchoredEdgeTest {
+    @Test fun theMicrophoneIsTheSameDistanceFromTheRightEdgeInEveryState() {
+        // Whatever is open, the gap between the disc's right edge and the window's right edge is one constant. That is what keeps
+        // the disc still while the window grows to the left.
+        for ((low, high) in listOf(0 to OverlayGeometry.MIC_DP, -OverlayGeometry.OPTIONS_REACH_DP to OverlayGeometry.MIC_DP, -112 to OverlayGeometry.MIC_DP, -232 to OverlayGeometry.MIC_DP, -(OverlayGeometry.CARD_WIDTH_DP - OverlayGeometry.MIC_DP) to OverlayGeometry.MIC_DP)) {
+            val box = OverlayGeometry.bounds(low, high)
+            val micRightInWindow = box.micOffset + OverlayGeometry.MIC_DP
+            assertEquals("open to $low", OverlayGeometry.INSET_DP, box.width - micRightInWindow)
+        }
+    }
+
+    @Test fun theMicrophoneIsTheSameDistanceFromTheLeftEdgeInEveryStateWhenOpeningRight() {
+        for (high in listOf(OverlayGeometry.MIC_DP, 112 + OverlayGeometry.MIC_DP, OverlayGeometry.OPTIONS_REACH_DP + OverlayGeometry.MIC_DP)) {
+            assertEquals(OverlayGeometry.INSET_DP, OverlayGeometry.bounds(0, high).micOffset)
+        }
+    }
+}
+
+class StackedRowAnchorTest {
+    private val screen = 411f
+
+    @Test fun theStackedRowGrowsFromOneMicrophoneEdgeSoOneWindowEdgeNeverMoves() {
+        for (micLeft in listOf(8f, 60f, 120f, 150f, 171f, 184f, 220f, 300f, 347f)) {
+            if (micLeft in 172f..183f) continue // the band where neither side has room: the row slides and may grow both ways
+            val left = OverlayGeometry.slideOnScreen(Side.ABOVE, micLeft, screen, 232)
+            val box = OverlayGeometry.bounds(minOf(0, left), maxOf(OverlayGeometry.MIC_DP, left + 232))
+            val fromLeft = box.micOffset == OverlayGeometry.INSET_DP
+            val fromRight = box.width - (box.micOffset + OverlayGeometry.MIC_DP) == OverlayGeometry.INSET_DP
+            assertTrue("mic at $micLeft: one window edge keeps a fixed distance from it", fromLeft || fromRight)
+        }
     }
 }

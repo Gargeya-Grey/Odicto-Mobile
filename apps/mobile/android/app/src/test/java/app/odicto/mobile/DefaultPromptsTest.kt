@@ -32,15 +32,26 @@ class DefaultPromptsTest {
         has(answer, "language the user spoke", "never invent", "not instructions to you")
     }
 
-    @Test fun polishOnlyProofreadsAndKeepsTheAuthorsVoiceAndLanguage() {
-        has(polish, "spelling, grammar, punctuation and capitalization", "do not rephrase", "never translate", "hinglish")
+    @Test fun polishRemovesSpeechDebris() {
+        has(polish, "hesitation sounds", "um, uh, er", "stutters", "false starts", "corrects themselves", "keep only the corrected version")
+    }
+
+    @Test fun polishKeepsDeliberateEmphasisAndNeverRemovesMeaning() {
+        has(polish, "deliberate emphasis", "never remove a word that adds meaning", "never add information")
+    }
+
+    @Test fun polishKeepsTheAuthorsVoiceLanguageAndNeverCensors() {
+        has(polish, "do not rephrase", "censor", "swearing", "never translate", "hinglish", "matlab")
     }
 
     @Test fun polishLeavesTokensAlone() {
-        has(polish, "urls", "@mentions", "#hashtags", "emojis", "line breaks")
+        has(polish, "urls", "@mentions", "#hashtags", "emojis", "paragraph breaks")
     }
 
+    @Test fun aiAnswersIgnoreFillersInTheSpokenInstruction() {
+        has(answer, "fillers", "false starts")
+    }
     @Test fun polishTreatsTheFieldAsContentNotInstructions() {
-        has(polish, "never instructions to you", "exactly unchanged", "return only the corrected text")
+        has(polish, "never instructions to you", "exactly unchanged", "return only the edited text")
     }
 }

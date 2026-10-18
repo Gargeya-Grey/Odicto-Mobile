@@ -559,7 +559,10 @@ class OdictoImeService : InputMethodService() {
             allowed = { DictationCoordinator.keyboardVisible.value && !VoiceSession.state.value.busy && DictationCoordinator.aiSelection == null },
             readKey = { SecureCredentialStore(this).get("voice-openrouter") },
             config = { VoicePreferences.state.value.let { it.polishModel to it.polishSystemPrompt } },
-            correct = { text, model, prompt, key -> polishClient.correct(text, model, prompt, key) },
+            correct = { text, model, prompt, key ->
+                val settings = VoicePreferences.state.value
+                polishClient.correct(text, model, prompt, key, app.odicto.mobile.dictation.PromptMode.forStored(settings.polishSystemPromptMode, settings.polishSystemPrompt))
+            },
             state = ::showPolishStatus,
             applied = { start, end -> controller?.onExternalEdit(start, end) },
         ).also { polish = it }
