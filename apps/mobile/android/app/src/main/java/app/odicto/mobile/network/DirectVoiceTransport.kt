@@ -62,7 +62,8 @@ class DirectVoiceTransport(
         val request = Request.Builder()
             .url("https://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent")
             .header("x-goog-api-key", config.liveKey).build()
-        socket = socketFactory.newWebSocket(request, object : WebSocketListener() {
+        if (cancelled) return
+        val ws = socketFactory.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 if (cancelled) { webSocket.cancel(); return }
                 webSocket.send(liveSetup(config.liveModel).toString())
@@ -102,6 +103,8 @@ class DirectVoiceTransport(
                 if (!completed) fail("Gemini Live disconnected. Try again.")
             }
         })
+        // open() runs on IO, so cancel() may already have run: whichever side comes second closes the socket.
+        synchronized(this) { socket = ws; if (cancelled) ws.cancel() }
     }
 
     @Synchronized fun sendAudio(bytes: ByteArray, count: Int): Boolean {

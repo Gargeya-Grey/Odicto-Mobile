@@ -40,7 +40,7 @@ class VoiceOverlayService : Service() {
     private var dragOriginSet = false
     private var dragStartMicLeft = 0
     private var dragStartBottom = 0
-    /** Screen bounds held for one drag: each move would otherwise ask the window manager twice. Cleared when it ends or the screen changes. */
+    /** Screen bounds held for the moves of one drag: each move would otherwise ask the window manager twice. Cleared when it ends or the screen changes. */
     private var dragBounds: Pair<Int, Int>? = null
     private var screenOff = false
     private var recovery: Job? = null
@@ -197,7 +197,7 @@ class VoiceOverlayService : Service() {
         view.dragStart = {
             dragOriginSet = false
             movedVertically = false
-            dragBounds = null; dragBounds = bounds()
+            dragBounds = null
         }
         view.drag = { totalX, totalY ->
             // Place the microphone from the finger's total travel, not from accumulated steps: it stays exactly
@@ -209,7 +209,8 @@ class VoiceOverlayService : Service() {
                 dragStartMicLeft = anchorMicLeft
                 dragStartBottom = layout.y + layout.height
             }
-            val micLeft = clampMic(view, dragStartMicLeft + totalX.roundToInt())
+            val screen = dragBounds ?: bounds().also { dragBounds = it }
+            val micLeft = clampMic(view, dragStartMicLeft + totalX.roundToInt(), screen.first)
             layout.x = micLeft - view.micOffsetPx
             // A purely sideways drag leaves the vertical place alone: while the keyboard is up the window may be
             // pushed above where the user put it, and that temporary position must not be saved as theirs.
@@ -218,7 +219,7 @@ class VoiceOverlayService : Service() {
                 layout.y = dragStartBottom + dy - layout.height
                 movedVertically = true
             }
-            clamp(layout)
+            clamp(layout, screen)
             if (movedVertically) preferredBottom = layout.y + layout.height
             anchorMicLeft = micLeft
             update(view, layout)
@@ -242,8 +243,8 @@ class VoiceOverlayService : Service() {
      * microphone asks the system to leave swipes that start on it alone (see [VoiceControlView.onLayout]), so
      * the Back-gesture strips do not need to be avoided.
      */
-    private fun micRange(view: VoiceControlView): IntRange = 0..maxOf(0, bounds().first - view.dp(MIC_DP))
-    private fun clampMic(view: VoiceControlView, micLeft: Int): Int = micLeft.coerceIn(micRange(view))
+    private fun micRange(view: VoiceControlView, width: Int = bounds().first): IntRange = 0..maxOf(0, width - view.dp(MIC_DP))
+    private fun clampMic(view: VoiceControlView, micLeft: Int, width: Int = bounds().first): Int = micLeft.coerceIn(micRange(view, width))
     /** Vertical room of the collapsed window's top edge, ignoring the keyboard so it does not shift the share. */
     private fun topRange(view: VoiceControlView): IntRange = 0..maxOf(0, bounds(withKeyboard = false).second - view.dp(COLLAPSED_DP))
     private fun share(value: Int, range: IntRange): Int = OverlayGeometry.shareOf(value, range.first, range.last)
@@ -293,7 +294,6 @@ class VoiceOverlayService : Service() {
     }
 
     private fun bounds(withKeyboard: Boolean = true): Pair<Int, Int> {
-        if (withKeyboard) dragBounds?.let { return it }
         if (Build.VERSION.SDK_INT >= 30) {
             val metrics = manager.currentWindowMetrics
             val inset = metrics.windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
@@ -309,8 +309,8 @@ class VoiceOverlayService : Service() {
         val gap = (8 * resources.displayMetrics.density).toInt()
         return minOf(screenHeight, keyboardTop - topInset - gap).coerceAtLeast(0)
     }
-    private fun clamp(layout: WindowManager.LayoutParams) {
-        val (w, h) = bounds()
+    private fun clamp(layout: WindowManager.LayoutParams, screen: Pair<Int, Int> = bounds()) {
+        val (w, h) = screen
         // The window's empty margin may hang past the side of the screen so the microphone itself can touch it.
         val overhang = (OverlayGeometry.INSET_DP * resources.displayMetrics.density).roundToInt()
         layout.x = layout.x.coerceIn(-overhang, maxOf(-overhang, w - layout.width + overhang)); layout.y = layout.y.coerceIn(0, maxOf(0, h - layout.height))

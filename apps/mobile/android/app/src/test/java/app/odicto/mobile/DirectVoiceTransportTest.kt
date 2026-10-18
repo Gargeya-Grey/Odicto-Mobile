@@ -137,6 +137,49 @@ class DirectVoiceTransportTest {
             assertEquals("the second dictation skips DNS, TCP and TLS", 1, server.connections.get())
         }
     }
+    @Test fun aCancelThatLandsWhileLiveOpensClosesTheNewSocket() {
+        val cancelled = java.util.concurrent.atomic.AtomicInteger()
+        val ws = object : WebSocket {
+            override fun request() = Request.Builder().url("https://generativelanguage.googleapis.com/").build()
+            override fun queueSize() = 0L
+            override fun send(text: String) = true
+            override fun send(bytes: okio.ByteString) = true
+            override fun close(code: Int, reason: String?) = true
+            override fun cancel() { cancelled.incrementAndGet() }
+        }
+        lateinit var transport: DirectVoiceTransport
+        // open() runs on IO; the user's cancel arrives while the socket is being created.
+        transport = DirectVoiceTransport(DirectVoiceConfig("live", liveKey = "test"), "op", 1, {}, OkHttpClient(),
+            socketFactory = WebSocket.Factory { _, _ -> transport.cancel(); ws })
+        transport.open()
+        assertTrue("the socket created after the cancel is closed", cancelled.get() >= 1)
+        var created = 0
+        val late = DirectVoiceTransport(DirectVoiceConfig("live", liveKey = "test"), "op", 1, {}, OkHttpClient(),
+            socketFactory = WebSocket.Factory { _, _ -> created++; ws })
+        late.cancel(); late.open()
+        assertEquals("a cancel before open() creates no socket and sends no key", 0, created)
+    }
+    @Test fun cancelStopsAnInFlightRawCallWithoutAResult() {
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            entered.countDown()
+            val deadline = System.currentTimeMillis() + 3_000
+            while (!chain.call().isCanceled() && System.currentTimeMillis() < deadline) Thread.sleep(5)
+            if (chain.call().isCanceled()) throw java.io.IOException("Canceled")
+            fail("the call kept running after cancel"); throw AssertionError()
+        }.build()
+        val events = java.util.Collections.synchronizedList(mutableListOf<JSONObject>())
+        val transport = DirectVoiceTransport(DirectVoiceConfig("raw", groqKey = "test"), "op", 1, { events.add(it) }, client)
+        transport.open(); transport.sendAudio(ByteArray(3200), 3200)
+        val finishing = Thread { transport.finish() }.apply { start() }
+        assertTrue(entered.await(3, java.util.concurrent.TimeUnit.SECONDS))
+        transport.cancel()
+        finishing.join(3_000)
+        assertFalse(finishing.isAlive)
+        assertFalse(events.any { it.optString("type") == "result" })
+        assertFalse("a cancelled call reports no failure either", events.any { it.optString("type") == "error" })
+        assertFalse("the shared dispatcher stays up", client.dispatcher.executorService.isShutdown)
+    }
     @Test fun liveAcceptsBinaryJsonFramesLikeTheDesktopClient() {
         val events = mutableListOf<JSONObject>()
         lateinit var listener: WebSocketListener
