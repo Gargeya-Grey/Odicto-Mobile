@@ -39,7 +39,7 @@ class AudioCaptureService : Service() {
     @Volatile private var framesRead = 0L
     /** Set at the stop request: the frame the capture loop reads up to before it ends. */
     @Volatile private var stopFrame = Long.MAX_VALUE
-    private val levels = LevelRelay({ block -> scope.launch { block() } }) { level -> updateVoice { it.copy(level = level) } }
+    private val levels = LevelRelay({ block -> scope.launch { block() } }) { level -> if (!finishing) updateVoice { it.copy(level = level) } }
     private val backlog = AudioBacklog(MAX_BACKLOG_FRAMES)
     private val verbose by lazy { (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0 }
     override fun onBind(intent: Intent?): IBinder? = null
@@ -154,7 +154,7 @@ class AudioCaptureService : Service() {
                         val sent = if (transportReady) flushBacklog() && sendFrame(buffer, count) else backlog.add(buffer.copyOf(count))
                         // A transient stall must not kill a long dictation: skip the frame and keep the
                         // session alive. A transport that is truly gone reports its own failure event.
-                        if (!sent && transportReady && !dropping) { dropping = true; withContext(Dispatchers.Main) { updateVoice { it.copy(message = "Connection is slow. Some audio may be missing.") } } }
+                        if (!sent && transportReady && !dropping && !finishing) { dropping = true; withContext(Dispatchers.Main) { updateVoice { it.copy(message = "Connection is slow. Some audio may be missing.") } } }
                         if (sent) dropping = false
                         // Nothing is buffering into a provider that never connected; the timeout is the bound.
                         if (!sent && !transportReady && backlog.isFull) { withContext(Dispatchers.Main) { error("Connection timed out. Try again.") }; break }
@@ -165,6 +165,8 @@ class AudioCaptureService : Service() {
                         if (finishing && CaptureTail.done(framesRead, stopFrame, SystemClock.uptimeMillis() - releasedAt)) break
                         if (audioBytes >= 295L * 32000) { withContext(Dispatchers.Main) { if (VoiceSession.owns(operation)) VoiceSession.finish(this@AudioCaptureService) }; break }
                     }
+                    // The microphone stops the moment the loop ends: the wait for a slow handshake below records nothing.
+                    try { audio.stop() } catch (_: Exception) {}
                     // A release can land before the handshake finished: hold on briefly so the words that
                     // were already captured still reach the provider instead of being discarded.
                     if (!ended && backlog.isNotEmpty) flushWhenReady()
@@ -197,6 +199,8 @@ class AudioCaptureService : Service() {
         stopFrame = tailStopFrame(audio)
         finishing = true
         scope.launch { capture?.join(); try { audio.stop() } catch (_: Exception) {}; audio.release(); if (recorder === audio) recorder = null; sendFinish() }
+        // A stalled read (an audio route change, say) would never reach the tail check: stopping the recorder wakes it.
+        scope.launch { delay(CaptureTail.MAX_WAIT_MS + 200); if (recorder === audio) try { audio.stop() } catch (_: Exception) {} }
     }
     private fun tailStopFrame(audio: AudioRecord): Long {
         if (android.os.Build.VERSION.SDK_INT >= 24) {
