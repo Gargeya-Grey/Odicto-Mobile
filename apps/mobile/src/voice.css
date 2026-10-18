@@ -1373,6 +1373,7 @@ textarea.voice-input {
 
 @media (prefers-reduced-motion: reduce) {
   .voice-app,
+  .voice-app::before,
   .voice-app *,
   .voice-app *::before,
   .voice-app *::after {
@@ -1398,17 +1399,13 @@ textarea.voice-input {
   z-index: 40;
   pointer-events: none;
 }
-/* In light the page glow reaches the top edge, so the scrim fades in only once the page scrolls under it. */
-@supports (animation-timeline: scroll()) {
-  :root[data-theme='light'] .voice-app::before {
-    opacity: 0;
-    animation: voice-scrim-in linear both;
-    animation-timeline: scroll(root block);
-    animation-range: 0 24px;
-  }
-  @keyframes voice-scrim-in {
-    to {
-      opacity: 1;
-    }
-  }
+/* In light the page glow reaches the top edge, so the scrim fades in only once the page scrolls under it
+   (data-scrolled, src/lib/pageScroll.ts). Not a scroll-driven animation: Android WebView stalls a touch
+   fling while a scroll timeline runs, so the page froze mid-fling and then jumped. */
+:root[data-theme='light'] .voice-app::before {
+  opacity: 0;
+  transition: opacity 160ms var(--v-ease);
+}
+:root[data-theme='light'] .voice-app[data-scrolled]::before {
+  opacity: 1;
 }

@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { voice, type HistoryItem } from '../native/voice';
 import { onboarding } from '../native/onboarding';
+import { watchPageScrolled } from '../lib/pageScroll';
 import { HomePage } from './voice/HomePage';
 import { SettingsPage } from './voice/SettingsPage';
 import { HistoryPage } from './voice/HistoryPage';
@@ -103,7 +104,16 @@ export function VoiceHome() {
     settings?.openrouterKeySet ?? false,
   );
   const showSaveBar = page === 'settings' && draft.dirty;
+  const app = useRef<HTMLDivElement>(null);
 
+  // The light status-bar scrim fades in once the page scrolls under it (voice.css).
+  useEffect(
+    () =>
+      watchPageScrolled((scrolled) =>
+        app.current?.toggleAttribute('data-scrolled', scrolled),
+      ),
+    [],
+  );
   useEffect(() => {
     if (openSettingsRequested > 0) {
       enterHistory('settings');
@@ -203,7 +213,11 @@ export function VoiceHome() {
 
   const text = page === 'home' ? null : PAGE_TEXT[page];
   return (
-    <div className="voice-app" data-savebar={showSaveBar ? 'true' : undefined}>
+    <div
+      className="voice-app"
+      ref={app}
+      data-savebar={showSaveBar ? 'true' : undefined}
+    >
       <header className="voice-header">
         {page === 'home' ? (
           <h1 className="voice-brand">
