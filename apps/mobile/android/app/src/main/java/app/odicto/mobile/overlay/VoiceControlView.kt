@@ -697,8 +697,8 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         private fun drawOverlay(c: Canvas) {
             val cx = width / 2f; val cy = height / 2f
             val radius = minOf(width, height) / 2f - density
-            fun icon(id: Int, color: Int) {
-                val half = (minOf(width, height) * 0.21f).toInt()
+            fun icon(id: Int, color: Int, size: Float = 0.21f) {
+                val half = (minOf(width, height) * size).toInt()
                 glyph(id)?.apply { setBounds((cx - half).toInt(), (cy - half).toInt(), (cx + half).toInt(), (cy + half).toInt()); setTint(color); draw(c) }
             }
             paint.reset(); paint.isAntiAlias = true
@@ -725,7 +725,8 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
                 paint.style = Paint.Style.FILL
             }
             when (kind) {
-                "mic" -> icon(app.odicto.mobile.R.drawable.odicto_ic_mic, ink)
+                // The idle bubble wears the Odicto mark, not a microphone; the mark is wider than tall, so it is drawn larger.
+                "mic" -> icon(app.odicto.mobile.R.drawable.odicto_ic_logo, ink, 0.29f)
                 "finish" -> icon(app.odicto.mobile.R.drawable.odicto_ic_stop, ink)
                 "lock" -> icon(app.odicto.mobile.R.drawable.odicto_ic_lock, ink)
                 "cancel", "error" -> icon(app.odicto.mobile.R.drawable.odicto_ic_close, ink)
