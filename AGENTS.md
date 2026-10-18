@@ -25,6 +25,7 @@
 - `DictationCoordinator` routes insertion to the Odicto IME while it is the active keyboard. The build is a single version that ships `OdictoAccessibilityService` for insertion while another keyboard is active; that service only tracks the focused field and inserts text: never screen reading, navigation, gestures, or content collection. Ask `BuildCapability` before touching either service.
 - Clipboard capture is automatically local only while Odicto is the default IME in an eligible field and Android permits access; honor the disable switch and skip marked-sensitive clips. Keep 50 exact-text unpinned entries plus persistent pins in the dedicated DataStore. Read `docs/privacy-and-security.md` before changing capture, retention, or editor guard reads.
 - Cursor gestures stay disabled during voice/AI selection work. Emoji and clipboard panels replace the key grid. Preserve strict key bounds and synchronous configured key haptics; keyboard-only layout changes leave the floating overlay's appearance and gestures unchanged.
+- The update check is the only request the app makes on its own: main app open, at most once a day, only while the user's switch is on, to GitHub's public release list. It sends nothing identifying, reads only version numbers, never downloads or installs, and builds the release-page URL from the validated version, never from the response. Read `docs/android-development.md` ("Update check") before changing it.
 - Use the keyboard microphone when overlay behavior is unavailable.
 
 ## Branch references

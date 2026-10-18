@@ -54,6 +54,13 @@ data class VoiceSettings(
     val haptics: Boolean = true,
     val x: Int = -1,
     val y: Int = -1,
+    /**
+     * Where the floating microphone sits as a share (0..1,000,000, so a pixel is never lost to rounding) of the room it can move in, so it keeps its
+     * place across rotation, display-size changes and unfolding. -1 until the user places it; x and y are
+     * the pixel position of the same placement and are only used when these are missing.
+     */
+    val anchorX: Int = -1,
+    val anchorY: Int = -1,
     val liveModel: String = "gemini-3.5-transcribe-live",
     val systemPrompt: String = "",
     val polishModel: String = DEFAULT_POLISH_MODEL,
@@ -114,6 +121,8 @@ object VoicePreferences {
                         haptics = haptics,
                         x = preferences[intPreferencesKey("voice_x")] ?: -1,
                         y = preferences[intPreferencesKey("voice_y")] ?: -1,
+                        anchorX = readAnchor(preferences, "voice_anchor_fx", "voice_anchor_x"),
+                        anchorY = readAnchor(preferences, "voice_anchor_fy", "voice_anchor_y"),
                         liveModel = preferences[stringPreferencesKey("voice_live_model")] ?: "gemini-3.5-transcribe-live",
                         systemPrompt = preferences[stringPreferencesKey("voice_system_prompt")] ?: "",
                         polishModel = preferences[stringPreferencesKey("voice_polish_model")]
@@ -142,11 +151,17 @@ object VoicePreferences {
         }
     }
 
+    /** The fine share, or the older thousandths share scaled up, so an existing placement is kept. */
+    private fun readAnchor(preferences: Preferences, fine: String, legacy: String): Int =
+        preferences[intPreferencesKey(fine)]?.coerceIn(-1, 1_000_000)
+            ?: (preferences[intPreferencesKey(legacy)] ?: -1).coerceIn(-1, 1000).let { if (it < 0) -1 else it * 1000 }
+
     suspend fun save(context: Context, value: VoiceSettings) {
         context.applicationContext.dataStore.edit { p ->
             p[booleanPreferencesKey("voice_enabled")] = value.enabled; p[stringPreferencesKey("voice_mode")] = value.mode
             p[stringPreferencesKey("voice_provider")] = value.provider; p[stringPreferencesKey("voice_model")] = value.model
             p[booleanPreferencesKey("voice_haptics")] = value.haptics; p[intPreferencesKey("voice_x")] = value.x; p[intPreferencesKey("voice_y")] = value.y
+            p[intPreferencesKey("voice_anchor_fx")] = value.anchorX; p[intPreferencesKey("voice_anchor_fy")] = value.anchorY
             p[stringPreferencesKey("voice_live_model")] = value.liveModel
             p[stringPreferencesKey("voice_system_prompt")] = value.systemPrompt
             p[stringPreferencesKey("voice_polish_model")] = value.polishModel

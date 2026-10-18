@@ -109,6 +109,13 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
     }
     private val stripFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xF0303438.toInt() }
     private val stripSelected = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xF04A5055.toInt() }
+    private val popFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF1F2326.toInt() }
+    private val popEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFF4A5055.toInt()
+        style = Paint.Style.STROKE
+        strokeWidth = resources.displayMetrics.density
+    }
+    private val popSelected = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF2A745D.toInt() }
 
     init {
         orientation = VERTICAL
@@ -233,9 +240,27 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
 
     enum class Page { LETTERS, NUMBERS, SYMBOLS }
 
+    private var quick = false
+
+    /**
+     * Turns this view into the always-visible quick-edit row: comma, period, space, backspace and
+     * enter. It is the same key engine as the grid (cursor-drag space, repeating backspace, held
+     * punctuation), one fixed row high and never split, so the owner can wire it to the same handlers.
+     * A mode of the view rather than a [Page]: there is nothing to navigate to or from.
+     */
+    fun useQuickRow() {
+        quick = true
+        geometryInputs = null
+        showPage(Page.LETTERS)
+    }
+
+    private fun quickRowPx(): Int = (QUICK_ROW_DP * density).toInt()
+
+    private fun emphasizeEnter(): Boolean = quick && enterKind != ImeActions.Kind.NEWLINE
+
     private fun buildRows() { showPage(Page.LETTERS) }
 
-    private fun layoutFor(page: Page): List<List<KeySpec>> = when (page) {
+    private fun layoutFor(page: Page): List<List<KeySpec>> = if (quick) QUICK_LAYOUT else when (page) {
         Page.LETTERS -> LAYOUT
         Page.NUMBERS -> NUMBERS_LAYOUT
         Page.SYMBOLS -> SYMBOLS_LAYOUT
@@ -249,13 +274,13 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
             // A fixed height per row keeps the rows evenly split; weight 0 on height is what
             // previously collapsed every row onto its own line. The space row is taller so the
             // bar is thick enough for a thumb that used to land on the comma or the period.
-            val height = if (spaceRow) (rowHeightPx * SPACE_ROW_SCALE).toInt() else rowHeightPx
+            val height = if (quick) quickRowPx() else if (spaceRow) (rowHeightPx * SPACE_ROW_SCALE).toInt() else rowHeightPx
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, height, ROW_HEIGHT_WEIGHT)
         }
         // Nine letters in a ten-column grid: half a key of space on each side, so a–l match q–p.
         val centeredNine = row.size == 9 && row.all { it.key == Key.CHARACTER }
         fun addKey(spec: KeySpec, weight: Float = spec.weight) {
-            val cap = KeyCap(context, spec)
+            val cap = KeyCap(context, spec, quick)
             cap.setOnClickListener { cancelTouch(); press(spec) }
             if (spec.key == Key.CHARACTER && spec.output.singleOrNull()?.isLetter() == true) {
                 cap.setOnLongClickListener {
@@ -387,7 +412,10 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
             val line = getChildAt(index) as? LinearLayout ?: continue
             for (keyIndex in 0 until line.childCount) {
                 val cap = line.getChildAt(keyIndex) as? KeyCap ?: continue
-                if (cap.spec.key == Key.ENTER) cap.setActionLabel(enterLabel)
+                if (cap.spec.key == Key.ENTER) {
+                    cap.setActionLabel(enterLabel)
+                    cap.setAccent(emphasizeEnter())
+                }
             }
         }
     }
@@ -398,7 +426,11 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
             for (keyIndex in 0 until line.childCount) {
                 val cap = line.getChildAt(keyIndex) as? KeyCap ?: continue
                 cap.applyShift(upperCase() && activePage == Page.LETTERS)
-                cap.setAccent(cap.spec.key == Key.SHIFT && capsLocked)
+                cap.setAccent(when (cap.spec.key) {
+                    Key.SHIFT -> capsLocked
+                    Key.ENTER -> emphasizeEnter()
+                    else -> false
+                })
             }
         }
     }
@@ -772,19 +804,33 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
         val density = this.density
         val cell = punctCellPx()
         val width = cell * strip.options.size
-        val height = cell * 1.15f
+        // Nothing sits above the quick row, so its strip is a pop-over on the row itself: the row's own
+        // height, fully opaque so the keys beneath do not bleed through, with a hairline edge and the
+        // brand jade on the choice. The grid's strip keeps floating above its key.
+        val height = if (quick) this.height - 4f * density else cell * 1.15f
         val left = stripLeft(strip)
         var top = strip.anchor.top - height - 4f * density
-        if (top < 2f * density) top = 2f * density
-        val radius = 10f * density
-        canvas.drawRoundRect(left, top, left + width, top + height, radius, radius, stripFill)
+        if (quick) top = 2f * density else if (top < 2f * density) top = 2f * density
+        val radius = (if (quick) 12f else 10f) * density
         val selectedLeft = left + cell * strip.index
-        canvas.drawRoundRect(selectedLeft + 2f, top + 2f, selectedLeft + cell - 2f, top + height - 2f, radius, radius, stripSelected)
+        if (quick) {
+            canvas.drawRoundRect(left, top, left + width, top + height, radius, radius, popFill)
+            canvas.drawRoundRect(left + 0.5f * density, top + 0.5f * density, left + width - 0.5f * density,
+                top + height - 0.5f * density, radius, radius, popEdge)
+            canvas.drawRoundRect(selectedLeft + 3f * density, top + 3f * density, selectedLeft + cell - 3f * density,
+                top + height - 3f * density, radius - 3f * density, radius - 3f * density, popSelected)
+        } else {
+            canvas.drawRoundRect(left, top, left + width, top + height, radius, radius, stripFill)
+            canvas.drawRoundRect(selectedLeft + 2f, top + 2f, selectedLeft + cell - 2f, top + height - 2f, radius, radius, stripSelected)
+        }
         bubbleText.typeface = typefaceFor(context)
-        bubbleText.textSize = (GLYPH_SP[keys.keySize] ?: 17.6f) * density * 0.95f
+        bubbleText.textSize = (GLYPH_SP[keys.keySize] ?: 17.6f) * density * (if (quick) 1.1f else 0.95f)
         val baseline = top + height / 2f - (bubbleText.descent() + bubbleText.ascent()) / 2f
+        val ink = bubbleText.color
         strip.options.forEachIndexed { index, symbol ->
+            if (quick && index == strip.index) bubbleText.color = 0xFFF2F2EC.toInt()
             canvas.drawText(symbol, left + cell * index + cell / 2f, baseline, bubbleText)
+            bubbleText.color = ink
         }
     }
 
@@ -825,14 +871,27 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
                 else content / density - PORTRAIT_UNSPLIT_DP
             val gapDp = budget.coerceIn(0f, if (landscape) SPLIT_GAP_DP else PORTRAIT_GAP_DP)
                 .let { if (it < MIN_SPLIT_GAP_DP) 0f else it }
-            split = gapDp > 0f
-            val gap = (gapDp * density).toInt()
+            split = gapDp > 0f && !quick
+            val gap = if (split) (gapDp * density).toInt() else 0
             splitEdge = if (split) (content - gap) / SPLIT_PITCH_BUDGET else 0
             splitPitch = (content - gap - splitEdge * 2) / (SPLIT_COLUMNS * 2)
             val remainder = content - gap - splitEdge * 2 - splitPitch * SPLIT_COLUMNS * 2
             splitEdge += remainder / 2
             splitGap = gap + remainder % 2
             showPage(activePage)
+        }
+        if (quick) {
+            val row = getChildAt(0)
+            if (row != null && row.layoutParams.height != quickRowPx()) {
+                cancelTouch()
+                row.layoutParams = row.layoutParams.apply { height = quickRowPx() }
+            }
+            super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+            if (geometryHeight != measuredHeight) {
+                cancelTouch()
+                geometryHeight = measuredHeight
+            }
+            return
         }
         val naturalHeight = rowHeightPx * (childCount - 1 + SPACE_ROW_SCALE)
         val heightLimit = if (MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.UNSPECIFIED) naturalHeight
@@ -949,7 +1008,7 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
         val inserted: String,
     )
 
-    private class KeyCap(context: Context, val spec: KeySpec) : View(context) {
+    private class KeyCap(context: Context, val spec: KeySpec, private val quick: Boolean = false) : View(context) {
         private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
         private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = LABEL
@@ -1031,14 +1090,15 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
                 val top = (height - tickH) / 2f
                 fill.color = if (pressed) 0xFFE7E5DF.toInt() else 0xFF737C80.toInt()
                 canvas.drawRoundRect(left, top, left + tickW, top + tickH, tickH, tickH, fill)
+                drawCursorCue(canvas, density, left, left + tickW)
                 return
             }
 
             val action = actionLabel
             if (action != null) {
                 fill.style = Paint.Style.FILL
-                fill.color = if (isEnabled) LABEL else LABEL_DISABLED
-                val scale = if (action.length > 4) 0.58f else 0.72f
+                fill.color = if (accent) ON_ACCENT else if (isEnabled) LABEL else LABEL_DISABLED
+                val scale = if (action.length > 4) 0.64f else 0.8f
                 text.textSize = glyphSp() * density * scale
                 text.typeface = typefaceFor(context)
                 val baseline = height / 2f - (text.descent() + text.ascent()) / 2f
@@ -1060,6 +1120,15 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
 
             fill.style = Paint.Style.FILL
             fill.color = if (isEnabled) LABEL else LABEL_DISABLED
+            if (quick && spec.key == Key.CHARACTER && label.length == 1 && !label[0].isLetterOrDigit()) {
+                // Comma and period are the only glyphs on this row, so they get room, and are centred by
+                // their ink: a text baseline leaves a full stop sitting well below the middle of its key.
+                text.textSize = glyphSp() * density * 1.45f
+                text.typeface = typefaceFor(context)
+                text.getTextBounds(label, 0, 1, inkBounds)
+                canvas.drawText(label, width / 2f, height / 2f - inkBounds.exactCenterY(), text)
+                return
+            }
             // Size and typeface follow the user's key preference rather than a fixed value baked in.
             val scale = if (spec.control) 0.78f else 1f
             text.textSize = glyphSp() * density * scale
@@ -1069,6 +1138,35 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
         }
 
         private fun glyphSp(): Float = GLYPH_SP[VoicePreferences.state.value.keys.keySize] ?: 17.6f
+
+        private val inkBounds = Rect()
+        private val cuePath = android.graphics.Path()
+
+        /** Small chevrons either side of the grip on every space bar: it slides the cursor when held and dragged. */
+        private fun drawCursorCue(canvas: Canvas, density: Float, gripLeft: Float, gripRight: Float) {
+            val gap = 12f * density
+            val reach = 3.5f * density
+            val half = 4.5f * density
+            val cy = height / 2f
+            val style = fill.style
+            val color = fill.color
+            val stroke = fill.strokeWidth
+            fill.style = Paint.Style.STROKE
+            fill.strokeWidth = 1.6f * density
+            fill.strokeCap = Paint.Cap.ROUND
+            fill.strokeJoin = Paint.Join.ROUND
+            fill.color = if (pressed) 0xFFE7E5DF.toInt() else 0xFF566064.toInt()
+            cuePath.reset()
+            val leftTip = gripLeft - gap
+            cuePath.moveTo(leftTip + reach, cy - half); cuePath.lineTo(leftTip, cy); cuePath.lineTo(leftTip + reach, cy + half)
+            val rightTip = gripRight + gap
+            cuePath.moveTo(rightTip - reach, cy - half); cuePath.lineTo(rightTip, cy); cuePath.lineTo(rightTip - reach, cy + half)
+            canvas.drawPath(cuePath, fill)
+            fill.style = style
+            fill.color = color
+            fill.strokeWidth = stroke
+        }
+
         private companion object {
             const val NORMAL = 0xFF303438.toInt()
             const val FUNCTION = 0xFF232629.toInt()
@@ -1150,6 +1248,8 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
         const val BRAND_ASSET = "fonts/InstrumentSans.ttf"
 
         private const val ROW_HEIGHT_WEIGHT = 0f
+        /** Same height as the voice row above it, whatever the key-size preference. */
+        private const val QUICK_ROW_DP = 48f
         private const val SHIFT_DOUBLE_MS = 400L
 
         /** Center gap of the split keyboard, wide enough that both thumbs stay on their own half. */
@@ -1194,6 +1294,16 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
                 control(Key.NUMBERS, "123", 1.15f),
                 KeySpec(Key.CHARACTER, ",", ",", 1f),
                 KeySpec(Key.SPACE, "Space", " ", 6.35f),
+                icon(Key.ENTER, "Enter", 1.5f, R.drawable.odicto_ic_enter),
+            ),
+        )
+
+        /** The quick-edit row: the keys needed to touch up dictated text without opening the grid. */
+        private val QUICK_LAYOUT: List<List<KeySpec>> = listOf(
+            listOf(
+                char(","), char("."),
+                KeySpec(Key.SPACE, "Space", " ", 4.6f),
+                icon(Key.BACKSPACE, "Backspace", 1.5f, R.drawable.odicto_ic_backspace),
                 icon(Key.ENTER, "Enter", 1.5f, R.drawable.odicto_ic_enter),
             ),
         )

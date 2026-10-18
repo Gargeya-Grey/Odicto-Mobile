@@ -3,6 +3,7 @@ package app.odicto.mobile;
 import android.os.Bundle;
 import com.getcapacitor.BridgeActivity;
 import app.odicto.mobile.plugins.OnboardingPlugin;
+import app.odicto.mobile.plugins.UpdatePlugin;
 import app.odicto.mobile.plugins.VoicePlugin;
 import android.content.Intent;
 
@@ -10,6 +11,7 @@ public class MainActivity extends BridgeActivity {
     @Override public void onCreate(Bundle savedInstanceState) {
         registerPlugin(OnboardingPlugin.class);
         registerPlugin(VoicePlugin.class);
+        registerPlugin(UpdatePlugin.class);
         super.onCreate(savedInstanceState);
         // Settings and History each own a web history entry. System back returns through them
         // to Home; only Home lets back close the app. Capacitor does not do this by itself.

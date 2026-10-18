@@ -18,6 +18,21 @@ internal data class PolishEditor(val session: Long, val connection: InputConnect
 
 internal data class CompletedPolishResult(val operationId: Long, val text: String, val expiresAtElapsedRealtime: Long)
 
+/**
+ * One applied-and-verified replacement. [before] and [after] are the complete field texts around it;
+ * the replaced range is `[rangeStart, rangeStart + revised.length)` in [after].
+ */
+internal data class PolishUndo(
+    val session: Long,
+    val connection: InputConnection,
+    val before: String,
+    val after: String,
+    val rangeStart: Int,
+    val revised: String,
+    val selectionStart: Int,
+    val selectionEnd: Int,
+)
+
 internal class FieldPolishCoordinator(
     private val scope: CoroutineScope,
     private val editor: () -> PolishEditor?,
@@ -41,8 +56,94 @@ internal class FieldPolishCoordinator(
     private var expiryJob: Job? = null
     private val completed = MutableStateFlow<CompletedPolishResult?>(null)
     val recovery = completed.asStateFlow()
+    private val undoStack = ArrayDeque<PolishUndo>()
+    private val undoAvailableState = MutableStateFlow(false)
+    val undoAvailable = undoAvailableState.asStateFlow()
 
     val busy: Boolean get() = job?.isActive == true
+
+    /** Drops retained field text. Called when the editor goes away; nothing here is persisted. */
+    fun clearUndo() {
+        undoStack.clear()
+        undoAvailableState.value = false
+    }
+
+    private fun pushUndo(entry: PolishUndo) {
+        if (undoStack.lastOrNull()?.connection?.let { it !== entry.connection } == true) undoStack.clear()
+        undoStack.addLast(entry)
+        while (undoStack.size > MAX_UNDO) undoStack.removeFirst()
+        undoAvailableState.value = true
+    }
+
+    private fun popUndo() {
+        undoStack.removeLastOrNull()
+        undoAvailableState.value = undoStack.isNotEmpty()
+    }
+
+    /**
+     * Puts back the text of the last verified polish. The whole field is read again first: the
+     * replaced range must still hold exactly what polish wrote, with the text before it untouched.
+     * Text typed after the range is kept. Any other change refuses, because a stale offset could
+     * overwrite something the user wrote since. Once a write has been attempted the entry is
+     * spent and is never retried, since a delivery that was not confirmed may have landed.
+     */
+    fun undo() {
+        if (busy) {
+            cancel()
+            state("Polish cancelled", false)
+            return
+        }
+        val entry = undoStack.lastOrNull() ?: return state("Nothing to undo.", false)
+        val target = editor() ?: return state("Focus a text field to undo.", false)
+        if (target.session != entry.session || target.connection !== entry.connection) {
+            clearUndo()
+            return state("Undo only works in the field you polished.", false)
+        }
+        if (!EditorPolicy.permits(target.info)) return state("Undo is unavailable in this field.", false)
+        if (!allowed()) return state("Finish voice typing before undoing.", false)
+        if (runCatching { target.connection.finishComposingText() }.getOrDefault(false) != true)
+            return state("This field cannot finish its current edit.", false)
+        val current = capture(target.connection)
+        val revisedEnd = entry.rangeStart + entry.revised.length
+        if (current == null || !current.text.startsWith(entry.after.substring(0, revisedEnd))) {
+            popUndo()
+            return state(
+                if (current == null) "This field does not expose its entire text safely. Nothing was undone."
+                else "Text changed since polish. Nothing was undone.", false)
+        }
+        val original = entry.before.substring(entry.rangeStart, entry.before.length - (entry.after.length - revisedEnd))
+        val expected = current.text.replaceRange(entry.rangeStart, revisedEnd, original)
+        val connection = target.connection
+        capturing = true
+        val batched = runCatching { connection.beginBatchEdit() }.getOrDefault(false)
+        var committed = false
+        var restored = false
+        var selected = false
+        try {
+            selected = connection.setSelection(entry.rangeStart, revisedEnd)
+            if (selected) {
+                committed = connection.commitText(original, 1)
+                if (committed) restored = runCatching { connection.setSelection(entry.selectionStart, entry.selectionEnd) }.getOrDefault(false)
+            }
+        } catch (_: Exception) {
+            committed = false
+        } finally {
+            if (batched) runCatching { connection.endBatchEdit() }
+            if (!committed) runCatching { connection.setSelection(current.selectionStart, current.selectionEnd) }
+            capturing = false
+        }
+        if (!selected) return state("This field rejected undo. Nothing was retried.", false)
+        popUndo()
+        val active = editor()
+        val verified = committed && active != null && active.session == entry.session && active.connection === connection &&
+            EditorPolicy.permits(active.info) && capture(connection)?.text == expected
+        if (verified) {
+            applied(entry.selectionStart, entry.selectionEnd)
+            state(if (restored) "Polish undone" else "Polish undone, but cursor could not be restored.", false)
+        } else {
+            state(if (committed) "Undo delivery not verified. Nothing was retried." else "This field rejected undo. Nothing was retried.", false)
+        }
+    }
 
     fun completedResult(): CompletedPolishResult? {
         val result = completed.value ?: return null
@@ -202,6 +303,11 @@ internal class FieldPolishCoordinator(
         val verified = committed && active != null && active.session == editorSession && active.connection === target &&
             EditorPolicy.permits(active.info) && allowed() && capture(target)?.text == expected
         if (verified) {
+            pushUndo(PolishUndo(
+                session = current.session, connection = target, before = source.text, after = expected,
+                rangeStart = source.rangeStart, revised = revised,
+                selectionStart = source.selectionStart, selectionEnd = source.selectionEnd,
+            ))
             applied(selection.first, selection.second)
             state(if (restored) "Text polished" else "Text polished, but cursor could not be restored.", false)
         } else {
@@ -216,5 +322,6 @@ internal class FieldPolishCoordinator(
 
     companion object {
         const val RECOVERY_TTL_MS = 120_000L
+        const val MAX_UNDO = 3
     }
 }

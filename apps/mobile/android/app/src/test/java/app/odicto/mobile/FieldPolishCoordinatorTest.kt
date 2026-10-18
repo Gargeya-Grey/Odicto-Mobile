@@ -468,4 +468,136 @@ class FieldPolishCoordinatorTest {
             assertEquals(0, editor.commits)
         } finally { scope.cancel() }
     }
+
+    private class UndoRig(scope: CoroutineScope, var editor: Editor, var session: Long = 1L, allowed: () -> Boolean = { true }) {
+        val messages = kotlinx.coroutines.channels.Channel<String>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+        val applied = mutableListOf<Pair<Int, Int>>()
+        var replies = ArrayDeque<String>()
+        val coordinator = FieldPolishCoordinator(scope, { PolishEditor(session, editor, EditorInfo().apply { inputType = InputType.TYPE_CLASS_TEXT }) },
+            allowed, { "key" }, { "model" to "" }, { _, _, _, _ -> FieldPolishResult.Success(replies.removeFirst()) },
+            { message, busy -> if (!busy && message.isNotEmpty()) messages.trySend(message) }, { s, e -> applied += s to e })
+
+        suspend fun polish(reply: String): String {
+            replies.addLast(reply)
+            coordinator.start()
+            return withTimeout(5_000) { messages.receive() }
+        }
+
+        fun undo(): String {
+            coordinator.undo()
+            return messages.tryReceive().getOrThrow()
+        }
+    }
+
+    @Test fun undoRestoresTheOriginalWholeFieldAndItsCursor() = runBlocking {
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        try {
+            val rig = UndoRig(scope, Editor("Helo wrold").apply { start = 4; end = 4 })
+            assertFalse(rig.coordinator.undoAvailable.value)
+            assertEquals("Text polished", rig.polish("Hello world"))
+            assertEquals("Hello world", rig.editor.text)
+            assertTrue(rig.coordinator.undoAvailable.value)
+            assertEquals("Polish undone", rig.undo())
+            assertEquals("Helo wrold", rig.editor.text)
+            assertEquals(4, rig.editor.start)
+            assertEquals(4, rig.editor.end)
+            assertEquals(4 to 4, rig.applied.last())
+            assertFalse(rig.coordinator.undoAvailable.value)
+            assertEquals("Nothing to undo.", rig.undo())
+        } finally { scope.cancel() }
+    }
+
+    @Test fun undoRestoresASelectedRangeAndKeepsTextTypedAfterIt() = runBlocking {
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        try {
+            val rig = UndoRig(scope, Editor("Say Helo now").apply { start = 4; end = 8 })
+            assertEquals("Text polished", rig.polish("Hello"))
+            assertEquals("Say Hello now", rig.editor.text)
+            rig.editor.text += " and more"
+            assertEquals("Polish undone", rig.undo())
+            assertEquals("Say Helo now and more", rig.editor.text)
+            assertEquals(4, rig.editor.start)
+            assertEquals(8, rig.editor.end)
+        } finally { scope.cancel() }
+    }
+
+    @Test fun undoRefusesWithoutWritingWhenTheTextBeforeOrInsideTheRangeChanged() = runBlocking {
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        try {
+            for (edit in listOf<(String) -> String>({ "X$it" }, { it.replace("Hello", "Hullo") })) {
+                val rig = UndoRig(scope, Editor("Say Helo now").apply { start = 4; end = 8 })
+                rig.polish("Hello")
+                val changed = edit(rig.editor.text)
+                rig.editor.text = changed
+                val commits = rig.editor.commits
+                assertEquals("Text changed since polish. Nothing was undone.", rig.undo())
+                assertEquals(changed, rig.editor.text)
+                assertEquals(commits, rig.editor.commits)
+                assertFalse("a refused entry is spent", rig.coordinator.undoAvailable.value)
+            }
+        } finally { scope.cancel() }
+    }
+
+    @Test fun undoStepsBackThroughConsecutivePolishesNewestFirst() = runBlocking {
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        try {
+            val rig = UndoRig(scope, Editor("helo"))
+            rig.polish("Helo")
+            rig.polish("Hello")
+            assertEquals("Hello", rig.editor.text)
+            assertEquals("Polish undone", rig.undo())
+            assertEquals("Helo", rig.editor.text)
+            assertTrue(rig.coordinator.undoAvailable.value)
+            assertEquals("Polish undone", rig.undo())
+            assertEquals("helo", rig.editor.text)
+            assertFalse(rig.coordinator.undoAvailable.value)
+        } finally { scope.cancel() }
+    }
+
+    @Test fun undoIsRefusedInAnotherFieldOrEditorSession() = runBlocking {
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        try {
+            val first = Editor("Helo")
+            val rig = UndoRig(scope, first)
+            rig.polish("Hello")
+            rig.editor = Editor("Helo")
+            assertEquals("Undo only works in the field you polished.", rig.undo())
+            assertEquals("Helo", rig.editor.text)
+            assertEquals(0, rig.editor.commits)
+            assertFalse(rig.coordinator.undoAvailable.value)
+
+            val sessioned = UndoRig(scope, Editor("Helo"))
+            sessioned.polish("Hello")
+            sessioned.session = 2L
+            assertEquals("Undo only works in the field you polished.", sessioned.undo())
+            assertEquals("Hello", sessioned.editor.text)
+        } finally { scope.cancel() }
+    }
+
+    @Test fun clearingUndoDropsRetainedText() = runBlocking {
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        try {
+            val rig = UndoRig(scope, Editor("Helo"))
+            rig.polish("Hello")
+            rig.coordinator.clearUndo()
+            assertFalse(rig.coordinator.undoAvailable.value)
+            assertEquals("Nothing to undo.", rig.undo())
+            assertEquals("Hello", rig.editor.text)
+        } finally { scope.cancel() }
+    }
+
+    @Test fun undoWaitsForVoiceWork() = runBlocking {
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        try {
+            var allowed = true
+            val rig = UndoRig(scope, Editor("Helo"), allowed = { allowed })
+            rig.polish("Hello")
+            allowed = false
+            assertEquals("Finish voice typing before undoing.", rig.undo())
+            assertEquals("Hello", rig.editor.text)
+            assertTrue("a deferred undo is not spent", rig.coordinator.undoAvailable.value)
+            allowed = true
+            assertEquals("Polish undone", rig.undo())
+        } finally { scope.cancel() }
+    }
 }

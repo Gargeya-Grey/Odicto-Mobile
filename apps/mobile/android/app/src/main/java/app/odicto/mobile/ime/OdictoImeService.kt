@@ -49,6 +49,9 @@ class OdictoImeService : InputMethodService() {
     private var polish: FieldPolishCoordinator? = null
     private val polishClient = FieldPolishClient()
     private var polishButton: ImageButton? = null
+    private var undoButton: ImageButton? = null
+    /** The just-copied text offered for one-tap paste. Held here so it outlives any one field or app. */
+    internal val pasteSuggestion = PasteSuggestion()
     private var polishBusyDrawable: PolishBusyDrawable? = null
     private var polishStatus: TextView? = null
     private val statusPresentation = KeyboardStatusPresentation()
@@ -92,13 +95,21 @@ class OdictoImeService : InputMethodService() {
         super.onCreate()
         VoicePreferences.initialize(this); DictationCoordinator.registerTarget(target)
         clipboardCapture = ClipboardCapture(this, scope).also { capture ->
+            capture.onFreshClip = { text, token, copiedAt ->
+                if (pasteSuggestion.offer(text, token, copiedAt)) controller?.refreshPaste()
+            }
             scope.launch { capture.error.collect { message ->
                 if (message != null) controller?.showClipboardNotice(message)
             } }
         }
         scope.launch { fieldPolish().recovery.collect { renderRecovery() } }
+        scope.launch { fieldPolish().undoAvailable.collect { renderUndoButton() } }
         scope.launch { VoiceSession.state.collect { state ->
-            if (state.busy) cancelFieldPolish()
+            if (state.busy) {
+                cancelFieldPolish()
+                // Speaking is the user's chosen action: the copy is no longer offered.
+                pasteSuggestion.spend()
+            }
             controller?.refreshSpelling()
             observeVoiceStatus()
             if (DictationCoordinator.keyboardVisible.value) {
@@ -114,6 +125,7 @@ class OdictoImeService : InputMethodService() {
     override fun onDestroy() {
         pauseStatusView()
         cancelFieldPolish()
+        polish?.clearUndo()
         controller?.dispose()
         controller = null
         expansion?.dispose(); expansion = null
@@ -189,7 +201,7 @@ class OdictoImeService : InputMethodService() {
         fun voiceParams(width: Int, height: Int) = FrameLayout.LayoutParams(width, height, android.view.Gravity.TOP or android.view.Gravity.END).apply {
             marginEnd = voice.dp(topCell)
         }
-        voice.resize = { width, height -> voice.layoutParams = voiceParams(width, height) }
+        voice.resize = { width, height, _ -> voice.layoutParams = voiceParams(width, height) }
         control = voice
         row.addView(voice, 0, voiceParams(voice.requiredWidth, voice.requiredHeight))
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
@@ -212,6 +224,15 @@ class OdictoImeService : InputMethodService() {
                 busyDrawable.stop()
             }
         })
+        undoButton = root.findViewById<ImageButton>(R.id.ime_undo).apply {
+            setOnClickListener {
+                Haptics.tap(this@OdictoImeService, VoicePreferences.levelOf(VoicePreferences.state.value))
+                pasteSuggestion.spend()
+                controller?.onExternalEdit(selectionStart, selectionEnd)
+                fieldPolish().undo()
+            }
+        }
+        renderUndoButton()
         polishStatus = root.findViewById(R.id.ime_polish_status)
         polishStatus?.apply {
             isClickable = false
@@ -221,6 +242,7 @@ class OdictoImeService : InputMethodService() {
         voice.keyboardNotice = ::showKeyboardNotice
         polishButton?.setOnClickListener {
             Haptics.tap(this, VoicePreferences.levelOf(VoicePreferences.state.value))
+            pasteSuggestion.spend()
             val refusal = EditorPolicy.voiceRefusal(currentInputEditorInfo)
             when {
                 refusal != null -> showPolishStatus(refusal.replace("Voice", "Polish"), false)
@@ -233,14 +255,23 @@ class OdictoImeService : InputMethodService() {
         }
         compactTop = false
         row.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
-            val cell = ((right - left) / resources.displayMetrics.density / 8f).toInt().coerceIn(32, 48)
+            val cell = ((right - left) / resources.displayMetrics.density / TOP_CELLS).toInt().coerceIn(32, 48)
             if (topCell != cell) {
                 topCell = cell
                 compactTop = cell < 48
                 voice.setKeyboardCellWidth(cell)
                 voice.layoutParams = voiceParams(voice.requiredWidth, voice.requiredHeight)
-                listOf(R.id.ime_keyboard_toggle, R.id.ime_polish).forEach { id ->
-                    root.findViewById<View>(id).apply { layoutParams = layoutParams.apply { width = voice.dp(cell) } }
+                // The icon is the cell minus its padding, so the padding has to shrink with the cell: a fixed 13dp
+                // left almost nothing to draw in on a narrow screen.
+                val padding = voice.dp(cell * 13 / 48)
+                listOf(R.id.ime_keyboard_toggle, R.id.ime_undo, R.id.ime_polish).forEach { id ->
+                    root.findViewById<View>(id).apply {
+                        layoutParams = layoutParams.apply { width = voice.dp(cell) }
+                        setPadding(padding, padding, padding, padding)
+                    }
+                }
+                root.findViewById<View>(R.id.ime_undo).apply {
+                    layoutParams = (layoutParams as FrameLayout.LayoutParams).apply { marginStart = voice.dp(cell) }
                 }
                 renderTopStatus()
             }
@@ -315,6 +346,7 @@ class OdictoImeService : InputMethodService() {
         clipboardCapture?.onEditorChanged(null)
         pauseStatusView()
         cancelFieldPolish()
+        polish?.clearUndo()
         controller?.stopRepeating()
         controller?.onFinishInput()
         endLive()
@@ -327,6 +359,7 @@ class OdictoImeService : InputMethodService() {
         clipboardCapture?.onEditorChanged(null)
         pauseStatusView()
         cancelFieldPolish()
+        polish?.clearUndo()
         controller?.onFinishInput()
         session = null
         renderRecovery()
@@ -482,6 +515,11 @@ class OdictoImeService : InputMethodService() {
         ).also { polish = it }
     }
 
+    /** Dimmed, not hidden, when there is nothing to undo; a tap then says so. */
+    private fun renderUndoButton() {
+        undoButton?.let { PressSurface.fadeTo(it, if (polish?.undoAvailable?.value == true) 1f else 0.35f) }
+    }
+
     private fun updatePolishButton(info: EditorInfo?) {
         polishButton?.alpha = if (session != null && EditorPolicy.permits(info)) 1f else 0.35f
         polishButton?.contentDescription = if (polishBusy) "Cancel text polish" else if (selectionStart >= 0 && selectionEnd >= 0 && selectionStart != selectionEnd) "Polish selected text" else "Polish all text in this field"
@@ -504,6 +542,8 @@ class OdictoImeService : InputMethodService() {
                 message.startsWith("Add an OpenRouter key") -> "missing_key"
                 message.startsWith("Field changed") -> "stale_field"
                 message.startsWith("Text polished") -> "applied"
+                message.startsWith("Polish undone") -> "undone"
+                message.startsWith("Nothing to undo") -> "nothing_to_undo"
                 else -> "error"
             }
             Log.i("OdictoPolishState", "reason=$reason busy=$busy")
@@ -533,7 +573,7 @@ class OdictoImeService : InputMethodService() {
         statusPresentation.voice(VoiceSession.state.value, VoiceSession.operationId, SystemClock.uptimeMillis(), statusTimeout())
     }
 
-    private fun showKeyboardNotice(message: String) {
+    internal fun showKeyboardNotice(message: String) {
         observeVoiceStatus()
         statusPresentation.notice(message, false, SystemClock.uptimeMillis(), statusTimeout())
         renderTopStatus()
@@ -552,9 +592,15 @@ class OdictoImeService : InputMethodService() {
         controller?.setSpellingStatusVisible(feedback != null)
         polishStatus?.apply {
             val summary = feedback?.summary.orEmpty()
-            if (text.toString() != summary) text = summary
+            if (text.toString() != summary) {
+                text = summary
+                // transitions.dev text swap: a new line rises into place instead of replacing the old one in a blink.
+                if (summary.isNotEmpty()) PressSurface.riseIn(this)
+            }
             contentDescription = feedback?.description
             visibility = if (feedback == null) View.INVISIBLE else View.VISIBLE
+            // Hidden mid-rise must not leave it half-faded for the next message.
+            if (feedback == null) PressSurface.rest(this)
         }
         cancelStatusCallback()
         if (statusViewActive && feedback?.deadline != null) {
@@ -673,5 +719,10 @@ class OdictoImeService : InputMethodService() {
     }
     override fun onFinishInputView(finishingInput: Boolean) {
         pauseStatusView(); cancelFieldPolish(); controller?.onFinishInput(); stopRecoveryCountdown(); super.onFinishInputView(finishingInput)
+    }
+
+    private companion object {
+        /** Toggle, Undo, six voice cells, Polish. */
+        const val TOP_CELLS = 9f
     }
 }

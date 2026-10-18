@@ -140,11 +140,13 @@ class SpellingHeaderLayoutTest {
         Rect(0, 0, view.width, view.height).also { (root as ViewGroup).offsetDescendantRectToMyCoords(view, it) }
     }
 
-    @Test fun theHeaderIsOneFixedRowAndEmptyAssistanceIsGone() {
+    @Test fun theHeaderIsTwoFixedRowsAndEmptyAssistanceIsGone() {
         Fixture().use { f ->
             measure(f.root)
             val density = f.root.resources.displayMetrics.density
-            assertEquals((48 * density).toInt(), f.root.findViewById<View>(R.id.ime_top_controls).height)
+            assertEquals("the voice row stays one fixed row", (48 * density).toInt(), f.root.findViewById<View>(R.id.ime_top_row).height)
+            assertEquals("the quick-edit row is the second fixed row", (48 * density).toInt(), f.root.findViewById<View>(R.id.ime_quick_keys).height)
+            assertEquals((96 * density).toInt(), f.root.findViewById<View>(R.id.ime_top_controls).height)
             assertEquals(View.GONE, f.row.visibility)
             assertEquals(View.GONE, f.root.findViewById<View>(R.id.ime_assistance).visibility)
             assertSame("suggestions live inside the top row", f.root.findViewById<View>(R.id.ime_top_row),

@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from 'react';
 import { onboarding, type OnboardingStatus } from '../../native/onboarding';
+import type { UpdateStatus } from '../../native/update';
 import {
   voice,
   type HistoryItem,
@@ -22,6 +23,7 @@ import { AndroidOnboarding } from '../AndroidOnboarding';
 import { Group, Row, SectionLabel, Segmented, Switch } from './controls';
 import { HistoryEntry, useCopyFeedback, useNow } from './HistoryEntry';
 import { ChevronRight, Lock, Mic, Settings2 } from './icons';
+import { UpdateCard } from './UpdateCard';
 
 const MODES = [
   { value: 'raw', label: 'Raw' },
@@ -66,6 +68,9 @@ export function HomePage({
   onOpenHistory,
   onCopied,
   onCopyFailed,
+  appUpdate,
+  onDownloadUpdate,
+  onDismissUpdate,
 }: {
   settings: VoiceSettings | null;
   status: OnboardingStatus | null;
@@ -76,6 +81,9 @@ export function HomePage({
   onOpenHistory: () => void;
   onCopied: () => void;
   onCopyFailed: () => void;
+  appUpdate: UpdateStatus | null;
+  onDownloadUpdate: () => void;
+  onDismissUpdate: () => void;
 }) {
   const overlaySupported = status?.overlaySupported ?? false;
   const home = describeHomeStatus(summarizeReadiness(settings, status));
@@ -130,6 +138,12 @@ export function HomePage({
 
   return (
     <>
+      <UpdateCard
+        status={appUpdate}
+        onDownload={onDownloadUpdate}
+        onDismiss={onDismissUpdate}
+      />
+
       <section className="voice-section" aria-label="Status">
         <Group>
           {home ? (

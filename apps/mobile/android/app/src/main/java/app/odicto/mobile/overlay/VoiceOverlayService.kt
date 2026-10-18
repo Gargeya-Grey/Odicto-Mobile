@@ -14,6 +14,7 @@ import app.odicto.mobile.dictation.*
 import app.odicto.mobile.storage.VoicePreferences
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.combine
+import kotlin.math.roundToInt
 
 class VoiceOverlayService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -21,6 +22,16 @@ class VoiceOverlayService : Service() {
     private var control: VoiceControlView? = null
     private var params: WindowManager.LayoutParams? = null
     private var preferredBottom: Int? = null
+    private var anchorMicLeft = 0
+    private var anchorXShare = OverlayGeometry.ANCHOR_SCALE
+    private var anchorYShare = 0
+    /** True once a drag has actually moved the window up or down; a sideways drag leaves the vertical place alone. */
+    private var movedVertically = false
+    private var lastGeometry = ""
+    private var lastScaleKey = ""
+    private var dragOriginSet = false
+    private var dragStartMicLeft = 0
+    private var dragStartBottom = 0
     private var screenOff = false
     private var recovery: Job? = null
     private var recoveryAttempts = 0
@@ -42,6 +53,7 @@ class VoiceOverlayService : Service() {
         // window kills the process with ForegroundServiceDidNotStartInTimeException before any of
         // onStartCommand can run, and sticky restarts then loop on the same crash.
         if (!promote()) return
+        lastScaleKey = "${resources.configuration.fontScale}/${resources.configuration.densityDpi}"
         OverlayPresentation.start(OverlayPresentation.recommendedTimeout(this))
         VoicePreferences.initialize(this)
         val filter = IntentFilter().apply { addAction(Intent.ACTION_SCREEN_OFF); addAction(Intent.ACTION_SCREEN_ON); addAction(Intent.ACTION_USER_PRESENT) }
@@ -100,6 +112,8 @@ class VoiceOverlayService : Service() {
         control?.render(VoiceSession.state.value)
         val view = control ?: return
         val layout = params ?: return
+        // A rotation, a display-size change or an unfold: the saved shares are turned into pixels again.
+        if (geometryKey() != lastGeometry) { lastGeometry = geometryKey(); placeFromAnchors(view, layout, update = true) }
         val previousY = layout.y
         preferredBottom?.let { layout.y = it - layout.height }
         clamp(layout)
@@ -118,51 +132,130 @@ class VoiceOverlayService : Service() {
     }
     private fun show() {
         val view = VoiceControlView(this)
-        val bounds = bounds()
-        view.setOverlayAvailableHeight(bounds.second)
-        val size = view.requiredWidth
-        val settings = VoicePreferences.state.value
-        val layout = WindowManager.LayoutParams(size, view.requiredHeight,
+        view.setOverlayAvailableHeight(bounds().second)
+        loadAnchors(view)
+        val layout = WindowManager.LayoutParams(view.requiredWidth, view.requiredHeight,
             if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT).apply {
             gravity = Gravity.TOP or Gravity.LEFT
-            x = if (settings.x >= 0) settings.x else bounds.first - size - view.dp(12)
-            y = if (settings.y >= 0) settings.y else bounds.second - size - view.dp(100)
             if (Build.VERSION.SDK_INT >= 28) layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER
         }
         control = view; params = layout
-        preferredBottom = layout.y + layout.height
-        view.resize = { width, height ->
-            val micAnchorX = if (view.mirrored) layout.x + view.dp(8) else layout.x + layout.width - view.dp(64)
-            layout.y = (preferredBottom ?: (layout.y + layout.height)) - height
+        lastGeometry = geometryKey()
+        placeFromAnchors(view, layout, update = false)
+        // The microphone never moves for anything else: whenever the view changes size it says where the
+        // microphone sits in its new window, and the window is placed so that spot lands on the anchor.
+        view.resize = { width, height, micOffset ->
             layout.width = width
             layout.height = height
-            layout.x = if (view.mirrored) micAnchorX - view.dp(8) else micAnchorX - (layout.width - view.dp(64))
+            layout.y = (preferredBottom ?: (layout.y + layout.height)) - height
+            layout.x = anchorMicLeft - micOffset
             clamp(layout); update(view, layout)
         }
-        view.drag = { dx, dy ->
-            layout.x += dx.toInt(); layout.y += dy.toInt()
+        view.dragStart = {
+            // The drag starts from where the microphone is drawn, wherever it was last placed.
+            anchorMicLeft = micLeftOf(view, layout)
+            dragOriginSet = false
+            movedVertically = false
+        }
+        view.drag = { totalX, totalY ->
+            // Place the microphone from the finger's total travel, not from accumulated steps: it stays exactly
+            // the grabbed distance from the finger, and a clamp at an edge cannot make it drift out of step.
+            // The origin is read on the first move, after the open card has folded away around the microphone.
+            if (!dragOriginSet) {
+                dragOriginSet = true
+                dragStartMicLeft = micLeftOf(view, layout)
+                dragStartBottom = layout.y + layout.height
+            }
+            val micLeft = clampMic(view, dragStartMicLeft + totalX.roundToInt())
+            layout.x = micLeft - view.micOffsetPx
+            // A purely sideways drag leaves the vertical place alone: while the keyboard is up the window may be
+            // pushed above where the user put it, and that temporary position must not be saved as theirs.
+            val dy = totalY.roundToInt()
+            if (dy != 0 || movedVertically) {
+                layout.y = dragStartBottom + dy - layout.height
+                movedVertically = true
+            }
             clamp(layout)
-            if (dy.toInt() != 0) preferredBottom = layout.y + layout.height
+            if (movedVertically) preferredBottom = layout.y + layout.height
+            anchorMicLeft = micLeft
             update(view, layout)
         }
         view.dragEnd = {
-            val preferredY = (preferredBottom ?: (layout.y + layout.height)) - layout.height
-            VoicePreferences.update(this) { it.copy(x = layout.x, y = preferredY) }
-            view.mirrored = layout.x < bounds().first / 2
+            anchorMicLeft = micLeftOf(view, layout)
+            saveAnchors(view)
+            view.setPlacement(anchorMicLeft, bounds().first)
         }
-        clamp(layout)
-        try { manager.addView(view, layout); view.mirrored = layout.x < bounds.first / 2; view.render(VoiceSession.state.value) }
+        try { manager.addView(view, layout); view.render(VoiceSession.state.value) }
         catch (_: Exception) { hide(); recover() }
     }
-    private fun bounds(): Pair<Int, Int> {
+    private fun micLeftOf(view: VoiceControlView, layout: WindowManager.LayoutParams): Int = layout.x + view.micOffsetPx
+
+    /**
+     * The room the microphone's left edge can move in: anywhere on screen, right up to either side. The
+     * microphone asks the system to leave swipes that start on it alone (see [VoiceControlView.onLayout]), so
+     * the Back-gesture strips do not need to be avoided.
+     */
+    private fun micRange(view: VoiceControlView): IntRange = 0..maxOf(0, bounds().first - view.dp(MIC_DP))
+    private fun clampMic(view: VoiceControlView, micLeft: Int): Int = micLeft.coerceIn(micRange(view))
+    /** Vertical room of the collapsed window's top edge, ignoring the keyboard so it does not shift the share. */
+    private fun topRange(view: VoiceControlView): IntRange = 0..maxOf(0, bounds(withKeyboard = false).second - view.dp(COLLAPSED_DP))
+    private fun share(value: Int, range: IntRange): Int = OverlayGeometry.shareOf(value, range.first, range.last)
+    private fun valueAt(share: Int, range: IntRange): Int = OverlayGeometry.valueAt(share, range.first, range.last)
+
+    /** Starts from the saved share, or an older pixel position, or the right edge a little above the bottom. */
+    private fun loadAnchors(view: VoiceControlView) {
+        val saved = VoicePreferences.state.value
+        val xs = micRange(view); val ys = topRange(view)
+        anchorXShare = when {
+            saved.anchorX >= 0 -> saved.anchorX
+            saved.x >= 0 -> share(saved.x + view.dp(MIC_INSET_DP), xs)
+            else -> OverlayGeometry.ANCHOR_SCALE
+        }
+        anchorYShare = when {
+            saved.anchorY >= 0 -> saved.anchorY
+            saved.y >= 0 -> share(saved.y, ys)
+            else -> share(ys.last - view.dp(100), ys)
+        }
+    }
+    private fun saveAnchors(view: VoiceControlView) {
+        val xs = micRange(view); val ys = topRange(view)
+        anchorXShare = share(anchorMicLeft, xs)
+        val pixelX = anchorMicLeft - view.dp(MIC_INSET_DP)
+        // Only a drag that really moved vertically changes the vertical place. Otherwise it is kept exactly,
+        // not re-derived from a rounded share, and not clamped by whatever the keyboard happens to be doing.
+        if (movedVertically) anchorYShare = share((preferredBottom ?: 0) - view.dp(COLLAPSED_DP), ys)
+        val pixelY = (preferredBottom ?: 0) - view.dp(COLLAPSED_DP)
+        val moved = movedVertically
+        VoicePreferences.update(this) { it.copy(x = pixelX, y = if (moved) pixelY else it.y, anchorX = anchorXShare, anchorY = anchorYShare) }
+        movedVertically = false
+    }
+
+    /** Turns the saved shares into pixels for the screen as it is now. */
+    private fun placeFromAnchors(view: VoiceControlView, layout: WindowManager.LayoutParams, update: Boolean) {
+        anchorMicLeft = valueAt(anchorXShare, micRange(view))
+        preferredBottom = valueAt(anchorYShare, topRange(view)) + view.dp(COLLAPSED_DP)
+        view.setPlacement(anchorMicLeft, bounds().first)
+        layout.x = anchorMicLeft - view.micOffsetPx
+        layout.y = preferredBottom!! - layout.height
+        clamp(layout)
+        if (update) update(view, layout)
+    }
+    private fun geometryKey(): String {
+        val (w, h) = bounds(withKeyboard = false)
+        return "$w/$h/${resources.displayMetrics.density}"
+    }
+
+    private fun bounds(withKeyboard: Boolean = true): Pair<Int, Int> {
         if (Build.VERSION.SDK_INT >= 30) {
             val metrics = manager.currentWindowMetrics
             val inset = metrics.windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
-            return (metrics.bounds.width() - inset.left - inset.right) to visibleHeight(metrics.bounds.height() - inset.top - inset.bottom, inset.top)
+            val height = metrics.bounds.height() - inset.top - inset.bottom
+            return (metrics.bounds.width() - inset.left - inset.right) to (if (withKeyboard) visibleHeight(height, inset.top) else height)
         }
-        return resources.displayMetrics.widthPixels to visibleHeight(resources.displayMetrics.heightPixels, 0)
+        val height = resources.displayMetrics.heightPixels
+        return resources.displayMetrics.widthPixels to (if (withKeyboard) visibleHeight(height, 0) else height)
     }
     private fun visibleHeight(screenHeight: Int, topInset: Int): Int {
         val keyboardTop = DictationCoordinator.keyboardTopPx.value
@@ -171,9 +264,11 @@ class VoiceOverlayService : Service() {
         return minOf(screenHeight, keyboardTop - topInset - gap).coerceAtLeast(0)
     }
     private fun clamp(layout: WindowManager.LayoutParams) {
-        val (w, h) = bounds(); layout.x = layout.x.coerceIn(0, maxOf(0, w - layout.width)); layout.y = layout.y.coerceIn(0, maxOf(0, h - layout.height))
-    }
-    private fun update(view: View, layout: WindowManager.LayoutParams) {
+        val (w, h) = bounds()
+        // The window's empty margin may hang past the side of the screen so the microphone itself can touch it.
+        val overhang = (OverlayGeometry.INSET_DP * resources.displayMetrics.density).roundToInt()
+        layout.x = layout.x.coerceIn(-overhang, maxOf(-overhang, w - layout.width + overhang)); layout.y = layout.y.coerceIn(0, maxOf(0, h - layout.height))
+    }    private fun update(view: View, layout: WindowManager.LayoutParams) {
         if (view !== control) return
         try { manager.updateViewLayout(view, layout) } catch (_: Exception) { hide(); recover() }
     }
@@ -191,12 +286,21 @@ class VoiceOverlayService : Service() {
     private fun hide() {
         val view = control ?: return
         control = null; params = null; preferredBottom = null
-        view.resize = null; view.drag = null; view.dragEnd = null
+        view.resize = null; view.dragStart = null; view.drag = null; view.dragEnd = null
         // addView registers the root before isAttachedToWindow becomes true.
         // Remove that root even when focus/permissions change in the same frame.
         try { manager.removeViewImmediate(view) } catch (_: IllegalArgumentException) {}
     }
-    override fun onConfigurationChanged(newConfig: Configuration) { super.onConfigurationChanged(newConfig); refresh(); params?.let { clamp(it); control?.let { view -> update(view, it) } } }
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // Text is sized when the view is built, so a font-size or display-size change needs a fresh view. The saved
+        // placement puts it back exactly where it was.
+        val scaleKey = "${newConfig.fontScale}/${newConfig.densityDpi}"
+        if (scaleKey != lastScaleKey) { lastScaleKey = scaleKey; hide() }
+        refresh()
+        params?.let { clamp(it); control?.let { view -> update(view, it) } }
+    }
     override fun onDestroy() { if (registered) unregisterReceiver(receiver); hide(); scope.cancel(); super.onDestroy() }
-    companion object { const val ACTION_SHOW = "app.odicto.SHOW_OVERLAY"; const val ACTION_HIDE = "app.odicto.HIDE_OVERLAY"; private const val CHANNEL = "odicto-overlay"; private const val NOTIFICATION_ID = 18; private const val TARGET_REFRESH_MS = 500L }
+    companion object { const val ACTION_SHOW = "app.odicto.SHOW_OVERLAY"; const val ACTION_HIDE = "app.odicto.HIDE_OVERLAY"; private const val CHANNEL = "odicto-overlay"; private const val NOTIFICATION_ID = 18; private const val TARGET_REFRESH_MS = 500L
+        private const val MIC_DP = 56; private const val MIC_INSET_DP = 8; private const val COLLAPSED_DP = 72 }
 }

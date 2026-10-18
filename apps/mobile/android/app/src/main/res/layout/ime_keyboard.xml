@@ -34,11 +34,25 @@
                     android:layout_width="48dp"
                     android:layout_height="48dp"
                     android:layout_gravity="top|start"
-                    android:background="@drawable/odicto_toolbar_button"
                     android:contentDescription="Show keyboard"
                     android:padding="13dp"
                     android:scaleType="fitCenter"
                     android:src="@drawable/odicto_ic_keyboard"
+                    android:tint="@color/odicto_toolbar_icon" />
+
+                <!-- Cell 1, between the keyboard toggle and the voice cells. Its margin and width follow
+                     the cell size, set in code with the toggle's. -->
+                <ImageButton
+                    android:id="@+id/ime_undo"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_gravity="top|start"
+                    android:layout_marginStart="48dp"
+                    android:alpha="0.35"
+                    android:contentDescription="Undo last polish"
+                    android:padding="13dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/odicto_ic_undo"
                     android:tint="@color/odicto_toolbar_icon" />
 
                 <ImageButton
@@ -46,7 +60,6 @@
                     android:layout_width="48dp"
                     android:layout_height="48dp"
                     android:layout_gravity="top|end"
-                    android:background="@drawable/odicto_toolbar_button"
                     android:contentDescription="Polish all text in this field"
                     android:padding="13dp"
                     android:scaleType="fitCenter"
@@ -87,7 +100,26 @@
                         android:textSize="13sp"
                         android:visibility="invisible" />
                 </FrameLayout>
+
+                <!-- Just-copied text, offered for one-tap paste. Covers the same cells as the slot above;
+                     its margins are set from the same code, and it yields to any status message. -->
+                <FrameLayout
+                    android:id="@+id/ime_paste"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_gravity="top|start"
+                    android:background="@color/odicto_keyboard_background"
+                    android:visibility="gone" />
             </FrameLayout>
+
+            <!-- The quick-edit row: comma, period, space, backspace and enter. It belongs to the header, so it
+                 stays on screen with the typing area collapsed, in every field. The Enter key becomes Send,
+                 Go, Search and so on when the field asks for that action. -->
+            <app.odicto.mobile.ime.OdictoKeyboardView
+                android:id="@+id/ime_quick_keys"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layoutDirection="ltr" />
         </LinearLayout>
 
         <LinearLayout

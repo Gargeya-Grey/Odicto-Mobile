@@ -49,7 +49,7 @@ internal class SpellingStrip(
         isClickable = true
         isFocusable = true
         setPadding((4 * density).toInt(), 0, (4 * density).toInt(), 0)
-        setBackgroundResource(R.drawable.odicto_suggestion_background)
+        background = PressSurface.tile(row.context, 10f)
         setOnClickListener { if (slotVersions[index] == generation && available && !statusVisible) slotActions[index]?.invoke() }
     } }
     private val slotActions = arrayOfNulls<() -> Unit>(3)

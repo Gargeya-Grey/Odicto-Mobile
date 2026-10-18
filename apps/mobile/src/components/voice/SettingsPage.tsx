@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { modelGroups, modelLabel, MAX_MODEL_ID } from '../../lib/modelGroups';
+import { updateSettingLine } from '../../lib/updateCard';
 import type { OnboardingStatus } from '../../native/onboarding';
+import type { UpdateStatus } from '../../native/update';
 import type { OpenRouterModel, VoiceSettings } from '../../native/voice';
 import { AndroidOnboarding } from '../AndroidOnboarding';
 import {
@@ -26,6 +28,7 @@ const SECTIONS = [
   { id: 'voice-ai', label: 'AI answers' },
   { id: 'voice-polish', label: 'Text polish' },
   { id: 'voice-live', label: 'Live' },
+  { id: 'voice-updates', label: 'Updates' },
   { id: 'voice-setup', label: 'Android setup' },
 ] as const;
 
@@ -176,6 +179,8 @@ export function SettingsPage({
   models,
   loadingModels,
   onRefreshStatus,
+  appUpdate: updateStatus,
+  onSetUpdateEnabled,
 }: {
   settings: VoiceSettings | null;
   status: OnboardingStatus | null;
@@ -185,6 +190,8 @@ export function SettingsPage({
   models: OpenRouterModel[];
   loadingModels: boolean;
   onRefreshStatus: () => Promise<void> | void;
+  appUpdate: UpdateStatus | null;
+  onSetUpdateEnabled: (enabled: boolean) => void;
 }) {
   const [modelSearch, setModelSearch] = useState('');
   const provider = draft.value('provider') ?? 'gemini';
@@ -604,6 +611,34 @@ export function SettingsPage({
           Live streams speech directly to Gemini and updates words as you speak.
         </Footer>
       </section>
+
+      {updateStatus && (
+        <section
+          className="voice-section"
+          id="voice-updates"
+          aria-labelledby="voice-updates-title"
+        >
+          <SectionLabel id="voice-updates-title" title="Updates" />
+          <Group>
+            <Row
+              title="Check for updates"
+              secondary={updateSettingLine(updateStatus.enabled)}
+              info="Asks GitHub for the newest Odicto release number and shows a card on Home if there is one. Nothing about you or your phone is sent. Nothing is downloaded or installed until you tap Download, and Android does the install."
+              trailing={({ describedBy }) => (
+                <Switch
+                  label="Check for updates"
+                  describedBy={describedBy}
+                  checked={updateStatus.enabled}
+                  onChange={onSetUpdateEnabled}
+                />
+              )}
+            />
+            {updateStatus.current && (
+              <Row title="Version" secondary={updateStatus.current} />
+            )}
+          </Group>
+        </section>
+      )}
 
       <AndroidOnboarding status={status} onRefresh={onRefreshStatus} />
     </>

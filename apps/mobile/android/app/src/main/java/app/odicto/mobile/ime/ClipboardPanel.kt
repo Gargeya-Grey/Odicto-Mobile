@@ -340,7 +340,7 @@ internal class ClipboardPanelBinding(
             ellipsize = TextUtils.TruncateAt.END
             compoundDrawablePadding = dp(8)
             compoundDrawableTintList = ColorStateList.valueOf(accent)
-            background = context.getDrawable(R.drawable.odicto_clipboard_card_press)
+            background = PressSurface.tile(context, 14f)
             setPadding(dp(12), dp(12), dp(8), dp(12))
         }, LinearLayout.LayoutParams(0, -2, 1f))
         addView(icon("Pin clip", R.drawable.odicto_clipboard_pin, muted) { actions.pin(payload, payload !in state.pins) }.apply {
@@ -369,7 +369,7 @@ internal class ClipboardPanelBinding(
         setPadding(dp(8), dp(8), dp(8), dp(8))
         stateListAnimator = null
         elevation = 0f
-        background = context.getDrawable(R.drawable.odicto_suggestion_background)
+        background = PressSurface.tile(context, 10f)
         setOnClickListener { click() }
     }
     private fun icon(name: String, drawable: Int, tint: Int = ink, click: () -> Unit) = ImageButton(context).apply {
@@ -378,7 +378,7 @@ internal class ClipboardPanelBinding(
         setImageResource(drawable)
         imageTintList = ColorStateList.valueOf(tint)
         setPadding(dp(12), dp(12), dp(12), dp(12))
-        background = context.getDrawable(R.drawable.odicto_toolbar_button)
+        PressSurface.styleIcon(this)
         layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
         setOnClickListener { click() }
     }

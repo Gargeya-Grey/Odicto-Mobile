@@ -16,6 +16,7 @@ import {
 } from './voice/icons';
 import { useOpenRouterModels } from './voice/useOpenRouterModels';
 import { useSettingsDraft } from './voice/useSettingsDraft';
+import { useUpdate } from './voice/useUpdate';
 import { tap, useVoiceSettings, type Notice } from './voice/useVoiceSettings';
 import odictoMark from '../assets/odicto-mark.svg';
 import '../voice.css';
@@ -91,6 +92,7 @@ export function VoiceHome() {
     saveForm,
     openSettingsRequested,
   } = useVoiceSettings();
+  const appUpdate = useUpdate(notify);
   const [page, setPage] = useState<Page>('home');
   const [entries, setEntries] = useState<HistoryItem[] | null>(null);
   const draft = useSettingsDraft(settings, saveForm);
@@ -259,6 +261,9 @@ export function VoiceHome() {
               onOpenHistory={() => go('history')}
               onCopied={tap}
               onCopyFailed={copyFailed}
+              appUpdate={appUpdate.status}
+              onDownloadUpdate={() => void appUpdate.download()}
+              onDismissUpdate={() => void appUpdate.dismiss()}
             />
           )}
           {page === 'settings' && (
@@ -271,6 +276,10 @@ export function VoiceHome() {
               models={models}
               loadingModels={loadingModels}
               onRefreshStatus={refreshOnboarding}
+              appUpdate={appUpdate.status}
+              onSetUpdateEnabled={(enabled) =>
+                void appUpdate.setEnabled(enabled)
+              }
             />
           )}
           {page === 'history' && (
