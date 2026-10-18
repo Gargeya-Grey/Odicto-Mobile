@@ -47,6 +47,7 @@ class FieldPolishClientTest {
         assertEquals("poolside/laguna-xs-2.1", payload.getString("model"))
         assertEquals(8192, payload.getInt("max_tokens"))
         assertEquals("latency", payload.getJSONObject("provider").getString("sort"))
+        assertFalse("Laguna XS keeps its own reasoning default", payload.has("reasoning"))
         val messages = payload.getJSONArray("messages")
         assertEquals(2, messages.length())
         assertEquals("system", messages.getJSONObject(0).getString("role"))
@@ -54,6 +55,16 @@ class FieldPolishClientTest {
         assertEquals("user", messages.getJSONObject(1).getString("role"))
         assertEquals("  Here is a proper name: QwErty.\n", messages.getJSONObject(1).getString("content"))
         assertFalse(payload.toString().contains("secret"))
+    }
+
+    @Test fun reasoningModelsPolishAtLowEffortWithoutReturningTheirReasoning() = runBlocking {
+        val requests = mutableListOf<Request>()
+        client(requests = requests).correct("teh text", model = "openai/gpt-5-mini", apiKey = "key")
+        val buffer = Buffer()
+        synchronized(requests) { requests.single() }.body!!.writeTo(buffer)
+        val reasoning = JSONObject(buffer.readUtf8()).getJSONObject("reasoning")
+        assertEquals("low", reasoning.getString("effort"))
+        assertTrue(reasoning.getBoolean("exclude"))
     }
 
     @Test fun customModelAndPromptAreUsedWithoutFallbackAndFormattingIsKept() = runBlocking {

@@ -217,6 +217,25 @@ class DirectVoiceTransportTest {
         assertFalse(events.any { it.optString("type") == "result" })
         assertTrue(events.any { it.optString("type") == "final" })
     }
+    @Test fun geminiFlashAndProThinkLowWhileFlashLiteAndOlderModelsKeepTheirDefault() {
+        val reply = "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hi\"}]}}]}"
+        for ((model, level) in listOf("gemini-3.7-flash" to "low", "gemini-3.1-pro-preview" to "low", "" to null, "gemini-3.5-flash-lite" to null, "gemini-2.5-flash" to null)) {
+            val (requests, _) = runRequest(DirectVoiceConfig("ai", "gemini", model, groqKey = "test", answerKey = "test"),
+                listOf(200 to "{\"text\":\"Say hi\"}", 200 to reply))
+            val buffer = okio.Buffer(); requests[1].body!!.writeTo(buffer)
+            val config = JSONObject(buffer.readUtf8()).getJSONObject("generationConfig")
+            assertEquals("model '$model'", level, config.optJSONObject("thinkingConfig")?.getString("thinkingLevel"))
+            assertEquals(2048, config.getInt("maxOutputTokens"))
+        }
+    }
+    @Test fun freeOpenRouterDefaultKeepsItsReasoningDefault() {
+        val (requests, _) = runRequest(DirectVoiceConfig("ai", "openrouter", "openrouter/free", groqKey = "test", answerKey = "test"),
+            listOf(200 to "{\"text\":\"Say hi\"}", 200 to "{\"choices\":[{\"message\":{\"content\":\"Hi\"}}]}"))
+        val buffer = okio.Buffer(); requests[1].body!!.writeTo(buffer)
+        val body = JSONObject(buffer.readUtf8())
+        assertEquals("poolside/laguna-xs-2.1:free", body.getString("model"))
+        assertFalse(body.has("reasoning"))
+    }
     @Test fun cancelledAudioNeverReachesProvider() {
         val client = OkHttpClient.Builder().addInterceptor { throw AssertionError("Cancelled audio was sent") }.build()
         val events = mutableListOf<JSONObject>()

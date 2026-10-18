@@ -166,10 +166,10 @@ class DirectVoiceTransport(
             .put("messages", JSONArray().put(JSONObject().put("role", "system").put("content", system))
                 .put(JSONObject().put("role", "user").put("content", instruction)))
             .put("provider", JSONObject().put("sort", "latency"))
-            .let { request -> if (model == "poolside/laguna-xs-2.1:free") request else request.put("reasoning", JSONObject().put("effort", "low").put("exclude", true)) }
+            .apply { ProviderOptions.openRouterReasoning(model)?.let { put("reasoning", it) } }
         else JSONObject().put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))
             .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", instruction)))))
-            .put("generationConfig", JSONObject().put("maxOutputTokens", 2048))
+            .put("generationConfig", JSONObject().put("maxOutputTokens", 2048).apply { ProviderOptions.geminiThinking(model)?.let { put("thinkingConfig", it) } })
         val url = if (openrouter) "https://openrouter.ai/api/v1/chat/completions"
             else "https://generativelanguage.googleapis.com/v1beta/models/${java.net.URLEncoder.encode(model, "UTF-8")}:generateContent"
         val builder = Request.Builder().url(url).post(body.toString().toRequestBody("application/json".toMediaType()))

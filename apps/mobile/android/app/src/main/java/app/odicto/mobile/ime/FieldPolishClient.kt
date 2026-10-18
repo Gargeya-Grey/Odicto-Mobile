@@ -3,6 +3,7 @@ package app.odicto.mobile.ime
 import app.odicto.mobile.dictation.PromptComposer
 import app.odicto.mobile.dictation.PromptMode
 import app.odicto.mobile.network.HttpClients
+import app.odicto.mobile.network.ProviderOptions
 import app.odicto.mobile.storage.DEFAULT_POLISH_MODEL
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
@@ -55,6 +56,7 @@ class FieldPolishClient(client: OkHttpClient? = null) {
                 .put(JSONObject().put("role", "system").put("content", PromptComposer.compose(DEFAULT_SYSTEM_PROMPT, systemPrompt, promptMode, PromptComposer.POLISH_NOTES_INTRO)))
                 .put(JSONObject().put("role", "user").put("content", text)))
             .put("provider", JSONObject().put("sort", "latency"))
+            .apply { ProviderOptions.openRouterReasoning(model)?.let { put("reasoning", it) } }
         val request = Request.Builder().url(ENDPOINT)
             .header("Authorization", "Bearer $apiKey")
             .post(body.toString().toRequestBody("application/json".toMediaType()))
