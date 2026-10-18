@@ -5,9 +5,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import okio.ByteString.Companion.toByteString
 
 data class DirectVoiceConfig(
@@ -41,7 +38,8 @@ class DirectVoiceTransport(
     @Volatile private var cancelled = false
     @Volatile private var call: Call? = null
     @Volatile private var socket: WebSocket? = null
-    private var pcm = ByteArrayOutputStream()
+    // Raw and AI audio is compressed (lossless FLAC) in memory as it arrives, so the upload after release is smaller.
+    private val flac = FlacEncoder()
     @Volatile private var transcript = ""
     @Volatile private var liveInterim = ""
     @Volatile private var finishing = false
@@ -115,8 +113,8 @@ class DirectVoiceTransport(
                 .put("data", bytes.toByteString(0, count).base64())
             return ws.send(JSONObject().put("realtimeInput", JSONObject().put("audio", audio)).toString())
         }
-        if (pcm.size() + count > MAX_PCM_BYTES) return false
-        pcm.write(bytes, 0, count)
+        if (flac.sampleCount * 2 + count > MAX_PCM_BYTES) return false
+        flac.append(bytes, 0, count)
         return true
     }
 
@@ -129,17 +127,16 @@ class DirectVoiceTransport(
                 if (socket?.send("{\"realtimeInput\":{\"activityEnd\":{}}}") != true) fail("Gemini Live connection closed.")
                 return
             }
-            pcm.toByteArray().also { pcm = ByteArrayOutputStream() }
+            if (flac.sampleCount == 0L) null else flac.finish()
         }
-        if (audio.isEmpty()) { fail("No speech heard. Try again."); return }
+        if (audio == null) { fail("No speech heard. Try again."); return }
         try {
-            val wav = wav(audio)
             val form = MultipartBody.Builder().setType(MultipartBody.FORM)
                 .addFormDataPart("model", "whisper-large-v3-turbo")
                 .addFormDataPart("response_format", "json")
-                .addFormDataPart("file", "recording.wav", wav.toRequestBody("audio/wav".toMediaType())).build()
+                .addFormDataPart("file", "recording.flac", audio.toRequestBody("audio/flac".toMediaType())).build()
             val response = try { execute(Request.Builder().url("https://api.groq.com/openai/v1/audio/transcriptions")
-                .header("Authorization", "Bearer ${config.groqKey}").post(form).build(), "Groq") } finally { wav.fill(0) }
+                .header("Authorization", "Bearer ${config.groqKey}").post(form).build(), "Groq") } finally { audio.fill(0) }
             transcript = response.optString("text").trim()
             if (transcript.isBlank()) { fail("No speech heard. Try again."); return }
             emit(JSONObject().put("type", "final").put("text", transcript))
@@ -216,7 +213,7 @@ class DirectVoiceTransport(
     }
     @Synchronized fun cancel() {
         if (cancelled) return
-        cancelled = true; pcm = ByteArrayOutputStream(); transcript = ""
+        cancelled = true; flac.clear(); transcript = ""
         // Cancellation silences callbacks immediately. TLS socket close may write close_notify bytes, so teardown stays
         // off the caller (often the UI thread). Only this session's call and socket close: the pool is shared, and its
         // warm connections serve the next dictation.
@@ -261,9 +258,5 @@ class DirectVoiceTransport(
             .put("model", "models/$model").put("generationConfig", JSONObject().put("responseModalities", JSONArray().put("TEXT")))
             .put("realtimeInputConfig", JSONObject().put("automaticActivityDetection", JSONObject().put("disabled", true)))
             .put("inputAudioTranscription", JSONObject().put("mode", "SMART").put("languageCodes", JSONArray())))
-        fun wav(pcm: ByteArray): ByteArray = ByteBuffer.allocate(44 + pcm.size).order(ByteOrder.LITTLE_ENDIAN)
-            .put("RIFF".toByteArray()).putInt(36 + pcm.size).put("WAVEfmt ".toByteArray()).putInt(16)
-            .putShort(1).putShort(1).putInt(16000).putInt(32000).putShort(2).putShort(16)
-            .put("data".toByteArray()).putInt(pcm.size).put(pcm).array()
     }
 }

@@ -10,7 +10,6 @@ import org.junit.Assert.*
 import org.junit.Test
 import okio.ByteString.Companion.encodeUtf8
 import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
 class DirectVoiceTransportTest {
     @Test fun finalizedLiveTextBeforeReleaseCompletesThroughFallbackOnce() {
@@ -170,10 +169,15 @@ class DirectVoiceTransportTest {
         val client = OkHttpClient.Builder().addInterceptor { chain ->
             requests.add(chain.request())
             if (chain.request().url.host == "api.groq.com") {
-                val body = chain.request().body as MultipartBody
-                val buffer = okio.Buffer(); body.parts.last().body.writeTo(buffer)
-                val wav = buffer.readByteArray()
-                assertEquals(3200, ByteBuffer.wrap(wav).order(ByteOrder.LITTLE_ENDIAN).getInt(40))
+                val file = (chain.request().body as MultipartBody).parts.last()
+                assertTrue(file.headers!!["Content-Disposition"]!!.contains("filename=\"recording.flac\""))
+                assertEquals("audio/flac", file.body.contentType().toString())
+                val buffer = okio.Buffer(); file.body.writeTo(buffer)
+                val flac = buffer.readByteArray()
+                assertEquals("fLaC", String(flac, 0, 4, Charsets.US_ASCII))
+                // STREAMINFO total samples: the low 36 bits of bytes 21-25. 3200 bytes of 16-bit PCM are 1600 samples.
+                val total = ((flac[21].toLong() and 0x0F) shl 32) or (ByteBuffer.wrap(flac, 22, 4).int.toLong() and 0xFFFFFFFFL)
+                assertEquals(1600L, total)
             }
             val response = responses[requests.lastIndex]
             Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(response.first).message("test")
