@@ -48,7 +48,7 @@ class FieldPolishClientTest {
         val messages = payload.getJSONArray("messages")
         assertEquals(2, messages.length())
         assertEquals("system", messages.getJSONObject(0).getString("role"))
-        assertTrue(messages.getJSONObject(0).getString("content").contains("Preserve proper-noun spellings exactly as entered"))
+        assertEquals(FieldPolishClient.DEFAULT_SYSTEM_PROMPT, messages.getJSONObject(0).getString("content"))
         assertEquals("user", messages.getJSONObject(1).getString("role"))
         assertEquals("  Here is a proper name: QwErty.\n", messages.getJSONObject(1).getString("content"))
         assertFalse(payload.toString().contains("secret"))

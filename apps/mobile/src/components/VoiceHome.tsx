@@ -288,6 +288,8 @@ export function VoiceHome() {
               onSetUpdateEnabled={(enabled) =>
                 void appUpdate.setEnabled(enabled)
               }
+              onCheckUpdate={() => void appUpdate.checkNow()}
+              checkingUpdate={appUpdate.checking}
             />
           )}
           {page === 'history' && (

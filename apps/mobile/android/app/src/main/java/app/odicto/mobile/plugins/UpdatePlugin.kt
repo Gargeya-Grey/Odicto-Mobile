@@ -25,6 +25,8 @@ class UpdatePlugin : Plugin() {
         .put("current", snapshot.current)
         .put("available", snapshot.offer != null)
         .put("version", snapshot.offer?.toString())
+        .put("checkedAt", snapshot.checkedAt)
+        .put("failed", snapshot.failed)
 
     private fun reply(call: PluginCall, message: String, work: suspend () -> UpdateSnapshot) {
         scope.launch {
@@ -35,8 +37,11 @@ class UpdatePlugin : Plugin() {
     /** What is already known, without any network request, so the card can show at once. */
     @PluginMethod fun status(call: PluginCall) = reply(call, "Could not read update status") { UpdateChecker.snapshot(context) }
 
-    /** Asks for the release list if a check is due (once a day); otherwise the same answer as [status]. */
-    @PluginMethod fun check(call: PluginCall) = reply(call, "Could not check for updates") { UpdateChecker.check(context) }
+    /** Asks for the release list if a check is due (hourly), or at once when "force" is set; otherwise the same answer as [status]. */
+    @PluginMethod fun check(call: PluginCall) {
+        val force = call.getBoolean("force") ?: false
+        reply(call, "Could not check for updates") { UpdateChecker.check(context, force = force) }
+    }
 
     @PluginMethod fun setEnabled(call: PluginCall) {
         val enabled = call.getBoolean("enabled") ?: return call.reject("Missing setting")

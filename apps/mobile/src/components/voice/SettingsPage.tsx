@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { modelGroups, modelLabel, MAX_MODEL_ID } from '../../lib/modelGroups';
 import type { Appearance, Point } from '../../lib/theme';
-import { updateSettingLine } from '../../lib/updateCard';
+import { checkResultLine, updateSettingLine } from '../../lib/updateCard';
+import { formatRelativeTime } from '../../lib/relativeTime';
 import type { OnboardingStatus } from '../../native/onboarding';
 import type { UpdateStatus } from '../../native/update';
 import type { OpenRouterModel, VoiceSettings } from '../../native/voice';
@@ -15,6 +16,7 @@ import {
   Segmented,
   Switch,
 } from './controls';
+import { useNow } from './HistoryEntry';
 import { Select, type SelectGroup } from './Select';
 import {
   DEFAULT_OPENROUTER_MODEL,
@@ -185,6 +187,8 @@ export function SettingsPage({
   onSetAppearance,
   appUpdate: updateStatus,
   onSetUpdateEnabled,
+  onCheckUpdate,
+  checkingUpdate,
 }: {
   settings: VoiceSettings | null;
   status: OnboardingStatus | null;
@@ -198,7 +202,10 @@ export function SettingsPage({
   onSetAppearance: (value: Appearance, origin?: Point) => void;
   appUpdate: UpdateStatus | null;
   onSetUpdateEnabled: (enabled: boolean) => void;
+  onCheckUpdate: () => void;
+  checkingUpdate: boolean;
 }) {
+  const now = useNow();
   const [modelSearch, setModelSearch] = useState('');
   const themeOrigin = useRef<Point | undefined>(undefined);
   const provider = draft.value('provider') ?? 'gemini';
@@ -423,7 +430,7 @@ export function SettingsPage({
           <Row
             title="AI system prompt"
             asLabel
-            info="Saved on this device and sent only with AI requests. Leave blank for the default prompt. Maximum 8,000 characters; selected text is limited to 20,000 characters."
+            info="Saved on this device and sent only with AI requests. Leave blank to use Odicto's built-in instructions, which already handle editing and drafting, keep your language, and return only the text to insert. A prompt you write replaces them. Maximum 8,000 characters; selected text is limited to 20,000 characters."
             below={({ id, describedBy }) => (
               <textarea
                 id={id}
@@ -435,7 +442,7 @@ export function SettingsPage({
                 maxLength={8000}
                 rows={4}
                 aria-describedby={describedBy}
-                placeholder="Example: Keep my tone, use British English, and return only the revised text."
+                placeholder="Blank uses the built-in instructions. Example of your own: Reply in British English and keep it brief."
               />
             )}
           />
@@ -565,7 +572,7 @@ export function SettingsPage({
           <Row
             title="Text polish system prompt"
             asLabel
-            info="Leave the prompt blank to preserve the built-in correction rules, including names as written. A model can still make mistakes; review its result. Fields over 20,000 characters are refused rather than partially rewritten."
+            info="Leave the prompt blank to use the built-in rules: fix spelling, grammar, punctuation and capitalization only, keep your wording, tone and language (including Hinglish), and leave names, links, @mentions and emojis alone. A prompt you write replaces them. A model can still make mistakes; review its result. Fields over 20,000 characters are refused rather than partially rewritten."
             below={({ id, describedBy }) => (
               <textarea
                 id={id}
@@ -577,7 +584,7 @@ export function SettingsPage({
                 maxLength={8000}
                 rows={4}
                 aria-describedby={describedBy}
-                placeholder="Blank uses the built-in grammar, spelling, and capitalization instruction."
+                placeholder="Blank uses the built-in proofreading rules."
               />
             )}
           />
@@ -682,6 +689,20 @@ export function SettingsPage({
                   checked={updateStatus.enabled}
                   onChange={onSetUpdateEnabled}
                 />
+              )}
+            />
+            <Row
+              title="Check now"
+              secondary={checkResultLine(updateStatus, now, formatRelativeTime)}
+              trailing={() => (
+                <button
+                  type="button"
+                  className="voice-link"
+                  disabled={checkingUpdate || !updateStatus.enabled}
+                  onClick={onCheckUpdate}
+                >
+                  {checkingUpdate ? 'Checking…' : 'Check'}
+                </button>
               )}
             />
             {updateStatus.current && (

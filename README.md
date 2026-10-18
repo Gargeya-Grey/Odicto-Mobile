@@ -17,7 +17,7 @@ Settings includes touch feedback, an optional text preview, provider configurati
 3. Open Odicto, enable the Odicto keyboard, and grant the microphone permission.
 4. Add your own [Groq API key](https://console.groq.com/keys) in **Settings → Connections**.
 
-**Staying up to date.** When you open Odicto it checks, at most once a day, whether a newer release exists and shows an **Odicto X is available** card on Home. Tap **Download**, open the file when it finishes, and Android updates Odicto in place; your keys and history stay. This is the only request Odicto makes on its own, and it sends nothing about you. Turn it off in **Settings → Updates**.
+**Staying up to date.** When you open Odicto it checks, at most once an hour, whether a newer release exists and shows an **Odicto X is available** card on Home. Tap **Download**, open the file when it finishes, and Android updates Odicto in place; your keys and history stay. This is the only request Odicto makes on its own, and it sends nothing about you. Turn it off in **Settings → Updates**.
 
 Already have a build you installed from Android Studio or USB? Android will refuse this APK because the signing key differs. Uninstalling the old build first deletes its saved keys, settings and history, so note your keys before you do it.
 

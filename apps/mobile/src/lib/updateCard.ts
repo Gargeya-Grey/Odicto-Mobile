@@ -17,6 +17,25 @@ export function describeUpdate(
 /** The line under "Check for updates" in Settings. */
 export function updateSettingLine(enabled: boolean): string {
   return enabled
-    ? 'Once a day, when you open Odicto.'
+    ? 'When you open Odicto, about once an hour.'
     : 'Off. Odicto will not look for new versions.';
+}
+
+/** The line under "Check now": what the last look found, in plain words. */
+export function checkResultLine(
+  status: UpdateStatus,
+  now: number,
+  formatAgo: (timestamp: number, now: number) => string,
+): string {
+  if (!status.enabled) return 'Turn on Check for updates first.';
+  if (status.failed)
+    return status.checkedAt > 0
+      ? `Could not reach GitHub just now. Last checked ${formatAgo(status.checkedAt, now)}.`
+      : 'Could not reach GitHub. Check your connection and try again.';
+  if (status.checkedAt <= 0) return 'Not checked yet.';
+  const when = formatAgo(status.checkedAt, now);
+  const ago = when === 'Just now' ? 'just now' : when;
+  return status.available
+    ? `Odicto ${status.version} is available. Checked ${ago}.`
+    : `You have the latest version. Checked ${ago}.`;
 }

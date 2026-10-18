@@ -4,9 +4,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class UpdatePolicyTest {
-    private val day = UpdatePolicy.CHECK_INTERVAL_MS
-    private val hour = UpdatePolicy.RETRY_INTERVAL_MS
-    private val now = 10 * day
+    private val interval = UpdatePolicy.CHECK_INTERVAL_MS
+    private val retry = UpdatePolicy.RETRY_INTERVAL_MS
+    private val now = 10 * interval
+
+    @Test fun theIntervalIsAnHourAndTheRetryFifteenMinutes() {
+        assertEquals(60L * 60 * 1000, UpdatePolicy.CHECK_INTERVAL_MS)
+        assertEquals(15L * 60 * 1000, UpdatePolicy.RETRY_INTERVAL_MS)
+    }
 
     @Test fun neverAsksWhileTurnedOff() {
         assertFalse(UpdatePolicy.due(false, now, 0L, 0L))
@@ -16,22 +21,22 @@ class UpdatePolicyTest {
         assertTrue(UpdatePolicy.due(true, now, 0L, 0L))
     }
 
-    @Test fun asksAtMostOnceADayAfterASuccess() {
-        assertFalse(UpdatePolicy.due(true, now, now - day + 1, now - day + 1))
-        assertTrue(UpdatePolicy.due(true, now, now - day, now - day))
-        assertTrue(UpdatePolicy.due(true, now, now - 3 * day, now - 3 * day))
+    @Test fun asksAtMostOnceAnIntervalAfterASuccess() {
+        assertFalse(UpdatePolicy.due(true, now, now - interval + 1, now - interval + 1))
+        assertTrue(UpdatePolicy.due(true, now, now - interval, now - interval))
+        assertTrue(UpdatePolicy.due(true, now, now - 3 * interval, now - 3 * interval))
     }
 
-    @Test fun waitsAnHourAfterAFailureButNotADay() {
-        val checked = now - 3 * day
-        assertFalse(UpdatePolicy.due(true, now, checked, now - hour + 1))
-        assertTrue(UpdatePolicy.due(true, now, checked, now - hour))
-        assertTrue("a first-ever failure still retries after an hour", UpdatePolicy.due(true, now, 0L, now - hour))
+    @Test fun waitsAShortRetryAfterAFailureNotAFullInterval() {
+        val checked = now - 3 * interval
+        assertFalse(UpdatePolicy.due(true, now, checked, now - retry + 1))
+        assertTrue(UpdatePolicy.due(true, now, checked, now - retry))
+        assertTrue("a first-ever failure still retries after an retry", UpdatePolicy.due(true, now, 0L, now - retry))
         assertFalse(UpdatePolicy.due(true, now, 0L, now - 1))
     }
 
     @Test fun aClockThatMovedBackwardsDoesNotBlockChecking() {
-        assertTrue(UpdatePolicy.due(true, now, now + 5 * day, now + 5 * day))
+        assertTrue(UpdatePolicy.due(true, now, now + 5 * interval, now + 5 * interval))
     }
 
     private val installed = ReleaseVersion(1, 1, 1)

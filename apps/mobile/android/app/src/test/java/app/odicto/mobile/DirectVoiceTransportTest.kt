@@ -74,7 +74,7 @@ class DirectVoiceTransportTest {
             val body = JSONObject(buffer.readUtf8())
             assertEquals("Write a greeting", body.getJSONArray("contents").getJSONObject(0).getJSONArray("parts").getJSONObject(0).getString("text"))
             val system = body.getJSONObject("systemInstruction").getJSONArray("parts").getJSONObject(0).getString("text")
-            if (prompt.isEmpty()) assertTrue(system.startsWith("Execute the user's spoken instruction")) else assertEquals(prompt, system)
+            if (prompt.isEmpty()) assertTrue(system.startsWith(DirectVoiceTransport.ANSWER_PROMPT)) else assertEquals(prompt, system)
         }
     }
     @Test fun aiRejectsOversizedContextBeforeRecording() {
