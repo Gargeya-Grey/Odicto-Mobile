@@ -8,7 +8,30 @@
       href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%2218 18 72 72%22 fill=%22none%22 stroke=%22%238EDCBB%22 stroke-width=%227%22 stroke-linecap=%22round%22%3E%3Cline x1=%2226.00%22 y1=%2269.00%22 x2=%2226.00%22 y2=%2239.00%22/%3E%3Cline x1=%2232.71%22 y1=%2265.88%22 x2=%2243.29%22 y2=%2242.12%22/%3E%3Cline x1=%2241.83%22 y1=%2261.36%22 x2=%2258.17%22 y2=%2246.64%22/%3E%3Cline x1=%2252.49%22 y1=%2257.09%22 x2=%2271.51%22 y2=%2250.91%22/%3E%3Cline x1=%2265.00%22 y1=%2254.00%22 x2=%2283.00%22 y2=%2254.00%22/%3E%3C/svg%3E"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#17191C" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#17191c" />
+    <script>
+      // Paint the saved theme before any CSS, so there is no flash. Same rules as src/lib/theme.ts.
+      (function () {
+        try {
+          var saved = localStorage.getItem('odicto-appearance');
+          var dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var theme =
+            saved === 'light' || saved === 'dark'
+              ? saved
+              : dark
+                ? 'dark'
+                : 'light';
+          document.documentElement.dataset.theme = theme;
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta)
+            meta.setAttribute(
+              'content',
+              theme === 'dark' ? '#17191c' : '#f3f6f2',
+            );
+        } catch (error) {}
+      })();
+    </script>
     <title>Odicto — Universal System Voice OS</title>
   </head>
   <body>

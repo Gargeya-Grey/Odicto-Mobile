@@ -22,21 +22,22 @@ internal object PressSurface {
     private const val PRESS_IN_MS = 80L
     private const val PRESS_OUT_MS = 250L
     private const val SELECT_MS = 200L
-    private const val PRESS_FILL = 0x1FFFFFFF
-    private const val SELECTED_FILL = 0xFF282B2E.toInt()
 
     /** A square-ish icon button: soft rounded fill, plus a quiet fill that stays while it is selected. */
     fun icon(context: Context): Drawable {
         val d = context.resources.displayMetrics.density
         // The tile hugs the icon: a cell can be over 100dp wide on the tool row, and a bar that wide stops looking
         // like a button.
-        return SoftPress(radius = 13f * d, insetH = 4f * d, insetV = 6f * d, press = PRESS_FILL, selected = SELECTED_FILL, maxWidth = 56f * d)
+        return SoftPress(
+            radius = 13f * d, insetH = 4f * d, insetV = 6f * d,
+            press = context.getColor(R.color.odicto_press_fill), selected = context.getColor(R.color.odicto_selected_fill), maxWidth = 56f * d,
+        )
     }
 
     /** A text or emoji tile, or a card: [radiusDp] corners, optionally with a resting [base] fill. */
     fun tile(context: Context, radiusDp: Float, base: Int = 0, insetDp: Float = 0f, insetVDp: Float = insetDp): Drawable {
         val d = context.resources.displayMetrics.density
-        return SoftPress(radius = radiusDp * d, insetH = insetDp * d, insetV = insetVDp * d, press = PRESS_FILL, base = base)
+        return SoftPress(radius = radiusDp * d, insetH = insetDp * d, insetV = insetVDp * d, press = context.getColor(R.color.odicto_press_fill), base = base)
     }
 
     /** Icon-style controls press in to 0.9 and spring back. */

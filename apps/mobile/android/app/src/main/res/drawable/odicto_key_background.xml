@@ -1,25 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Key surface matching the existing Odicto keyboard palette. -->
+<!-- Notice banner surface, from the day/night palette. -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_pressed="true">
         <shape android:shape="rectangle">
-            <solid android:color="#303438" />
+            <solid android:color="@color/odicto_panel_card_selected" />
             <corners android:radius="10dp" />
-            <stroke android:width="1dp" android:color="#4A5055" />
+            <stroke android:width="1dp" android:color="@color/odicto_popup_edge" />
         </shape>
     </item>
     <item android:state_enabled="false">
         <shape android:shape="rectangle">
-            <solid android:color="#212326" />
+            <solid android:color="@color/odicto_panel_card" />
             <corners android:radius="10dp" />
-            <stroke android:width="1dp" android:color="#282B2E" />
+            <stroke android:width="1dp" android:color="@color/odicto_surface_raised" />
         </shape>
     </item>
     <item>
         <shape android:shape="rectangle">
-            <solid android:color="#282B2E" />
+            <solid android:color="@color/odicto_surface_raised" />
             <corners android:radius="10dp" />
-            <stroke android:width="1dp" android:color="#3B4044" />
+            <stroke android:width="1dp" android:color="@color/odicto_divider" />
         </shape>
     </item>
 </selector>

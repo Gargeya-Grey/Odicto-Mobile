@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The logo mark ("turning strokes"), drawn in the accent colour of the current day/night palette. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="72dp"
+    android:height="72dp"
+    android:viewportWidth="72"
+    android:viewportHeight="72">
+    <path android:pathData="M8,51 L8,21" android:strokeColor="@color/odicto_accent" android:strokeWidth="7" android:strokeLineCap="round" />
+    <path android:pathData="M14.71,47.88 L25.29,24.12" android:strokeColor="@color/odicto_accent" android:strokeWidth="7" android:strokeLineCap="round" />
+    <path android:pathData="M23.83,43.36 L40.17,28.64" android:strokeColor="@color/odicto_accent" android:strokeWidth="7" android:strokeLineCap="round" />
+    <path android:pathData="M34.49,39.09 L53.51,32.91" android:strokeColor="@color/odicto_accent" android:strokeWidth="7" android:strokeLineCap="round" />
+    <path android:pathData="M47,36 L65,36" android:strokeColor="@color/odicto_accent" android:strokeWidth="7" android:strokeLineCap="round" />
+</vector>

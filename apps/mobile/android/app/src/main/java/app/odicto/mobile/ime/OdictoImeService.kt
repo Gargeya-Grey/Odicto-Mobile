@@ -25,6 +25,8 @@ import app.odicto.mobile.dictation.*
 import app.odicto.mobile.overlay.*
 import app.odicto.mobile.storage.SecureCredentialStore
 import app.odicto.mobile.storage.VoicePreferences
+import app.odicto.mobile.theme.AppearanceStore
+import app.odicto.mobile.theme.OdictoTheme
 import kotlinx.coroutines.*
 
 class OdictoImeService : InputMethodService() {
@@ -89,11 +91,54 @@ class OdictoImeService : InputMethodService() {
         override fun writeLive(text: String, finish: Boolean) = this@OdictoImeService.writeLive(text, finish)
         override fun endLive() = this@OdictoImeService.endLive()
     }
+    /** Whether the keyboard is built for the night palette, and the context that builds it. See [OdictoTheme]. */
+    private var uiNight: Boolean? = null
+    private var uiContext: Context? = null
+
+    /** The context every keyboard view is built from: day or night colours, whatever the phone's own setting is. */
+    private fun ui(): Context = uiContext ?: rebuildUiContext().let { uiContext!! }
+
+    /** Returns true when the palette changed, so the keyboard must be rebuilt. */
+    private fun rebuildUiContext(): Boolean {
+        val night = OdictoTheme.isNight(this)
+        if (night == uiNight && uiContext != null) return false
+        val changed = uiNight != null
+        uiNight = night
+        uiContext = OdictoTheme.themed(this, night, R.style.OdictoImeTheme)
+        return changed
+    }
+
+    /**
+     * The light/dark choice (or the phone's setting, when the choice is "system") changed while the keyboard
+     * exists: rebuild it from the new palette and repeat what showing it does. The expanded state and any open
+     * panel start over; that is the cost of a theme switch, and it only happens when the user flips it.
+     */
+    private fun applyAppearance() {
+        if (!rebuildUiContext() || inputRoot == null) return
+        val visible = DictationCoordinator.keyboardVisible.value
+        setInputView(onCreateInputView())
+        if (!visible) return
+        paintNavigationStrip()
+        control?.render(VoiceSession.state.value)
+        renderTopStatus()
+        controller?.onExternalEdit(selectionStart, selectionEnd)
+        startRecoveryCountdown()
+        inputRoot?.post { publishKeyboardBounds() }
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // The phone's day/night setting may have flipped, which matters while the choice is "system".
+        applyAppearance()
+    }
+
     override fun onCreate() {
         // Before super: InputMethodService creates its window from this theme.
         setTheme(R.style.OdictoImeTheme)
         super.onCreate()
+        AppearanceStore.initialize(this)
         VoicePreferences.initialize(this); DictationCoordinator.registerTarget(target)
+        scope.launch { AppearanceStore.state.collect { applyAppearance() } }
         clipboardCapture = ClipboardCapture(this, scope).also { capture ->
             capture.onFreshClip = { text, token, copiedAt ->
                 if (pasteSuggestion.offer(text, token, copiedAt)) controller?.refreshPaste()
@@ -143,17 +188,19 @@ class OdictoImeService : InputMethodService() {
     }
     /**
      * The system draws the IME's navigation strip and paints it black unless the window draws its
-     * own bar backgrounds. Graphite keeps the strip continuous with the keyboard surface.
+     * own bar backgrounds. The keyboard's own surface colour keeps the strip continuous with it.
      */
     private fun paintNavigationStrip() {
         val keyboardWindow = window?.window ?: return
         runCatching {
             keyboardWindow.addFlags(android.view.WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
             @Suppress("DEPRECATION")
-            keyboardWindow.navigationBarColor = getColor(R.color.odicto_keyboard_background)
+            keyboardWindow.navigationBarColor = ui().getColor(R.color.odicto_keyboard_background)
             if (Build.VERSION.SDK_INT >= 29) keyboardWindow.isNavigationBarContrastEnforced = false
+            // Dark navigation icons on the light keyboard, light icons on the dark one.
+            val lightBars = if (uiNight == true) 0 else android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
             if (Build.VERSION.SDK_INT >= 30) keyboardWindow.insetsController?.setSystemBarsAppearance(
-                0, android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS)
+                lightBars, android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS)
         }
     }
 
@@ -185,7 +232,8 @@ class OdictoImeService : InputMethodService() {
         controller?.dispose()
         expansion?.dispose()
         stopRecoveryCountdown()
-        val root = layoutInflater.inflate(R.layout.ime_keyboard, null)
+        val ui = ui()
+        val root = android.view.LayoutInflater.from(ui).inflate(R.layout.ime_keyboard, null)
         inputRoot = root
         root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
             root.post { if (inputRoot === root) publishKeyboardBounds() }
@@ -196,7 +244,7 @@ class OdictoImeService : InputMethodService() {
         root.findViewById<View>(R.id.ime_content).layoutParams = LinearLayout.LayoutParams(-1, -2, 1f)
         attachRecoveryControls(root)
         val row = root.findViewById<FrameLayout>(R.id.ime_top_row)
-        val voice = VoiceControlView(this, true)
+        val voice = VoiceControlView(ui, true)
         var topCell = 48
         fun voiceParams(width: Int, height: Int) = FrameLayout.LayoutParams(width, height, android.view.Gravity.TOP or android.view.Gravity.END).apply {
             marginEnd = voice.dp(topCell)
@@ -211,7 +259,7 @@ class OdictoImeService : InputMethodService() {
         }
         androidx.core.view.ViewCompat.requestApplyInsets(root)
         polishButton = root.findViewById(R.id.ime_polish)
-        val busyDrawable = PolishBusyDrawable(resources.displayMetrics.density) {
+        val busyDrawable = PolishBusyDrawable(resources.displayMetrics.density, ui.getColor(R.color.odicto_accent)) {
             if (Build.VERSION.SDK_INT >= 26) android.animation.ValueAnimator.areAnimatorsEnabled()
             else android.provider.Settings.Global.getFloat(contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) > 0f
         }
@@ -370,16 +418,18 @@ class OdictoImeService : InputMethodService() {
 
     private fun attachRecoveryControls(root: View) {
         recoveryCovered = emptyMap()
-        val row = LinearLayout(this).apply {
+        val ui = root.context
+        val accent = ui.getColor(R.color.odicto_accent)
+        val row = LinearLayout(ui).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER
-            setBackgroundColor(0xFF17191C.toInt())
+            setBackgroundColor(ui.getColor(R.color.odicto_keyboard_background))
             elevation = 8 * resources.displayMetrics.density
             isClickable = true
             visibility = View.GONE
         }
         val touchHeight = (48 * resources.displayMetrics.density).toInt()
-        val copy = Button(this).apply {
+        val copy = Button(ui).apply {
             text = "Copy completed result"
             contentDescription = "Copy completed result"
             isAllCaps = false
@@ -387,7 +437,7 @@ class OdictoImeService : InputMethodService() {
             minimumWidth = 0
             minWidth = 0
             minimumHeight = touchHeight
-            setTextColor(android.graphics.Color.rgb(142, 220, 187))
+            setTextColor(accent)
             setOnClickListener {
                 val id = row.tag as? Long ?: return@setOnClickListener
                 val copied = polish?.copyCompletedResult(id) { text ->
@@ -409,14 +459,14 @@ class OdictoImeService : InputMethodService() {
                 renderRecovery()
             }
         }
-        val countdown = TextView(this).apply {
+        val countdown = TextView(ui).apply {
             textSize = 12f
-            setTextColor(android.graphics.Color.rgb(142, 220, 187))
+            setTextColor(accent)
             gravity = android.view.Gravity.CENTER
             // Do not announce every tick as a live-region update.
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_NONE
         }
-        val dismiss = Button(this).apply {
+        val dismiss = Button(ui).apply {
             text = "Dismiss"
             contentDescription = "Dismiss completed result"
             isAllCaps = false
@@ -424,7 +474,7 @@ class OdictoImeService : InputMethodService() {
             minimumWidth = 0
             minWidth = 0
             minimumHeight = touchHeight
-            setTextColor(android.graphics.Color.rgb(142, 220, 187))
+            setTextColor(accent)
             setOnClickListener {
                 (row.tag as? Long)?.let { polish?.dismissCompletedResult(it) }
                 renderRecovery()

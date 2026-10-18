@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { modelGroups, modelLabel, MAX_MODEL_ID } from '../../lib/modelGroups';
+import type { Appearance, Point } from '../../lib/theme';
 import { updateSettingLine } from '../../lib/updateCard';
 import type { OnboardingStatus } from '../../native/onboarding';
 import type { UpdateStatus } from '../../native/update';
@@ -28,6 +29,7 @@ const SECTIONS = [
   { id: 'voice-ai', label: 'AI answers' },
   { id: 'voice-polish', label: 'Text polish' },
   { id: 'voice-live', label: 'Live' },
+  { id: 'voice-appearance', label: 'Appearance' },
   { id: 'voice-updates', label: 'Updates' },
   { id: 'voice-setup', label: 'Android setup' },
 ] as const;
@@ -179,6 +181,8 @@ export function SettingsPage({
   models,
   loadingModels,
   onRefreshStatus,
+  appearance,
+  onSetAppearance,
   appUpdate: updateStatus,
   onSetUpdateEnabled,
 }: {
@@ -190,10 +194,13 @@ export function SettingsPage({
   models: OpenRouterModel[];
   loadingModels: boolean;
   onRefreshStatus: () => Promise<void> | void;
+  appearance: Appearance;
+  onSetAppearance: (value: Appearance, origin?: Point) => void;
   appUpdate: UpdateStatus | null;
   onSetUpdateEnabled: (enabled: boolean) => void;
 }) {
   const [modelSearch, setModelSearch] = useState('');
+  const themeOrigin = useRef<Point | undefined>(undefined);
   const provider = draft.value('provider') ?? 'gemini';
   const model = draft.value('model') ?? '';
   const polishModel = draft.value('polishModel') ?? 'poolside/laguna-xs-2.1';
@@ -610,6 +617,50 @@ export function SettingsPage({
         <Footer>
           Live streams speech directly to Gemini and updates words as you speak.
         </Footer>
+      </section>
+
+      <section
+        className="voice-section"
+        id="voice-appearance"
+        aria-labelledby="voice-appearance-title"
+      >
+        <SectionLabel id="voice-appearance-title" title="Appearance" />
+        <Group>
+          <Row
+            title="Theme"
+            secondary="Matches your phone by default."
+            info="The navbar button switches between light and dark. Choose System here to follow your phone again. The keyboard and floating microphone follow this setting too."
+            below={({ describedBy }) => (
+              // The new theme grows from the segment that was tapped.
+              <div
+                onClickCapture={(event) => {
+                  const rect = (event.target as Element)
+                    .closest('button')
+                    ?.getBoundingClientRect();
+                  if (rect)
+                    themeOrigin.current = {
+                      x: rect.left + rect.width / 2,
+                      y: rect.top + rect.height / 2,
+                    };
+                }}
+              >
+                <Segmented
+                  label="Theme"
+                  describedBy={describedBy}
+                  value={appearance}
+                  options={[
+                    { value: 'system', label: 'System' },
+                    { value: 'light', label: 'Light' },
+                    { value: 'dark', label: 'Dark' },
+                  ]}
+                  onChange={(value) =>
+                    onSetAppearance(value, themeOrigin.current)
+                  }
+                />
+              </div>
+            )}
+          />
+        </Group>
       </section>
 
       {updateStatus && (

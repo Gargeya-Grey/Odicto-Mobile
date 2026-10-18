@@ -1,10 +1,44 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Keyboard palette: the EduDojo dark theme. Graphite surfaces, warm off-white text, muted jade. -->
+<!-- Odicto native palette, day. Sage-tinted off-white surfaces, white keys, deep jade accent. The night file has the same names; the IME and overlay pick one by a night override on their own context, so the in-app light/dark choice works even when it differs from the phone. -->
 <resources>
-    <color name="odicto_keyboard_background">#FF17191C</color>
-    <color name="odicto_accent">#FF8EDCBB</color>
-    <color name="odicto_toolbar_icon">#FFE7E5DF</color>
-    <color name="odicto_text_strong">#FFF2F2EC</color>
-    <color name="odicto_text_muted">#FFB2B5B5</color>
-    <color name="odicto_divider">#FF3B4044</color>
+    <color name="odicto_canvas">#FFF3F6F2</color>
+    <color name="odicto_keyboard_background">#FFE6EAE5</color>
+    <color name="odicto_accent">#FF1F6B54</color>
+    <color name="odicto_toolbar_icon">#FF2C3631</color>
+    <color name="odicto_text_strong">#FF131B17</color>
+    <color name="odicto_text_muted">#FF566159</color>
+    <color name="odicto_divider">#FFC6CEC6</color>
+    <color name="odicto_panel_card">#FFFFFFFF</color>
+    <color name="odicto_panel_card_selected">#FFD9E0D9</color>
+    <color name="odicto_panel_pill_selected">#FFD9E0D9</color>
+    <color name="odicto_surface_raised">#FFEDF1EC</color>
+    <color name="odicto_selected_fill">#FFDDE5DD</color>
+    <color name="odicto_key_normal">#FFFFFFFF</color>
+    <color name="odicto_key_function">#FFD0D7D0</color>
+    <color name="odicto_key_pressed">#FFBAC3BB</color>
+    <color name="odicto_key_accent">#FF2A745D</color>
+    <color name="odicto_on_accent">#FFFFFFFF</color>
+    <color name="odicto_key_disabled">#66FFFFFF</color>
+    <color name="odicto_key_label">#FF1B2420</color>
+    <color name="odicto_key_label_disabled">#FF98A29B</color>
+    <color name="odicto_popup_fill">#FFFFFFFF</color>
+    <color name="odicto_popup_edge">#FFBAC3BB</color>
+    <color name="odicto_bubble_fill">#F2FFFFFF</color>
+    <color name="odicto_bubble_shade">#26000000</color>
+    <color name="odicto_strip_fill">#F2FFFFFF</color>
+    <color name="odicto_strip_selected">#F2BFE3D1</color>
+    <color name="odicto_strip_selected_ink">#FF0F2A20</color>
+    <color name="odicto_space_tick">#FF8B958E</color>
+    <color name="odicto_space_cue">#FFA5AEA7</color>
+    <color name="odicto_press_fill">#14000000</color>
+    <color name="odicto_hairline">#14000000</color>
+    <color name="odicto_card_stroke">#1F000000</color>
+    <color name="odicto_danger">#FFC4443A</color>
+    <color name="odicto_on_danger">#FFFFFFFF</color>
+    <color name="odicto_success">#FF8EDCBB</color>
+    <color name="odicto_on_success">#FF17191C</color>
+    <color name="odicto_paste_fill">#FFE1F0E8</color>
+    <color name="odicto_paste_stroke">#FFA8D3BF</color>
+    <color name="odicto_paste_close">#FF7B867F</color>
+    <color name="odicto_switch_track_on">#661F6B54</color>
 </resources>

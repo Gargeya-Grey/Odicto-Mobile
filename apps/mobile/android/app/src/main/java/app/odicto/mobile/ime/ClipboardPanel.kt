@@ -151,7 +151,7 @@ internal class ClipboardPanelBinding(
         minimumHeight = dp(48)
         setPadding(dp(8), 0, dp(8), 0)
         thumbTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(accent, muted))
-        trackTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(0x668EDCBB, context.getColor(R.color.odicto_divider)))
+        trackTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(context.getColor(R.color.odicto_switch_track_on), context.getColor(R.color.odicto_divider)))
         setOnCheckedChangeListener { _, enabled -> if (!updating) actions.automaticCapture(enabled) }
     }
     private val privacy = icon("Local only. Show clipboard privacy details", R.drawable.odicto_clipboard_info) {

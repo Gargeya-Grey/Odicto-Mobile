@@ -11,6 +11,7 @@ import app.odicto.mobile.MainActivity
 import app.odicto.mobile.dictation.*
 import app.odicto.mobile.ime.Haptics
 import app.odicto.mobile.ime.PressSurface
+import app.odicto.mobile.R
 import app.odicto.mobile.storage.VoicePreferences
 import kotlin.math.*
 
@@ -18,6 +19,13 @@ import kotlin.math.*
 class VoiceControlView(context: Context, private val keyboard: Boolean = false) : FrameLayout(context) {
     private val density = resources.displayMetrics.density
     fun dp(value: Int) = (value * density).roundToInt()
+    // From this view's own context, which is built for the day or night palette; a theme change rebuilds the view.
+    private val cardFill = context.getColor(R.color.odicto_panel_card)
+    private val cardStroke = context.getColor(R.color.odicto_card_stroke)
+    private val raisedFill = context.getColor(R.color.odicto_surface_raised)
+    private val jadeFill = context.getColor(R.color.odicto_key_accent)
+    private val accentInk = context.getColor(R.color.odicto_accent)
+    private val strongInk = context.getColor(R.color.odicto_text_strong)
     /** (window width px, window height px, microphone offset from the window's left edge px). */
     var resize: ((Int, Int, Int) -> Unit)? = null
     // Keyboard fails closed until the owning IME supplies its tap-time editor guard.
@@ -80,14 +88,14 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
     private var lastLayout = ""
     private val panel = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(12), dp(16), dp(12))
-        background = round(0xFF212326.toInt(), 20f)
+        background = round(cardFill, 20f)
     }
     // The card has a fixed height, so its text follows the user's font size only up to 1.3x: beyond that it would
     // clip. The keyboard header's status line has no such limit and keeps the full scale.
     private val cardScale = resources.configuration.fontScale.coerceIn(1f, 1.3f)
     private fun cardText(sp: Float) = sp * density * cardScale
-    private val status = TextView(context).apply { setTextColor(0xFF8EDCBB.toInt()); setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, cardText(12f)); typeface = Typeface.create("sans-serif-medium", 0); accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
-    private val preview = TextView(context).apply { setTextColor(Color.WHITE); setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, cardText(15f)); maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, dp(5), 0, 0) }
+    private val status = TextView(context).apply { setTextColor(accentInk); setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, cardText(12f)); typeface = Typeface.create("sans-serif-medium", 0); accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
+    private val preview = TextView(context).apply { setTextColor(strongInk); setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, cardText(15f)); maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, dp(5), 0, 0) }
     private val mic = Icon(context, "mic", "Hold to speak. Double tap for options.")
     private val lock = Icon(context, "lock", "Lock recording hands-free")
     private val raw = Icon(context, "raw", "Raw transcription with Groq")
@@ -97,9 +105,9 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
     private val back = Icon(context, "back", "Collapse voice controls")
     private val cancel = Icon(context, "cancel", "Cancel recording")
     private val copy = Icon(context, "copy", "Copy available text")
-    private val pill = View(context).apply { background = round(0xFF212326.toInt(), 36f) }
+    private val pill = View(context).apply { background = round(cardFill, 36f) }
     /** Keyboard header only: the jade chip behind the active mode. It glides to a new mode instead of jumping. */
-    private val indicator = View(context).apply { background = round(0xFF2A745D.toInt(), 13f); visibility = GONE }
+    private val indicator = View(context).apply { background = round(jadeFill, 13f); visibility = GONE }
     private var indicatorIndex = -1
     private val beginHold = Runnable {
         if (moving || ui.busy) return@Runnable
@@ -184,7 +192,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         }
         render(ui)
     }
-    private fun round(color: Int, radius: Float) = android.graphics.drawable.GradientDrawable().apply { setColor(color); cornerRadius = dp(radius.toInt()).toFloat(); setStroke(dp(1), 0x24FFFFFF) }
+    private fun round(color: Int, radius: Float) = android.graphics.drawable.GradientDrawable().apply { setColor(color); cornerRadius = dp(radius.toInt()).toFloat(); setStroke(dp(1), cardStroke) }
     private fun feedback(kind: Int) {
         if (!isShown || !isAttachedToWindow) return
         val emphasis = when (kind) {
@@ -332,7 +340,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         if (hasMessage && !compactKeyboard && hasPanelSpace) {
             panel.visibility = if (showStatus) View.VISIBLE else View.GONE
             // Without a transcript, status shares the controls row instead of reserving a card.
-            panel.background = if (compactStatus) null else round(0xFF212326.toInt(), 20f)
+            panel.background = if (compactStatus) null else round(cardFill, 20f)
             panel.setPadding(dp(if (compactStatus) 4 else 16), dp(if (compactStatus) 0 else 12), dp(if (compactStatus) 4 else 16), dp(if (compactStatus) 0 else 12))
             if (compactStatus) {
                 // Beside the controls, shrinking to the room that side has instead of pushing the microphone.
@@ -456,7 +464,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         val mode = if (value.busy) value.mode else VoicePreferences.state.value.mode
         val modes = if (keyboardCovered) View.GONE else View.VISIBLE
         pill.visibility = modes
-        pill.background = round(0xFF282B2E.toInt(), 16f)
+        pill.background = round(raisedFill, 16f)
         place(pill, cell + 2, 8, cell * 3 - 4, 32)
         val modeIndex = listOf("raw", "ai", "live").indexOf(mode)
         indicator.visibility = if (modes == View.VISIBLE && modeIndex >= 0) View.VISIBLE else View.GONE
@@ -591,6 +599,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
     override fun onDetachedFromWindow() { removeCallbacks(collapseTimer); removeCallbacks(beginHold); super.onDetachedFromWindow() }
 
     private class Icon(context: Context, kind: String, description: String) : View(context) {
+        private val palette = InkColors(context)
         var compactSurface = false
         var kind = kind
             set(value) {
@@ -623,7 +632,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
          */
         private fun ring(c: Canvas, cx: Float, cy: Float, radius: Float) {
             val style = paint.style; val color = paint.color; val width = paint.strokeWidth
-            paint.style = Paint.Style.STROKE; paint.strokeWidth = 1.5f * density; paint.color = HALO; paint.alpha = 150
+            paint.style = Paint.Style.STROKE; paint.strokeWidth = 1.5f * density; paint.color = palette.halo; paint.alpha = 150
             c.drawCircle(cx, cy, radius - 0.75f * density, paint)
             paint.style = style; paint.color = color; paint.strokeWidth = width
         }
@@ -639,7 +648,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
             when (kind) {
                 "raw", "ai", "live" -> {
                     // The jade chip behind the active mode is the sliding indicator; only the label changes here.
-                    paint.color = if (highlighted) ON_ACCENT else MUTED
+                    paint.color = if (highlighted) palette.onAccent else palette.muted
                     paint.textSize = 13f * resources.displayMetrics.scaledDensity.coerceAtMost(density * 1.15f)
                     paint.typeface = MEDIUM
                     paint.textAlign = Paint.Align.CENTER
@@ -651,33 +660,33 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
                     // was clipped on its right edge by the Polish button beside it.
                     val radius = minOf(17f * density, width / 2f - density)
                     if (kind == "finish" && meter > 0f) {
-                        paint.color = HALO; paint.alpha = (60 + meter * 120).toInt().coerceAtMost(255)
+                        paint.color = palette.halo; paint.alpha = (60 + meter * 120).toInt().coerceAtMost(255)
                         c.drawCircle(cx, cy, radius + (2f + meter * 4f) * density, paint)
                         paint.alpha = 255
                     }
-                    paint.color = if (kind == "wait") SURFACE else ACCENT
+                    paint.color = if (kind == "wait") palette.surface else palette.accent
                     c.drawCircle(cx, cy, radius, paint)
                     if (kind != "wait") ring(c, cx, cy, radius)
                     when (kind) {
-                        "mic" -> icon(app.odicto.mobile.R.drawable.odicto_ic_mic, 20f, ON_ACCENT)
-                        "finish" -> icon(app.odicto.mobile.R.drawable.odicto_ic_stop, 20f, ON_ACCENT)
+                        "mic" -> icon(app.odicto.mobile.R.drawable.odicto_ic_mic, 20f, palette.onAccent)
+                        "finish" -> icon(app.odicto.mobile.R.drawable.odicto_ic_stop, 20f, palette.onAccent)
                         else -> {
                             val animate = Build.VERSION.SDK_INT < 26 || ValueAnimator.areAnimatorsEnabled()
                             val angle = if (animate) (android.os.SystemClock.uptimeMillis() % 1000) * 0.36f else -90f
-                            paint.style = Paint.Style.STROKE; paint.strokeWidth = 2f * density; paint.strokeCap = Paint.Cap.ROUND; paint.color = HALO
+                            paint.style = Paint.Style.STROKE; paint.strokeWidth = 2f * density; paint.strokeCap = Paint.Cap.ROUND; paint.color = palette.halo
                             val r = 8f * density
                             c.drawArc(cx - r, cy - r, cx + r, cy + r, angle, 270f, false, paint)
                             if (animate && isShown) postInvalidateOnAnimation()
                         }
                     }
                 }
-                "settings" -> icon(app.odicto.mobile.R.drawable.odicto_ic_settings, 20f, MUTED)
-                "copy" -> icon(app.odicto.mobile.R.drawable.odicto_ic_copy, 20f, MUTED)
-                "lock" -> icon(app.odicto.mobile.R.drawable.odicto_ic_lock, 20f, ICON)
-                "cancel" -> icon(app.odicto.mobile.R.drawable.odicto_ic_close, 20f, ICON)
-                "done" -> icon(app.odicto.mobile.R.drawable.odicto_ic_check, 20f, HALO)
-                "error" -> icon(app.odicto.mobile.R.drawable.odicto_ic_close, 20f, DANGER)
-                else -> icon(app.odicto.mobile.R.drawable.odicto_ic_close, 20f, MUTED)
+                "settings" -> icon(app.odicto.mobile.R.drawable.odicto_ic_settings, 20f, palette.muted)
+                "copy" -> icon(app.odicto.mobile.R.drawable.odicto_ic_copy, 20f, palette.muted)
+                "lock" -> icon(app.odicto.mobile.R.drawable.odicto_ic_lock, 20f, palette.icon)
+                "cancel" -> icon(app.odicto.mobile.R.drawable.odicto_ic_close, 20f, palette.icon)
+                "done" -> icon(app.odicto.mobile.R.drawable.odicto_ic_check, 20f, palette.halo)
+                "error" -> icon(app.odicto.mobile.R.drawable.odicto_ic_close, 20f, palette.danger)
+                else -> icon(app.odicto.mobile.R.drawable.odicto_ic_close, 20f, palette.muted)
             }
         }
 
@@ -694,14 +703,14 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
             }
             paint.reset(); paint.isAntiAlias = true
             val (fill, ink) = when {
-                kind == "done" -> SUCCESS to INK_DARK
-                kind == "error" -> DANGER to INK_DARK
-                kind == "mic" || kind == "finish" || highlighted -> ACCENT to ON_ACCENT
-                else -> BUBBLE to ICON
+                kind == "done" -> palette.success to palette.onSuccess
+                kind == "error" -> palette.danger to palette.onDanger
+                kind == "mic" || kind == "finish" || highlighted -> palette.accent to palette.onAccent
+                else -> palette.bubble to palette.icon
             }
             val listening = (kind == "finish" || kind == "mic") && meter > 0f
             if (listening) {
-                paint.color = HALO; paint.alpha = (60 + meter * 120).toInt().coerceAtMost(255)
+                paint.color = palette.halo; paint.alpha = (60 + meter * 120).toInt().coerceAtMost(255)
                 c.drawCircle(cx, cy, radius, paint)
                 paint.alpha = 255
             }
@@ -709,9 +718,9 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
             // While listening the disc breathes with the input level inside a soft halo.
             val discRadius = if (listening) radius - (1f - meter) * 3f * density - 2f * density else radius
             c.drawCircle(cx, cy, discRadius, paint)
-            if (fill == ACCENT) ring(c, cx, cy, discRadius)
-            if (fill == BUBBLE) {
-                paint.style = Paint.Style.STROKE; paint.strokeWidth = density; paint.color = HAIRLINE
+            if (fill == palette.accent) ring(c, cx, cy, discRadius)
+            if (fill == palette.bubble) {
+                paint.style = Paint.Style.STROKE; paint.strokeWidth = density; paint.color = palette.hairline
                 c.drawCircle(cx, cy, radius - density / 2f, paint)
                 paint.style = Paint.Style.FILL
             }
@@ -738,7 +747,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
                 "wait" -> {
                     val animate = Build.VERSION.SDK_INT < 26 || ValueAnimator.areAnimatorsEnabled()
                     val angle = if (animate) (android.os.SystemClock.uptimeMillis() % 1000) * 0.36f else -90f
-                    paint.style = Paint.Style.STROKE; paint.strokeWidth = 2f * density; paint.strokeCap = Paint.Cap.ROUND; paint.color = HALO
+                    paint.style = Paint.Style.STROKE; paint.strokeWidth = 2f * density; paint.strokeCap = Paint.Cap.ROUND; paint.color = palette.halo
                     val r = minOf(width, height) * 0.2f
                     c.drawArc(cx - r, cy - r, cx + r, cy + r, angle, 270f, false, paint)
                     if (animate && isShown) postInvalidateOnAnimation()
@@ -753,20 +762,22 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         }
         override fun onDetachedFromWindow() { meterAnimation?.cancel(); super.onDetachedFromWindow() }
 
+        /** The icon and disc colours, read once from the day or night palette of the context this view was built with. */
+        private class InkColors(context: Context) {
+            val accent = context.getColor(R.color.odicto_key_accent)
+            val halo = context.getColor(R.color.odicto_accent)
+            val onAccent = context.getColor(R.color.odicto_on_accent)
+            val surface = context.getColor(R.color.odicto_surface_raised)
+            val icon = context.getColor(R.color.odicto_toolbar_icon)
+            val muted = context.getColor(R.color.odicto_text_muted)
+            val bubble = context.getColor(R.color.odicto_panel_card)
+            val hairline = context.getColor(R.color.odicto_hairline)
+            val success = context.getColor(R.color.odicto_success)
+            val onSuccess = context.getColor(R.color.odicto_on_success)
+            val danger = context.getColor(R.color.odicto_danger)
+            val onDanger = context.getColor(R.color.odicto_on_danger)
+        }
         private companion object {
-            const val ACCENT = 0xFF2A745D.toInt()
-            /** Pale jade: level halo and spinner on the dark surface. */
-            const val HALO = 0xFF8EDCBB.toInt()
-            const val ON_ACCENT = 0xFFF2F2EC.toInt()
-            const val INK_DARK = 0xFF17191C.toInt()
-            const val SURFACE = 0xFF282B2E.toInt()
-            const val ICON = 0xFFE7E5DF.toInt()
-            const val MUTED = 0xFFB2B5B5.toInt()
-            const val BUBBLE = 0xFF212326.toInt()
-            const val HAIRLINE = 0x1FFFFFFF
-            /** Done is the pale jade disc, so it never looks like the idle (jade) mic. */
-            const val SUCCESS = 0xFF8EDCBB.toInt()
-            const val DANGER = 0xFFF2A39B.toInt()
             /** Created once: onDraw runs every frame of the recording meter. */
             val MEDIUM: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         }

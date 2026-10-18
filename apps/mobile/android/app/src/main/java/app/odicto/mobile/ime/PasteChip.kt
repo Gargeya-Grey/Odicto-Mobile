@@ -43,7 +43,7 @@ internal class PasteChip(
     }
     private val close = ImageView(context).apply {
         setImageResource(R.drawable.odicto_ic_close)
-        setColorFilter(0xFF8A9294.toInt())
+        setColorFilter(context.getColor(R.color.odicto_paste_close))
         setPadding(dp(8), dp(8), dp(8), dp(8))
         contentDescription = "Dismiss paste suggestion"
         PressSurface.styleIcon(this)
@@ -56,9 +56,9 @@ internal class PasteChip(
         isClickable = true
         isFocusable = true
         background = GradientDrawable().apply {
-            setColor(0xFF1C2723.toInt())
+            setColor(context.getColor(R.color.odicto_paste_fill))
             cornerRadius = dp(18).toFloat()
-            setStroke(dp(1), 0xFF2F5B4B.toInt())
+            setStroke(dp(1), context.getColor(R.color.odicto_paste_stroke))
         }
         setOnClickListener { paste() }
     }

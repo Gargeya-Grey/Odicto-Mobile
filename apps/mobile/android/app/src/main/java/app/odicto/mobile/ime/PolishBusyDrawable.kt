@@ -15,11 +15,12 @@ import kotlin.math.roundToInt
 
 internal class PolishBusyDrawable(
     density: Float,
+    private val color: Int,
     private val motionEnabled: () -> Boolean,
 ) : Drawable(), Animatable {
     private val size = (24 * density).roundToInt()
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF8EDCBB.toInt()
+        color = this@PolishBusyDrawable.color
         style = Paint.Style.FILL
     }
     private val stars = arrayOf(
