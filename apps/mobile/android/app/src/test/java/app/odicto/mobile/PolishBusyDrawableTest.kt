@@ -23,7 +23,7 @@ import org.robolectric.annotation.LooperMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class PolishBusyDrawableTest {
     @Test fun disabledMotionDrawsThreeSolidLilacStars() {
-        val drawable = PolishBusyDrawable(1f) { false }
+        val drawable = PolishBusyDrawable(1f, 0xFF8EDCBB.toInt()) { false }
         drawable.setBounds(0, 0, 240, 240)
         drawable.start()
         assertFalse(drawable.isRunning())
@@ -52,7 +52,7 @@ class PolishBusyDrawableTest {
 
     @Test fun stopVisibilityAndDisabledMotionCancelAnimator() {
         var enabled = true
-        val drawable = PolishBusyDrawable(1f) { enabled }
+        val drawable = PolishBusyDrawable(1f, 0xFF8EDCBB.toInt()) { enabled }
         drawable.start()
         assertTrue(drawable.isRunning())
         drawable.start()

@@ -12,6 +12,8 @@ import app.odicto.mobile.MainActivity
 import app.odicto.mobile.R
 import app.odicto.mobile.dictation.*
 import app.odicto.mobile.storage.VoicePreferences
+import app.odicto.mobile.theme.AppearanceStore
+import app.odicto.mobile.theme.OdictoTheme
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.combine
 import kotlin.math.roundToInt
@@ -29,6 +31,8 @@ class VoiceOverlayService : Service() {
     private var movedVertically = false
     private var lastGeometry = ""
     private var lastScaleKey = ""
+    /** Whether the view on screen was built for the night palette; a different answer now means a fresh view. */
+    private var viewNight: Boolean? = null
     private var dragOriginSet = false
     private var dragStartMicLeft = 0
     private var dragStartBottom = 0
@@ -56,12 +60,22 @@ class VoiceOverlayService : Service() {
         lastScaleKey = "${resources.configuration.fontScale}/${resources.configuration.densityDpi}"
         OverlayPresentation.start(OverlayPresentation.recommendedTimeout(this))
         VoicePreferences.initialize(this)
+        AppearanceStore.initialize(this)
         val filter = IntentFilter().apply { addAction(Intent.ACTION_SCREEN_OFF); addAction(Intent.ACTION_SCREEN_ON); addAction(Intent.ACTION_USER_PRESENT) }
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(receiver, filter, RECEIVER_NOT_EXPORTED) else registerReceiver(receiver, filter)
         registered = true
         scope.launch { combine(VoicePreferences.state, DictationCoordinator.protectedField, DictationCoordinator.state, DictationCoordinator.keyboardVisible, DictationCoordinator.keyboardTopPx) { _, _, _, _, _ -> Unit }.collect { refresh() } }
         // Audio-level ticks only update an existing view; they do not recheck window permissions.
         scope.launch { VoiceSession.state.collect { control?.render(it) } }
+        // One switch for the whole app: the bubble follows the saved light/dark choice, or the phone when it says system.
+        scope.launch { AppearanceStore.state.collect { restyle() } }
+    }
+
+    /** The text and colours are chosen when the view is built, so a new palette needs a fresh view in the same place. */
+    private fun restyle() {
+        if (control == null || OdictoTheme.isNight(this) == viewNight) return
+        hide()
+        refresh()
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         recoveryAttempts = 0
@@ -131,7 +145,9 @@ class VoiceOverlayService : Service() {
         DictationCoordinator.refreshTarget()
     }
     private fun show() {
-        val view = VoiceControlView(this)
+        val night = OdictoTheme.isNight(this)
+        viewNight = night
+        val view = VoiceControlView(OdictoTheme.themed(this, night, R.style.OdictoImeTheme))
         view.setOverlayAvailableHeight(bounds().second)
         loadAnchors(view)
         val layout = WindowManager.LayoutParams(view.requiredWidth, view.requiredHeight,
@@ -297,6 +313,7 @@ class VoiceOverlayService : Service() {
         // placement puts it back exactly where it was.
         val scaleKey = "${newConfig.fontScale}/${newConfig.densityDpi}"
         if (scaleKey != lastScaleKey) { lastScaleKey = scaleKey; hide() }
+        restyle()
         refresh()
         params?.let { clamp(it); control?.let { view -> update(view, it) } }
     }

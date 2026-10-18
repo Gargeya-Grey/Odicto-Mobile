@@ -6,6 +6,8 @@ Odicto is an Android voice input app with a native keyboard microphone, an optio
 - **AI:** Groq transcribes the instruction, then Gemini or OpenRouter answers or edits explicitly selected text.
 - **Live:** Gemini Live streams words into the original editor without pasting a second copy at completion.
 
+Odicto follows your phone's light or dark setting. The **Light / Dark** button in the header switches the app, the keyboard and the floating microphone together; **Settings → Appearance → System** goes back to following the phone.
+
 Settings includes touch feedback, an optional text preview, provider configuration, and local history. The floating control hides while the Odicto keyboard is visible. Settings and native controls support portrait and landscape layouts.
 
 ## Download and try it

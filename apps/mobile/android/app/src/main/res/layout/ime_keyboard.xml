@@ -177,7 +177,7 @@
                     android:background="@drawable/odicto_key_background"
                     android:gravity="center"
                     android:padding="10dp"
-                    android:textColor="#E7E5DF"
+                    android:textColor="@color/odicto_key_label"
                     android:textSize="13sp"
                     android:visibility="gone" />
             </FrameLayout>

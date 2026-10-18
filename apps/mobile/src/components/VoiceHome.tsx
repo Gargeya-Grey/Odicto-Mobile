@@ -14,11 +14,12 @@ import {
   Info,
   Settings,
 } from './voice/icons';
+import { ThemeToggle } from './voice/ThemeToggle';
+import { useAppearance } from './voice/useAppearance';
 import { useOpenRouterModels } from './voice/useOpenRouterModels';
 import { useSettingsDraft } from './voice/useSettingsDraft';
 import { useUpdate } from './voice/useUpdate';
 import { tap, useVoiceSettings, type Notice } from './voice/useVoiceSettings';
-import odictoMark from '../assets/odicto-mark.svg';
 import '../voice.css';
 
 type Page = 'home' | 'settings' | 'history';
@@ -93,6 +94,7 @@ export function VoiceHome() {
     openSettingsRequested,
   } = useVoiceSettings();
   const appUpdate = useUpdate(notify);
+  const appearance = useAppearance(notify);
   const [page, setPage] = useState<Page>('home');
   const [entries, setEntries] = useState<HistoryItem[] | null>(null);
   const draft = useSettingsDraft(settings, saveForm);
@@ -217,7 +219,7 @@ export function VoiceHome() {
       <header className="voice-header">
         {page === 'home' ? (
           <h1 className="voice-brand">
-            <img className="voice-brand-mark" src={odictoMark} alt="" />
+            <span className="voice-brand-mark" aria-hidden="true" />
             odicto
             <span className="voice-brand-dot">.</span>
           </h1>
@@ -232,15 +234,28 @@ export function VoiceHome() {
             <ArrowLeft size={20} />
           </button>
         )}
-        <button
-          type="button"
-          className="voice-icon-btn voice-header-btn"
-          data-side="end"
-          aria-label={page === 'settings' ? 'Open history' : 'Open settings'}
-          onClick={() => go(page === 'settings' ? 'history' : 'settings')}
-        >
-          {page === 'settings' ? <History size={20} /> : <Settings size={20} />}
-        </button>
+        <div className="voice-header-actions">
+          <ThemeToggle
+            theme={appearance.theme}
+            onToggle={(origin) => {
+              tap();
+              void appearance.toggle(origin);
+            }}
+          />
+          <button
+            type="button"
+            className="voice-icon-btn voice-header-btn"
+            data-side="end"
+            aria-label={page === 'settings' ? 'Open history' : 'Open settings'}
+            onClick={() => go(page === 'settings' ? 'history' : 'settings')}
+          >
+            {page === 'settings' ? (
+              <History size={20} />
+            ) : (
+              <Settings size={20} />
+            )}
+          </button>
+        </div>
       </header>
       <main className="voice-main" data-page={page}>
         <div className="voice-page" key={page}>
@@ -276,6 +291,11 @@ export function VoiceHome() {
               models={models}
               loadingModels={loadingModels}
               onRefreshStatus={refreshOnboarding}
+              appearance={appearance.appearance}
+              onSetAppearance={(value, origin) => {
+                tap();
+                void appearance.setAppearance(value, origin);
+              }}
               appUpdate={appUpdate.status}
               onSetUpdateEnabled={(enabled) =>
                 void appUpdate.setEnabled(enabled)

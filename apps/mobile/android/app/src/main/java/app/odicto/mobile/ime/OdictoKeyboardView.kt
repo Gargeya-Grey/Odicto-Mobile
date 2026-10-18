@@ -101,21 +101,24 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
     private var punctualShow: Runnable? = null
     private var enterKind = ImeActions.Kind.NEWLINE
     private var enterLabel: String? = null
-    private val bubbleFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xE03B4044.toInt() }
-    private val bubbleShade = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x33000000 }
+    // Read once from this view's own context, which is built for the day or night palette; a theme change
+    // rebuilds the keyboard, so nothing here needs to repaint live.
+    private val bubbleFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = context.getColor(R.color.odicto_bubble_fill) }
+    private val bubbleShade = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = context.getColor(R.color.odicto_bubble_shade) }
     private val bubbleText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFFE7E5DF.toInt()
+        color = context.getColor(R.color.odicto_key_label)
         textAlign = Paint.Align.CENTER
     }
-    private val stripFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xF0303438.toInt() }
-    private val stripSelected = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xF04A5055.toInt() }
-    private val popFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF1F2326.toInt() }
+    private val stripSelectedInk = context.getColor(R.color.odicto_strip_selected_ink)
+    private val stripFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = context.getColor(R.color.odicto_strip_fill) }
+    private val stripSelected = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = context.getColor(R.color.odicto_strip_selected) }
+    private val popFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = context.getColor(R.color.odicto_popup_fill) }
     private val popEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF4A5055.toInt()
+        color = context.getColor(R.color.odicto_popup_edge)
         style = Paint.Style.STROKE
         strokeWidth = resources.displayMetrics.density
     }
-    private val popSelected = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF2A745D.toInt() }
+    private val popSelected = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = context.getColor(R.color.odicto_key_accent) }
 
     init {
         orientation = VERTICAL
@@ -828,7 +831,7 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
         val baseline = top + height / 2f - (bubbleText.descent() + bubbleText.ascent()) / 2f
         val ink = bubbleText.color
         strip.options.forEachIndexed { index, symbol ->
-            if (quick && index == strip.index) bubbleText.color = 0xFFF2F2EC.toInt()
+            if (quick && index == strip.index) bubbleText.color = stripSelectedInk
             canvas.drawText(symbol, left + cell * index + cell / 2f, baseline, bubbleText)
             bubbleText.color = ink
         }
@@ -1008,10 +1011,24 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
         val inserted: String,
     )
 
+    /** The keys' colours, read once from the day or night palette of the context the keyboard was built with. */
+    private class KeyColors(context: Context) {
+        val normal = context.getColor(R.color.odicto_key_normal)
+        val function = context.getColor(R.color.odicto_key_function)
+        val pressed = context.getColor(R.color.odicto_key_pressed)
+        val accent = context.getColor(R.color.odicto_key_accent)
+        val onAccent = context.getColor(R.color.odicto_on_accent)
+        val disabled = context.getColor(R.color.odicto_key_disabled)
+        val label = context.getColor(R.color.odicto_key_label)
+        val labelDisabled = context.getColor(R.color.odicto_key_label_disabled)
+        val spaceTick = context.getColor(R.color.odicto_space_tick)
+        val spaceCue = context.getColor(R.color.odicto_space_cue)
+    }
     private class KeyCap(context: Context, val spec: KeySpec, private val quick: Boolean = false) : View(context) {
+        private val colors = KeyColors(context)
         private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
         private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = LABEL
+            color = colors.label
             textAlign = Paint.Align.CENTER
         }
         private val baseIcon: Drawable? = if (spec.icon != 0) ContextCompat.getDrawable(context, spec.icon)?.mutate() else null
@@ -1075,11 +1092,11 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
 
             fill.style = Paint.Style.FILL
             fill.color = when {
-                pressed -> PRESSED
-                accent -> ACCENT
-                !isEnabled -> DISABLED
-                function -> FUNCTION
-                else -> NORMAL
+                pressed -> colors.pressed
+                accent -> colors.accent
+                !isEnabled -> colors.disabled
+                function -> colors.function
+                else -> colors.normal
             }
             canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), radius, radius, fill)
 
@@ -1088,7 +1105,7 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
                 val tickH = 3f * density
                 val left = (width - tickW) / 2f
                 val top = (height - tickH) / 2f
-                fill.color = if (pressed) 0xFFE7E5DF.toInt() else 0xFF737C80.toInt()
+                fill.color = if (pressed) colors.label else colors.spaceTick
                 canvas.drawRoundRect(left, top, left + tickW, top + tickH, tickH, tickH, fill)
                 drawCursorCue(canvas, density, left, left + tickW)
                 return
@@ -1097,7 +1114,7 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
             val action = actionLabel
             if (action != null) {
                 fill.style = Paint.Style.FILL
-                fill.color = if (accent) ON_ACCENT else if (isEnabled) LABEL else LABEL_DISABLED
+                fill.color = if (accent) colors.onAccent else if (isEnabled) colors.label else colors.labelDisabled
                 val scale = if (action.length > 4) 0.64f else 0.8f
                 text.textSize = glyphSp() * density * scale
                 text.typeface = typefaceFor(context)
@@ -1113,13 +1130,13 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
                 val top = (height - size) / 2f
                 drawable.setBounds(left.toInt(), top.toInt(), (left + size).toInt(), (top + size).toInt())
                 // Tint the vector to the label colour so it matches the text keys.
-                drawable.setTint(if (accent) ON_ACCENT else if (isEnabled) LABEL else LABEL_DISABLED)
+                drawable.setTint(if (accent) colors.onAccent else if (isEnabled) colors.label else colors.labelDisabled)
                 drawable.draw(canvas)
                 return
             }
 
             fill.style = Paint.Style.FILL
-            fill.color = if (isEnabled) LABEL else LABEL_DISABLED
+            fill.color = if (isEnabled) colors.label else colors.labelDisabled
             if (quick && spec.key == Key.CHARACTER && label.length == 1 && !label[0].isLetterOrDigit()) {
                 // Comma and period are the only glyphs on this row, so they get room, and are centred by
                 // their ink: a text baseline leaves a full stop sitting well below the middle of its key.
@@ -1155,7 +1172,7 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
             fill.strokeWidth = 1.6f * density
             fill.strokeCap = Paint.Cap.ROUND
             fill.strokeJoin = Paint.Join.ROUND
-            fill.color = if (pressed) 0xFFE7E5DF.toInt() else 0xFF566064.toInt()
+            fill.color = if (pressed) colors.label else colors.spaceCue
             cuePath.reset()
             val leftTip = gripLeft - gap
             cuePath.moveTo(leftTip + reach, cy - half); cuePath.lineTo(leftTip, cy); cuePath.lineTo(leftTip + reach, cy + half)
@@ -1165,17 +1182,6 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
             fill.style = style
             fill.color = color
             fill.strokeWidth = stroke
-        }
-
-        private companion object {
-            const val NORMAL = 0xFF303438.toInt()
-            const val FUNCTION = 0xFF232629.toInt()
-            const val PRESSED = 0xFF4A5055.toInt()
-            const val ACCENT = 0xFF2A745D.toInt()
-            const val ON_ACCENT = 0xFFF2F2EC.toInt()
-            const val DISABLED = 0x66303438.toInt()
-            const val LABEL = 0xFFE7E5DF.toInt()
-            const val LABEL_DISABLED = 0xFF8A9294.toInt()
         }
     }
 

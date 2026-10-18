@@ -1,9 +1,10 @@
 /*
  * Odicto Android screens: one design system.
- * The EduDojo dark theme: graphite canvas, pale jade accent, thin line
- * icons, inset grouped lists. Large surfaces stay neutral; the accent marks
- * selection and small highlights. Motion only moves or fades (transform,
- * opacity).
+ * The EduDojo theme, dark and light: graphite (or sage-white) canvas, jade
+ * accent, thin line icons, inset grouped lists. Large surfaces stay neutral;
+ * the accent marks selection and small highlights. Motion only moves or
+ * fades (transform, opacity). Colours live in the tokens below; html[data-theme]
+ * picks the set (index.html and src/lib/theme.ts write it).
  */
 
 @font-face {
@@ -13,7 +14,9 @@
   font-display: swap;
 }
 
-:root {
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
   /* Surfaces */
   --v-canvas: #17191c;
   /* Cards sit just above the canvas, neutral (no green cast); fields recess below them. */
@@ -43,32 +46,108 @@
   --v-divider: color-mix(in srgb, var(--v-text) 6%, transparent);
   --v-sel-fill: color-mix(in srgb, var(--v-accent) 22%, var(--v-paper));
   --v-sel-line: color-mix(in srgb, var(--v-accent) 50%, transparent);
+  --v-sel-surface: var(--v-sel-fill);
   --v-action-fill: linear-gradient(180deg, var(--v-action-hi), var(--v-action));
   --v-halo: 0 0 0 3px color-mix(in srgb, var(--v-accent) 22%, transparent);
+  /* Page glow: a jade wash from the top edge, a cooler echo at the right */
+  --v-glow-a: color-mix(in srgb, var(--v-accent) 17%, transparent);
+  --v-glow-b: color-mix(in srgb, #6fb7d6 10%, transparent);
+  /* Depth. Dark cards get only a faint top highlight; light surfaces float on soft shadows. */
+  --v-card-shadow: inset 0 1px 0
+    color-mix(in srgb, var(--v-text) 4%, transparent);
+  --v-pop-shadow: 0 8px 24px -10px
+    color-mix(in srgb, var(--v-text) 24%, transparent);
+  --v-toast: var(--v-raised);
+  --v-toast-shadow: none;
+  --v-bar-shadow: none;
+  /* Used inside shadow lists, where a bare `none` would be invalid. */
+  --v-pill-shadow: 0 0 0 0 transparent;
+  --v-action-shadow: none;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  /* A calm sage-white canvas with white cards; deep jade carries the accent text. */
+  --v-canvas: #f3f6f2;
+  --v-paper: #ffffff;
+  --v-field: #ecf0eb;
+  --v-inset: #e7ece6;
+  --v-raised: #e3e9e2;
+  --v-line: #d2d9d1;
+  --v-stroke: #8a948c;
+  --v-text: #17201b;
+  --v-muted: #566159;
+  --v-accent: #1f6b54;
+  --v-action: #2a745d;
+  --v-action-hi: #2f7f66;
+  --v-on-action: #ffffff;
+  --v-danger: #b83b32;
+  --v-warn: #9a5b0a;
+  --v-border: color-mix(in srgb, var(--v-text) 10%, transparent);
+  --v-border-ctl: color-mix(in srgb, var(--v-text) 16%, transparent);
+  --v-divider: color-mix(in srgb, var(--v-text) 8%, transparent);
+  --v-sel-fill: color-mix(in srgb, var(--v-accent) 11%, var(--v-paper));
+  --v-sel-line: color-mix(in srgb, var(--v-accent) 40%, transparent);
+  /* The selected segment or pill is white with a jade ring: a tint alone vanishes on the track. */
+  --v-sel-surface: var(--v-paper);
+  --v-halo: 0 0 0 3px color-mix(in srgb, var(--v-accent) 24%, transparent);
+  --v-glow-a: color-mix(in srgb, #3fae8a 24%, transparent);
+  --v-glow-b: color-mix(in srgb, #6fb7d6 15%, transparent);
+  --v-card-shadow:
+    0 1px 2px rgb(20 40 30 / 6%), 0 8px 24px -12px rgb(20 40 30 / 14%);
+  --v-pop-shadow:
+    0 12px 32px -12px rgb(20 40 30 / 28%), 0 2px 6px rgb(20 40 30 / 8%);
+  --v-toast: var(--v-paper);
+  --v-toast-shadow:
+    0 8px 24px -8px rgb(20 40 30 / 24%), 0 1px 3px rgb(20 40 30 / 10%);
+  --v-bar-shadow: 0 -8px 24px -12px rgb(20 40 30 / 16%);
+  --v-pill-shadow: 0 1px 2px rgb(20 40 30 / 8%);
+  --v-action-shadow:
+    0 1px 2px rgb(20 60 45 / 24%), inset 0 1px 0 rgb(255 255 255 / 14%);
 }
 
 html {
-  color-scheme: dark;
   background: var(--v-canvas);
 }
 body {
   margin: 0;
-  /* A jade glow from the top edge of the page, a cooler echo at the right; both scroll away. */
   background:
-    radial-gradient(
-        ellipse 90% 60% at 30% 0%,
-        color-mix(in srgb, var(--v-accent) 17%, transparent),
-        transparent 70%
-      )
+    radial-gradient(ellipse 90% 60% at 30% 0%, var(--v-glow-a), transparent 70%)
       top / 100% 640px no-repeat,
     radial-gradient(
         ellipse 60% 40% at 100% 8%,
-        color-mix(in srgb, #6fb7d6 10%, transparent),
+        var(--v-glow-b),
         transparent 70%
       )
       top / 100% 640px no-repeat,
     var(--v-canvas);
   -webkit-text-size-adjust: 100%;
+}
+
+/* The theme change is a circle growing from the toggle (src/lib/theme.ts); no cross-fade. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-old(root) {
+  z-index: 1;
+}
+::view-transition-new(root) {
+  z-index: 2;
+}
+/* Browsers without view transitions: colours ease for a moment. */
+html.theme-fading,
+html.theme-fading *,
+html.theme-fading *::before,
+html.theme-fading *::after {
+  transition:
+    background-color 250ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 250ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 250ms cubic-bezier(0.22, 1, 0.36, 1),
+    fill 250ms cubic-bezier(0.22, 1, 0.36, 1),
+    stroke 250ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 250ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .voice-app {
@@ -151,12 +230,14 @@ body {
 /* Press (buttons only) and focus */
 .voice-btn,
 .voice-icon-btn,
-.voice-link {
+.voice-link,
+.voice-theme-toggle {
   transition: transform 120ms var(--v-ease);
 }
 .voice-btn:active:not(:disabled),
 .voice-icon-btn:active:not(:disabled),
-.voice-link:active:not(:disabled) {
+.voice-link:active:not(:disabled),
+.voice-theme-toggle:active:not(:disabled) {
   transform: scale(0.98);
 }
 .voice-app button:disabled {
@@ -203,6 +284,10 @@ body {
   width: 20px;
   height: 20px;
   margin-right: 8px;
+  /* A mask, so the mark takes the accent of the current theme. */
+  background-color: var(--v-accent);
+  -webkit-mask: url('./assets/odicto-mark.svg') center / contain no-repeat;
+  mask: url('./assets/odicto-mark.svg') center / contain no-repeat;
 }
 .voice-brand-dot {
   color: var(--v-accent);
@@ -220,8 +305,90 @@ body {
 .voice-icon-btn:active:not(:disabled) {
   background: var(--v-divider);
 }
+.voice-header-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
 .voice-header-btn {
   color: var(--v-text);
+}
+
+/* Theme toggle: a 40 px pill that names the mode a tap switches to (48 px to touch).
+   Icon and label swap with the "smooth-out" curve from transitions.dev; only
+   transform, opacity and blur move. */
+.voice-theme-toggle {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 14px 0 11px;
+  border-radius: var(--v-r-pill);
+  background: var(--v-paper);
+  box-shadow:
+    inset 0 0 0 1px var(--v-border-ctl),
+    var(--v-pill-shadow);
+  color: var(--v-text);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.voice-theme-toggle::after {
+  content: '';
+  position: absolute;
+  inset: -4px -2px;
+}
+.voice-theme-icon,
+.voice-theme-text {
+  display: grid;
+}
+.voice-theme-icon > *,
+.voice-theme-text > * {
+  grid-area: 1 / 1;
+}
+.voice-theme-icon {
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  color: var(--v-accent);
+}
+.voice-theme-icon > svg {
+  opacity: 0;
+  transform: scale(0.6);
+  filter: blur(4px);
+  transition:
+    opacity 250ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 250ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 250ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.voice-theme-text > span {
+  opacity: 0;
+  transform: translateY(4px);
+  filter: blur(2px);
+  transition:
+    opacity 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.voice-theme-toggle[data-target='light'] [data-glyph='light'],
+.voice-theme-toggle[data-target='dark'] [data-glyph='dark'] {
+  opacity: 1;
+  transform: none;
+  filter: none;
+}
+@media (max-width: 340px) {
+  .voice-theme-text {
+    display: none;
+  }
+  .voice-theme-toggle {
+    width: 40px;
+    padding: 0;
+    justify-content: center;
+  }
 }
 .voice-header-btn[data-side='start'] {
   margin-left: -14px;
@@ -353,7 +520,7 @@ body {
   background: var(--v-paper);
   border: 1px solid var(--v-border);
   border-radius: var(--v-r-group);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--v-text) 4%, transparent);
+  box-shadow: var(--v-card-shadow);
 }
 .voice-group > li {
   position: relative;
@@ -688,8 +855,10 @@ body {
   left: 2px;
   width: calc((100% - 4px) / var(--n));
   border-radius: var(--v-r-option);
-  background: var(--v-sel-fill);
-  box-shadow: inset 0 0 0 1px var(--v-sel-line);
+  background: var(--v-sel-surface);
+  box-shadow:
+    inset 0 0 0 1px var(--v-sel-line),
+    var(--v-pill-shadow);
   transform: translateX(calc(var(--i) * 100%));
   transition: transform 160ms var(--v-ease);
 }
@@ -749,6 +918,7 @@ body {
 }
 .voice-btn-primary {
   background: var(--v-action-fill);
+  box-shadow: var(--v-action-shadow);
   color: var(--v-on-action);
   font-weight: 600;
 }
@@ -861,8 +1031,7 @@ textarea.voice-input {
   border: 1px solid var(--v-line);
   border-radius: var(--v-r-control);
   background: var(--v-paper);
-  box-shadow: 0 8px 24px -10px
-    color-mix(in srgb, var(--v-text) 24%, transparent);
+  box-shadow: var(--v-pop-shadow);
   max-height: min(
     18rem,
     calc(100dvh - 24px - var(--v-safe-top) - var(--v-safe-bottom))
@@ -1116,8 +1285,10 @@ textarea.voice-input {
   inset: -8px -3px;
 }
 .voice-pillnav a[aria-current='location'] {
-  background: var(--v-sel-fill);
-  box-shadow: inset 0 0 0 1px var(--v-sel-line);
+  background: var(--v-sel-surface);
+  box-shadow:
+    inset 0 0 0 1px var(--v-sel-line),
+    var(--v-pill-shadow);
   color: var(--v-accent);
 }
 .voice-pillnav a:focus-visible {
@@ -1134,6 +1305,7 @@ textarea.voice-input {
   padding: 8px var(--v-gr) calc(8px + var(--v-safe-bottom)) var(--v-gl);
   background: var(--v-paper);
   border-top: 1px solid var(--v-border);
+  box-shadow: var(--v-bar-shadow);
   animation: voice-rise 180ms var(--v-ease) backwards;
 }
 .voice-savebar-inner {
@@ -1166,7 +1338,8 @@ textarea.voice-input {
   padding: 10px 14px;
   border: 1px solid var(--v-border-ctl);
   border-radius: var(--v-r-control);
-  background: var(--v-raised);
+  background: var(--v-toast);
+  box-shadow: var(--v-toast-shadow);
   font-size: 13px;
   line-height: 18px;
   animation: voice-notice-in 180ms var(--v-ease) backwards;
@@ -1208,7 +1381,8 @@ textarea.voice-input {
   }
   .voice-btn:active:not(:disabled),
   .voice-icon-btn:active:not(:disabled),
-  .voice-link:active:not(:disabled) {
+  .voice-link:active:not(:disabled),
+  .voice-theme-toggle:active:not(:disabled) {
     transform: none;
   }
 }
@@ -1223,4 +1397,18 @@ textarea.voice-input {
   backdrop-filter: blur(12px);
   z-index: 40;
   pointer-events: none;
+}
+/* In light the page glow reaches the top edge, so the scrim fades in only once the page scrolls under it. */
+@supports (animation-timeline: scroll()) {
+  :root[data-theme='light'] .voice-app::before {
+    opacity: 0;
+    animation: voice-scrim-in linear both;
+    animation-timeline: scroll(root block);
+    animation-range: 0 24px;
+  }
+  @keyframes voice-scrim-in {
+    to {
+      opacity: 1;
+    }
+  }
 }

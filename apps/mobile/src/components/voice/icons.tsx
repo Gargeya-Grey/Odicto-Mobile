@@ -10,8 +10,10 @@ import {
   Info as InfoIcon,
   Lock as LockIcon,
   Mic as MicIcon,
+  Moon as MoonIcon,
   Settings as SettingsIcon,
   Settings2 as Settings2Icon,
+  Sun as SunIcon,
 } from 'lucide-react';
 
 /** One line weight for every icon in the Android screens. */
@@ -34,5 +36,7 @@ export const History = thin(HistoryIcon);
 export const Info = thin(InfoIcon);
 export const Lock = thin(LockIcon);
 export const Mic = thin(MicIcon);
+export const Moon = thin(MoonIcon);
 export const Settings = thin(SettingsIcon);
 export const Settings2 = thin(Settings2Icon);
+export const Sun = thin(SunIcon);

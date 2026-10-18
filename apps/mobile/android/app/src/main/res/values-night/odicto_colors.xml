@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Odicto native palette, night: the EduDojo dark theme (graphite surfaces, warm off-white text, pale jade). Same names as the day file. -->
+<resources>
+    <color name="odicto_canvas">#FF17191C</color>
+    <color name="odicto_keyboard_background">#FF17191C</color>
+    <color name="odicto_accent">#FF8EDCBB</color>
+    <color name="odicto_toolbar_icon">#FFE7E5DF</color>
+    <color name="odicto_text_strong">#FFF2F2EC</color>
+    <color name="odicto_text_muted">#FFB2B5B5</color>
+    <color name="odicto_divider">#FF3B4044</color>
+    <color name="odicto_panel_card">#FF212326</color>
+    <color name="odicto_panel_card_selected">#FF303438</color>
+    <color name="odicto_panel_pill_selected">#FF303438</color>
+    <color name="odicto_surface_raised">#FF282B2E</color>
+    <color name="odicto_selected_fill">#FF282B2E</color>
+    <color name="odicto_key_normal">#FF303438</color>
+    <color name="odicto_key_function">#FF232629</color>
+    <color name="odicto_key_pressed">#FF4A5055</color>
+    <color name="odicto_key_accent">#FF2A745D</color>
+    <color name="odicto_on_accent">#FFF2F2EC</color>
+    <color name="odicto_key_disabled">#66303438</color>
+    <color name="odicto_key_label">#FFE7E5DF</color>
+    <color name="odicto_key_label_disabled">#FF8A9294</color>
+    <color name="odicto_popup_fill">#FF1F2326</color>
+    <color name="odicto_popup_edge">#FF4A5055</color>
+    <color name="odicto_bubble_fill">#E03B4044</color>
+    <color name="odicto_bubble_shade">#33000000</color>
+    <color name="odicto_strip_fill">#F0303438</color>
+    <color name="odicto_strip_selected">#F04A5055</color>
+    <color name="odicto_strip_selected_ink">#FFF2F2EC</color>
+    <color name="odicto_space_tick">#FF737C80</color>
+    <color name="odicto_space_cue">#FF566064</color>
+    <color name="odicto_press_fill">#1FFFFFFF</color>
+    <color name="odicto_hairline">#1FFFFFFF</color>
+    <color name="odicto_card_stroke">#24FFFFFF</color>
+    <color name="odicto_danger">#FFF2A39B</color>
+    <color name="odicto_on_danger">#FF17191C</color>
+    <color name="odicto_success">#FF8EDCBB</color>
+    <color name="odicto_on_success">#FF17191C</color>
+    <color name="odicto_paste_fill">#FF1C2723</color>
+    <color name="odicto_paste_stroke">#FF2F5B4B</color>
+    <color name="odicto_paste_close">#FF8A9294</color>
+    <color name="odicto_switch_track_on">#668EDCBB</color>
+</resources>
