@@ -37,6 +37,9 @@ class KeyboardExpansionTest {
         val area = root.findViewById<View>(R.id.ime_typing_area)
         val tools = root.findViewById<View>(R.id.function_row)
         val toggle = root.findViewById<View>(R.id.ime_keyboard_toggle)
+        val quick = root.findViewById<View>(R.id.ime_quick_keys)
+        /** Expanded, the quick row is squeezed away and the column rests this far down. */
+        val squeezed: Float get() = quick.height.toFloat()
         val grid = root.findViewById<OdictoKeyboardView>(R.id.ime_keyboard)
         var cancelledTouches = 0
         var insetUpdates = 0
@@ -104,7 +107,7 @@ class KeyboardExpansionTest {
                 assertTrue(f.column.translationY > 0f && f.column.translationY < f.area.height)
             }
             f.finish()
-            assertEquals(0f, f.column.translationY)
+            assertEquals(f.squeezed, f.column.translationY)
             assertEquals(height, f.root.height)
             f.toggle.performClick()
             f.seek(0.5f)
@@ -121,16 +124,61 @@ class KeyboardExpansionTest {
             val collapsedTop = f.expansion.contentTop()
             val updates = f.insetUpdates
             f.toggle.performClick()
-            assertEquals("expand: keys slide into space that is already clear", f.column.top, f.expansion.contentTop())
+            assertEquals("expand: keys slide into space that is already clear", f.column.top + f.quick.height, f.expansion.contentTop())
             assertEquals(updates + 1, f.insetUpdates)
             f.seek(0.5f); f.finish()
             assertEquals(updates + 1, f.insetUpdates)
             f.toggle.performClick()
             f.seek(0.5f)
-            assertEquals("collapse: the app waits until the keys are gone", f.column.top, f.expansion.contentTop())
+            assertEquals("collapse: the app waits until the keys are gone", f.column.top + f.quick.height, f.expansion.contentTop())
             f.finish()
             assertEquals(collapsedTop, f.expansion.contentTop())
             assertEquals(updates + 2, f.insetUpdates)
+        }
+    }
+
+    @Test fun theQuickRowIsSqueezedAwayWhileTheKeysSlideUpOverItAndComesBackOnCollapse() {
+        Fixture().use { f ->
+            assertTrue(f.quick.height > 0)
+            assertEquals(View.VISIBLE, f.quick.visibility)
+            assertEquals(1f, f.quick.alpha, 0f)
+            assertEquals(1f, f.quick.scaleY, 0f)
+            f.toggle.performClick()
+            f.seek(0.5f)
+            assertTrue("it shrinks", f.quick.scaleY > 0f && f.quick.scaleY < 1f)
+            assertTrue("it fades", f.quick.alpha < 1f)
+            assertEquals(View.VISIBLE, f.quick.visibility)
+            assertTrue("the typing area rides up over it", f.area.translationY < 0f && f.area.translationY > -f.squeezed)
+            f.finish()
+            assertEquals("nothing redundant stays on screen", View.INVISIBLE, f.quick.visibility)
+            assertEquals(-f.squeezed, f.area.translationY, 0f)
+            assertEquals("the header settles directly on top of the keys", f.squeezed, f.column.translationY, 0f)
+            f.toggle.performClick()
+            f.seek(0.5f)
+            assertEquals(View.VISIBLE, f.quick.visibility)
+            assertTrue(f.quick.scaleY > 0f && f.quick.scaleY < 1f)
+            f.finish()
+            assertEquals(View.VISIBLE, f.quick.visibility)
+            assertEquals(1f, f.quick.alpha, 0f)
+            assertEquals(1f, f.quick.scaleY, 0f)
+            assertEquals(0f, f.area.translationY, 0f)
+        }
+    }
+
+    @Test fun theVisibleKeyboardIsExactlyTheQuickRowShorterWhenExpanded() {
+        Fixture().use { f ->
+            f.toggle.performClick(); f.finish()
+            val visibleHeight = f.root.height - f.expansion.contentTop()
+            assertEquals(f.column.height - f.quick.height, visibleHeight)
+        }
+    }
+
+    @Test fun recoveryKeepsTheQuickRowBecauseTheKeyboardIsNotExpanded() {
+        Fixture().use { f ->
+            f.expansion.recoveryVisible(true); f.measure()
+            assertEquals(View.VISIBLE, f.quick.visibility)
+            assertEquals(1f, f.quick.alpha, 0f)
+            assertEquals(0f, f.area.translationY, 0f)
         }
     }
 
@@ -208,7 +256,7 @@ class KeyboardExpansionTest {
             Fixture().use { f ->
                 f.toggle.performClick(); f.measure()
                 assertNull(f.animator())
-                assertEquals(0f, f.column.translationY)
+                assertEquals(f.squeezed, f.column.translationY)
                 assertEquals(View.VISIBLE, f.area.visibility)
                 f.toggle.performClick(); f.measure()
                 assertNull(f.animator())

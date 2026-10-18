@@ -10,6 +10,7 @@ import android.widget.*
 import app.odicto.mobile.MainActivity
 import app.odicto.mobile.dictation.*
 import app.odicto.mobile.ime.Haptics
+import app.odicto.mobile.ime.PressSurface
 import app.odicto.mobile.storage.VoicePreferences
 import kotlin.math.*
 
@@ -17,15 +18,36 @@ import kotlin.math.*
 class VoiceControlView(context: Context, private val keyboard: Boolean = false) : FrameLayout(context) {
     private val density = resources.displayMetrics.density
     fun dp(value: Int) = (value * density).roundToInt()
-    var resize: ((Int, Int) -> Unit)? = null
+    /** (window width px, window height px, microphone offset from the window's left edge px). */
+    var resize: ((Int, Int, Int) -> Unit)? = null
     // Keyboard fails closed until the owning IME supplies its tap-time editor guard.
     var keyboardCopyAllowed: () -> Boolean = { false }
     var keyboardNotice: (String) -> Unit = {}
+    var dragStart: (() -> Unit)? = null
+    /** Total finger travel in px since the touch went down, not a step: the owner places the microphone from it directly. */
     var drag: ((Float, Float) -> Unit)? = null
     var dragEnd: (() -> Unit)? = null
-    var mirrored = false
-        set(value) { if (field != value) { field = value; render(ui) } }
-    private val collapseTimer = Runnable { render(ui) }
+    // Where the microphone is on the screen, so open controls can choose a side that fits. Until the owner
+    // says, assume a roomy screen with the microphone at the right edge.
+    private var micLeftDp = 347f
+    private var screenWidthDp = 411f
+    private var preferRight = false
+    private var micOffsetDp = OverlayGeometry.INSET_DP
+    private var placementMatters = false
+    private class Pending(val view: View, val x: Int, val y: Int, val w: Int, val h: Int)
+    private val pending = ArrayList<Pending>()
+    /** The microphone's left edge inside the window, in px. The owner positions the window so this lands on the anchor. */
+    val micOffsetPx get() = dp(micOffsetDp)
+
+    /** Called by the owner when the microphone or the screen changes size or place. */
+    fun setPlacement(micLeftPx: Int, screenWidthPx: Int) {
+        val left = micLeftPx / density
+        val width = screenWidthPx / density
+        if (kotlin.math.abs(left - micLeftDp) < 0.05f && kotlin.math.abs(width - screenWidthDp) < 0.05f) return
+        micLeftDp = left; screenWidthDp = width
+        // A bare microphone does not depend on either, and is dragged continuously.
+        if (!keyboard && placementMatters) { lastLayout = ""; render(ui) }
+    }    private val collapseTimer = Runnable { render(ui) }
     private var expanded = keyboard
     private fun openOptions() { OverlayPresentation.reopen(); render(ui) }
     private var compactKeyboard = false
@@ -35,20 +57,37 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
     private var held = false
     private var moving = false
     private var downX = 0f; private var downY = 0f
-    private var lastX = 0f; private var lastY = 0f
     private val tapSequence = VoiceGestureTiming()
     private var target = ""
     private val slop = ViewConfiguration.get(context).scaledTouchSlop
     private var surfaceWidth = 72; private var surfaceHeight = 72
     val requiredWidth get() = dp(surfaceWidth)
     val requiredHeight get() = dp(surfaceHeight)
+    private val gestureRect = android.graphics.Rect()
+
+    /**
+     * Asks the system not to read a swipe that starts on the microphone as Back, so it can sit right at the
+     * screen edge. Only the microphone is excluded, and only where gesture navigation exists (Android 10+);
+     * the owner keeps it clear of the strips if the system declines.
+     */
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        if (keyboard || Build.VERSION.SDK_INT < 29) return
+        if (gestureRect.left == mic.left && gestureRect.top == mic.top && gestureRect.right == mic.right && gestureRect.bottom == mic.bottom) return
+        gestureRect.set(mic.left, mic.top, mic.right, mic.bottom)
+        systemGestureExclusionRects = listOf(android.graphics.Rect(gestureRect))
+    }
     private var lastLayout = ""
     private val panel = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(12), dp(16), dp(12))
-        background = round(0xF5212326.toInt(), 20f)
+        background = round(0xFF212326.toInt(), 20f)
     }
-    private val status = TextView(context).apply { setTextColor(0xFF8EDCBB.toInt()); textSize = 12f; typeface = Typeface.create("sans-serif-medium", 0); accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
-    private val preview = TextView(context).apply { setTextColor(Color.WHITE); textSize = 15f; maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, dp(5), 0, 0) }
+    // The card has a fixed height, so its text follows the user's font size only up to 1.3x: beyond that it would
+    // clip. The keyboard header's status line has no such limit and keeps the full scale.
+    private val cardScale = resources.configuration.fontScale.coerceIn(1f, 1.3f)
+    private fun cardText(sp: Float) = sp * density * cardScale
+    private val status = TextView(context).apply { setTextColor(0xFF8EDCBB.toInt()); setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, cardText(12f)); typeface = Typeface.create("sans-serif-medium", 0); accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
+    private val preview = TextView(context).apply { setTextColor(Color.WHITE); setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, cardText(15f)); maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, dp(5), 0, 0) }
     private val mic = Icon(context, "mic", "Hold to speak. Double tap for options.")
     private val lock = Icon(context, "lock", "Lock recording hands-free")
     private val raw = Icon(context, "raw", "Raw transcription with Groq")
@@ -58,7 +97,10 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
     private val back = Icon(context, "back", "Collapse voice controls")
     private val cancel = Icon(context, "cancel", "Cancel recording")
     private val copy = Icon(context, "copy", "Copy available text")
-    private val pill = View(context).apply { background = round(0xF2212326.toInt(), 36f) }
+    private val pill = View(context).apply { background = round(0xFF212326.toInt(), 36f) }
+    /** Keyboard header only: the jade chip behind the active mode. It glides to a new mode instead of jumping. */
+    private val indicator = View(context).apply { background = round(0xFF2A745D.toInt(), 13f); visibility = GONE }
+    private var indicatorIndex = -1
     private val beginHold = Runnable {
         if (moving || ui.busy) return@Runnable
         // A restarted process can miss the focus event that opens the session, so resolve it on demand.
@@ -76,8 +118,13 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
     init {
         if (!keyboard) OverlayPresentation.start(OverlayPresentation.recommendedTimeout(context))
         clipChildren = false; clipToPadding = false
+        // Children are placed by absolute left margins; a right-to-left locale must not mirror them.
+        layoutDirection = View.LAYOUT_DIRECTION_LTR
         panel.addView(status); panel.addView(preview)
-        addView(pill); addView(panel); listOf(back, settings, raw, ai, live, lock, cancel, copy, mic).forEach { it.compactSurface = keyboard; addView(it) }
+        addView(pill); addView(panel); addView(indicator)
+        listOf(back, settings, raw, ai, live, lock, cancel, copy, mic).forEach { it.compactSurface = keyboard; addView(it) }
+        // Every control but the microphone (which animates itself while held) presses in a little and springs back.
+        listOf(back, settings, raw, ai, live, lock, cancel, copy).forEach { PressSurface.pressIn(it) }
         mic.setOnClickListener {
             if (keyboard && compactKeyboard && ui.busy && !ui.active) VoiceSession.cancel(context)
             else if (ui.active) VoiceSession.finish(context)
@@ -156,7 +203,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
             .putExtra("voice_settings", true))
     }
     private fun place(view: View, x: Int, y: Int, w: Int, h: Int) {
-        val left = dp(if (mirrored) surfaceWidth - x - w else x)
+        val left = dp(x)
         val old = view.layoutParams as? LayoutParams
         if (keyboard && old?.width == dp(w) && old.height == dp(h) && old.leftMargin == left && old.topMargin == dp(y)) return
         view.layoutParams = LayoutParams(dp(w), dp(h)).apply { leftMargin = left; topMargin = dp(y) }
@@ -200,11 +247,36 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         // sees a red X with no reason attached.
         val showStatus = showPreview || explained
         val shortWindow = resources.configuration.screenHeightDp < 480
-        val hasPanelSpace = overlayHeightDp >= if (shortWindow) 164 else 184
-        val signature = "${value.phase}:${value.locked}:${value.mode}:$expanded:$hasMessage:$retained:$mirrored:$compactKeyboard:${DictationCoordinator.activeEditorSession}:${VoicePreferences.state.value.mode}:$showPreview:$shortWindow:$hasPanelSpace"
+        val panelHeightWanted = if (shortWindow) 164 else 184
+        val optionsShown = expanded && !value.busy
+        // How far left of the microphone the pieces that sit beside it reach, in the left-side frame.
+        var reach = 0
+        if (optionsShown) reach = OverlayGeometry.OPTIONS_REACH_DP
+        if (value.busy) reach = maxOf(reach, 112)
+        if (!value.busy && hasMessage) reach = maxOf(reach, if (retained && !expanded) 112 else 56)
+        if (compactStatus) reach = maxOf(reach, 232)
+        val fitSide = if (reach == 0) null else OverlayGeometry.chooseSide(micLeftDp, screenWidthDp, reach, preferRight)
+        // Controls that fit on neither side stack above the microphone, so the microphone itself never moves.
+        val stacked = optionsShown && fitSide == null &&
+            overlayHeightDp >= OverlayGeometry.MIC_DP + 16 + OverlayGeometry.STACKED_ROW_DP
+        val side = when {
+            reach == 0 -> if (preferRight) OverlayGeometry.Side.RIGHT else OverlayGeometry.Side.LEFT
+            fitSide != null -> fitSide
+            stacked -> OverlayGeometry.Side.ABOVE
+            else -> OverlayGeometry.roomierSide(micLeftDp, screenWidthDp)
+        }
+        if (reach > 0 && side != OverlayGeometry.Side.ABOVE) preferRight = side == OverlayGeometry.Side.RIGHT
+        val extra = if (side == OverlayGeometry.Side.ABOVE) OverlayGeometry.STACKED_ROW_DP else 0
+        val hasPanelSpace = overlayHeightDp >= panelHeightWanted + extra
+        val placementKey = if (expanded || hasMessage || value.busy) "${micLeftDp.toInt()}/${screenWidthDp.toInt()}" else "-"
+        placementMatters = placementKey != "-"
+        val signature = "${value.phase}:${value.locked}:${value.mode}:$expanded:$hasMessage:$retained:$side:$compactKeyboard:${DictationCoordinator.activeEditorSession}:${VoicePreferences.state.value.mode}:$showPreview:$shortWindow:$hasPanelSpace:$placementKey"
         if (lastLayout == signature) {
             if (!compactKeyboard && hasPanelSpace && showPreview && hasMessage && (value.finalText != previous.finalText || value.interim != previous.interim)) updatePreview(value)
-            if (!value.active && value.message != previous.message) status.text = value.message
+            if (!value.active && value.message != previous.message) {
+                status.text = statusLine(value, explained, showPreview)
+                if (!compactKeyboard && hasPanelSpace && showPreview && hasMessage) updatePreview(value)
+            }
             mic.level = value.level; return
         }
         lastLayout = signature
@@ -216,21 +288,35 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
                 "notice" -> feedback(HapticFeedbackConstants.CLOCK_TICK)
             }
         }
-        val full = expanded || hasMessage || keyboard || value.busy
-        val newWidth = if (keyboard && compactKeyboard) 72 else if (full) 304 else 72
-        val newHeight = if (!hasPanelSpace) 72 else if (expanded && hasMessage) { if (shortWindow) 164 else 184 } else if (!hasMessage || !showStatus || compactStatus) 72 else if (shortWindow) 164 else 184
-        val changed = surfaceWidth != newWidth || surfaceHeight != newHeight
-        surfaceWidth = newWidth; surfaceHeight = newHeight
-        if (changed) resize?.invoke(dp(surfaceWidth), dp(surfaceHeight))
-        val row = surfaceHeight - 64
-        val mx = surfaceWidth - 64
-        listOf(pill, panel, back, settings, raw, ai, live, lock, cancel, copy).forEach { it.visibility = View.GONE }
-        place(mic, mx, row, 56, 56)
-        if (expanded && !value.busy) {
-            pill.visibility = View.VISIBLE; place(pill, 4, row, 296, 56)
-            listOf(back, settings, raw, ai, live).forEach { it.visibility = View.VISIBLE }
-            place(back, 8, row + 8, 40, 40); place(settings, 52, row + 8, 40, 40)
-            place(raw, 96, row + 8, 40, 40); place(ai, 140, row + 8, 40, 40); place(live, 184, row + 8, 40, 40)
+        val baseHeight = if (!hasPanelSpace) 72 else if (expanded && hasMessage) panelHeightWanted else if (!hasMessage || !showStatus || compactStatus) 72 else panelHeightWanted
+        val newHeight = baseHeight + extra
+        val row = newHeight - 64
+        val pieces = listOf(pill, panel, back, settings, raw, ai, live, lock, cancel, copy)
+        val wasShown = pieces.filter { it.visibility == View.VISIBLE }.toSet()
+        pieces.forEach { it.visibility = View.GONE }
+        pending.clear()
+        // Placed in the left-side frame (the microphone at 0), then mirrored when the controls open to the right.
+        fun beside(view: View, x: Int, y: Int, w: Int, h: Int) {
+            pending += Pending(view, if (side == OverlayGeometry.Side.RIGHT) OverlayGeometry.mirror(x, w) else x, y, w, h)
+        }
+        fun fixed(view: View, x: Int, y: Int, w: Int, h: Int) { pending += Pending(view, x, y, w, h) }
+        val copyInRow = stacked && !value.busy && hasMessage && retained
+        fixed(mic, 0, row, OverlayGeometry.MIC_DP, 56)
+        if (optionsShown) {
+            val controls = listOf(back, settings, raw, ai, live)
+            pill.visibility = View.VISIBLE; controls.forEach { it.visibility = View.VISIBLE }
+            if (stacked) {
+                val count = if (copyInRow) 6 else 5
+                val pitch = OverlayGeometry.stackedPitch(count, screenWidthDp)
+                val width = OverlayGeometry.stackedRowWidth(count, pitch)
+                val left = OverlayGeometry.slideOnScreen(OverlayGeometry.Side.ABOVE, micLeftDp, screenWidthDp, width)
+                val band = row - OverlayGeometry.STACKED_ROW_DP
+                fixed(pill, left, band, width, 56)
+                controls.forEachIndexed { i, button -> fixed(button, left + 8 + pitch * i, band + 8, 40, 40) }
+            } else {
+                beside(pill, -OverlayGeometry.OPTIONS_REACH_DP, row, 296, 56)
+                listOf(-232, -188, -144, -100, -56).forEachIndexed { i, x -> beside(controls[i], x, row + 8, 40, 40) }
+            }
             settings.isEnabled = !value.busy
         }
         if (value.active && !compactKeyboard) {
@@ -238,27 +324,33 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
             raw.visibility = View.GONE; ai.visibility = View.GONE; live.visibility = View.GONE
             lock.visibility = View.VISIBLE
             if (value.locked) lock.visibility = View.GONE
-            place(lock, 184, row + 4, 48, 48)
+            beside(lock, -56, row + 4, 48, 48)
         }
         if (value.busy && !compactKeyboard) {
-            cancel.visibility = View.VISIBLE; place(cancel, 128, row + 4, 48, 48)
+            cancel.visibility = View.VISIBLE; beside(cancel, -112, row + 4, 48, 48)
         }
         if (hasMessage && !compactKeyboard && hasPanelSpace) {
             panel.visibility = if (showStatus) View.VISIBLE else View.GONE
             // Without a transcript, status shares the controls row instead of reserving a card.
-            panel.background = if (compactStatus) null else round(0xF5212326.toInt(), 20f)
+            panel.background = if (compactStatus) null else round(0xFF212326.toInt(), 20f)
             panel.setPadding(dp(if (compactStatus) 4 else 16), dp(if (compactStatus) 0 else 12), dp(if (compactStatus) 4 else 16), dp(if (compactStatus) 0 else 12))
-            val panelWidth = if (expanded && retained) 224 else if (compactStatus) 112 else 288
-            val panelHeight = if (compactStatus) 48 else surfaceHeight - 76
-            val panelTop = if (compactStatus) row + 4 else 8
-            place(panel, 8, panelTop, panelWidth, panelHeight)
+            if (compactStatus) {
+                // Beside the controls, shrinking to the room that side has instead of pushing the microphone.
+                val roomDp = if (side == OverlayGeometry.Side.RIGHT) screenWidthDp - OverlayGeometry.SCREEN_MARGIN_DP - micLeftDp - 176
+                    else micLeftDp - OverlayGeometry.SCREEN_MARGIN_DP - 120
+                val width = minOf(112, roomDp.toInt())
+                if (width >= 40) beside(panel, -120 - width, row + 4, width, 48) else panel.visibility = View.GONE
+            } else {
+                val width = OverlayGeometry.cardWidth(if (expanded && retained) 224 else OverlayGeometry.CARD_WIDTH_DP, screenWidthDp)
+                fixed(panel, OverlayGeometry.slideOnScreen(side, micLeftDp, screenWidthDp, width), 8, width, newHeight - 76 - extra)
+            }
             panel.gravity = if (compactStatus) Gravity.CENTER_VERTICAL else Gravity.TOP
             preview.visibility = if (showPreview) View.VISIBLE else View.GONE
             preview.maxLines = if (shortWindow) 2 else 3
-            status.text = when { value.locked -> if (compactStatus) "Hands-free" else "Hands-free · Tap mic to finish"; value.phase == "recording" -> "${when (value.mode) { "ai" -> "AI"; "raw" -> "Raw"; else -> "Live" }} · Listening"; else -> value.message }
+            status.text = when { value.locked -> if (compactStatus) "Hands-free" else "Hands-free · Tap mic to finish"; value.phase == "recording" -> "${when (value.mode) { "ai" -> "AI"; "raw" -> "Raw"; else -> "Live" }} · Listening"; else -> statusLine(value, explained, showPreview) }
             if (showStatus) {
                 if (showPreview) updatePreview(value)
-                status.visibility = View.VISIBLE
+                status.visibility = if (status.text.isEmpty()) View.GONE else View.VISIBLE
             } else {
                 status.visibility = View.GONE
             }
@@ -266,12 +358,32 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         if ((!showPreview || compactKeyboard || !hasPanelSpace) && preview.text.isNotEmpty()) preview.text = ""
         if (!value.busy && hasMessage && retained) {
             copy.visibility = View.VISIBLE
-            if (expanded && !hasPanelSpace) {
-                settings.visibility = View.GONE
-                place(copy, 52, row + 8, 40, 40)
-            } else place(copy, if (expanded) 240 else 128, if (expanded) row - 56 else row + 4, 48, 48)
+            when {
+                copyInRow -> {
+                    val pitch = OverlayGeometry.stackedPitch(6, screenWidthDp)
+                    val left = OverlayGeometry.slideOnScreen(OverlayGeometry.Side.ABOVE, micLeftDp, screenWidthDp, OverlayGeometry.stackedRowWidth(6, pitch))
+                    fixed(copy, left + 8 + pitch * 5, row - OverlayGeometry.STACKED_ROW_DP + 8, 40, 40)
+                }
+                expanded && !hasPanelSpace -> { settings.visibility = View.GONE; beside(copy, -188, row + 8, 40, 40) }
+                expanded -> beside(copy, 0, row - 56, 48, 48)
+                else -> beside(copy, -112, row + 4, 48, 48)
+            }
         }
-        if (!value.busy && hasMessage && !expanded) { back.visibility = View.VISIBLE; place(back, 184, row + 4, 48, 48) }
+        if (!value.busy && hasMessage && !expanded) { back.visibility = View.VISIBLE; beside(back, -56, row + 4, 48, 48) }
+        // The window is the box around everything placed, so the microphone's own position never depends on
+        // what is open beside it.
+        val box = OverlayGeometry.bounds(pending.minOf { it.x }, pending.maxOf { it.x + it.w })
+        val changed = surfaceWidth != box.width || surfaceHeight != newHeight || micOffsetDp != box.micOffset
+        surfaceWidth = box.width; surfaceHeight = newHeight; micOffsetDp = box.micOffset
+        for (item in pending) {
+            item.view.layoutParams = LayoutParams(dp(item.w), dp(item.h)).apply { leftMargin = dp(item.x + box.micOffset); topMargin = dp(item.y) }
+            if (item.view === panel || item.view === pill) {
+                // Origin-aware: it opens from the edge nearest the microphone.
+                item.view.pivotX = dp(when (side) { OverlayGeometry.Side.LEFT -> item.w; OverlayGeometry.Side.RIGHT -> 0; OverlayGeometry.Side.ABOVE -> item.w / 2 }).toFloat()
+                item.view.pivotY = dp(if (side == OverlayGeometry.Side.ABOVE || item.view === panel) item.h else item.h / 2).toFloat()
+            }
+        }
+        if (changed) resize?.invoke(dp(surfaceWidth), dp(surfaceHeight), dp(micOffsetDp))
         val mode = if (value.busy) value.mode else VoicePreferences.state.value.mode
         raw.highlighted = mode == "raw"; ai.highlighted = mode == "ai"; live.highlighted = mode == "live"
         raw.isEnabled = !value.busy; ai.isEnabled = !value.busy; live.isEnabled = !value.busy
@@ -292,8 +404,22 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
             keyboard && compactKeyboard -> "Hold to speak. Double tap to open voice settings."
             else -> "Hold to speak. Double tap for options."
         }
-        if (changed && (Build.VERSION.SDK_INT < 26 || ValueAnimator.areAnimatorsEnabled())) {
-            listOf(ai, live, lock, settings, back).filter { it.visibility == View.VISIBLE }.forEach { it.alpha = 0f; it.scaleX = 0.85f; it.scaleY = 0.85f; it.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(180).start() }
+        if (!keyboard && PressSurface.canAnimate(this)) {
+            // transitions.dev dropdown/modal open: what appears fades and scales in on the smooth-out curve, cards
+            // barely and buttons a little more, with a 40ms stagger so a row unfolds instead of popping.
+            var stagger = 0
+            for (piece in pieces.filter { it.visibility == View.VISIBLE && it !in wasShown }) {
+                val card = piece === panel || piece === pill
+                piece.animate().cancel()
+                piece.alpha = 0f
+                piece.scaleX = if (card) 0.97f else 0.85f; piece.scaleY = piece.scaleX
+                piece.translationY = if (piece === panel) dp(8).toFloat() else 0f
+                piece.animate().alpha(1f).scaleX(1f).scaleY(1f).translationY(0f)
+                    .setStartDelay(if (card) 0L else 40L * (stagger++).coerceAtMost(4)).setDuration(250L)
+                    .setInterpolator(PressSurface.SMOOTH_OUT).start()
+            }
+            // transitions.dev error shake, on the card that explains it, or on the microphone when there is none.
+            if (value.phase == "error" && previous.phase != "error") PressSurface.shake(if (panel.visibility == View.VISIBLE) panel else mic, 120L)
         }
         mic.invalidate()
     }
@@ -321,8 +447,8 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         if (!changed && lastLayout == signature) { mic.level = value.level; return }
         lastLayout = signature
         surfaceWidth = width; surfaceHeight = 48
-        if (changed) resize?.invoke(requiredWidth, requiredHeight)
-        listOf(pill, panel, back, settings, raw, ai, live, lock, cancel, copy).forEach { it.visibility = View.GONE }
+        if (changed) resize?.invoke(requiredWidth, requiredHeight, 0)
+        listOf(pill, indicator, panel, back, settings, raw, ai, live, lock, cancel, copy).forEach { it.visibility = View.GONE }
         preview.text = ""
         settings.visibility = if (value.busy || keyboardCovered) View.GONE else View.VISIBLE
         settings.isEnabled = !value.busy
@@ -332,6 +458,18 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         pill.visibility = modes
         pill.background = round(0xFF282B2E.toInt(), 16f)
         place(pill, cell + 2, 8, cell * 3 - 4, 32)
+        val modeIndex = listOf("raw", "ai", "live").indexOf(mode)
+        indicator.visibility = if (modes == View.VISIBLE && modeIndex >= 0) View.VISIBLE else View.GONE
+        place(indicator, cell + 3, 11, cell - 6, 26)
+        indicator.alpha = if (value.busy) 0.45f else 1f
+        val slideTo = dp(cell) * modeIndex.coerceAtLeast(0).toFloat()
+        indicator.animate().cancel()
+        if (indicatorIndex >= 0 && modeIndex >= 0 && indicatorIndex != modeIndex && isAttachedToWindow &&
+            (Build.VERSION.SDK_INT < 26 || ValueAnimator.areAnimatorsEnabled())) {
+            // transitions.dev tabs sliding: 250ms on the smooth-out curve.
+            indicator.animate().translationX(slideTo).setDuration(250).setInterpolator(PressSurface.SMOOTH_OUT).start()
+        } else indicator.translationX = slideTo
+        indicatorIndex = modeIndex
         listOf("raw" to raw, "ai" to ai, "live" to live).forEachIndexed { index, (name, button) ->
             button.visibility = modes
             button.kind = name
@@ -360,6 +498,17 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         }
     }
 
+    /**
+     * A message is printed once. With the preview on, an explanation already fills the preview line, so the
+     * caption above it stays empty instead of repeating it word for word.
+     */
+    private fun statusLine(value: VoiceUi, explained: Boolean, showPreview: Boolean): String = when {
+        explained && showPreview && !value.busy -> ""
+        // Reopened after its moment passed: the old verdict is stale, but the text is still the last result.
+        value.phase == "done" && !OverlayPresentation.visible() -> "Last result"
+        else -> value.message
+    }
+
     private fun updatePreview(value: VoiceUi) {
         preview.text = listOf(value.finalText, value.interim).filter { it.isNotBlank() }.joinToString(" ").ifBlank {
             when (value.phase) { "connecting" -> "Getting your microphone ready…"; "recording" -> "Speak naturally"; else -> value.message }
@@ -370,14 +519,27 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 if (ui.phase == "processing") return true
-                downX = e.rawX; downY = e.rawY; lastX = downX; lastY = downY; moving = false; held = false; target = ""
+                downX = e.rawX; downY = e.rawY; moving = false; held = false; target = ""
                 mic.scaleX = 0.94f; mic.scaleY = 0.94f
                 if (!ui.busy) postDelayed(beginHold, VoiceGestureTiming.HOLD_MS)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
                 val distance = hypot(e.rawX - downX, e.rawY - downY)
-                if (!held && !ui.busy && distance > slop && !keyboard) { moving = true; removeCallbacks(beginHold); drag?.invoke(e.rawX - lastX, e.rawY - lastY) }
+                if (!held && !ui.busy && distance > slop && !keyboard) {
+                    if (!moving) {
+                        moving = true
+                        removeCallbacks(beginHold)
+                        // A card wider than the room beside the microphone cannot follow it across the
+                        // screen without the microphone jumping. Dragging moves the idle bubble only:
+                        // fold the card away first, keeping the microphone exactly where it is. A retained
+                        // result stays available; a double tap reopens it.
+                        dragStart?.invoke()
+                        OverlayPresentation.collapse()
+                        render(ui)
+                    }
+                    drag?.invoke(e.rawX - downX, e.rawY - downY)
+                }
                 if (held && ui.active && !ui.locked) {
                     val next = listOf("lock" to lock).firstOrNull { (_, v) ->
                         val p = IntArray(2); v.getLocationOnScreen(p); hypot(e.rawX - p[0] - v.width / 2f, e.rawY - p[1] - v.height / 2f) < dp(32)
@@ -387,12 +549,17 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
                         if (next == "lock") { VoiceSession.lock(); feedback(HapticFeedbackConstants.LONG_PRESS) } else choose(next)
                     } else if (next.isEmpty()) target = ""
                 }
-                lastX = e.rawX; lastY = e.rawY; return true
+                return true
             }
             MotionEvent.ACTION_UP -> {
                 removeCallbacks(beginHold); mic.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
                 when {
-                    moving -> { tapSequence.reset(); dragEnd?.invoke() }
+                    moving -> {
+                        tapSequence.reset()
+                        // The place the finger lifted is part of the drag: the last move may stop short of it.
+                        drag?.invoke(e.rawX - downX, e.rawY - downY)
+                        dragEnd?.invoke()
+                    }
                     held -> if (!ui.locked) VoiceSession.finish(context)
                     ui.active -> VoiceSession.finish(context)
                     keyboard && compactKeyboard && ui.busy -> VoiceSession.cancel(context)
@@ -412,6 +579,9 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
                 removeCallbacks(beginHold); mic.scaleX = 1f; mic.scaleY = 1f
                 tapSequence.reset()
                 if (held && ui.active && !ui.locked) VoiceSession.cancel(context)
+                // The system took the gesture mid-drag. The microphone is already where the user left it,
+                // so that is what gets saved; otherwise it would jump back on the next show.
+                if (moving) dragEnd?.invoke()
                 held = false; moving = false; return true
             }
         }
@@ -468,11 +638,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
             paint.reset(); paint.isAntiAlias = true
             when (kind) {
                 "raw", "ai", "live" -> {
-                    if (highlighted) {
-                        paint.color = ACCENT
-                        val inset = 3f * density
-                        c.drawRoundRect(inset, 11f * density, width - inset, height - 11f * density, 13f * density, 13f * density, paint)
-                    }
+                    // The jade chip behind the active mode is the sliding indicator; only the label changes here.
                     paint.color = if (highlighted) ON_ACCENT else MUTED
                     paint.textSize = 13f * resources.displayMetrics.scaledDensity.coerceAtMost(density * 1.15f)
                     paint.typeface = MEDIUM
@@ -481,7 +647,9 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
                     c.drawText(label, cx, cy - (paint.descent() + paint.ascent()) / 2f, paint)
                 }
                 "mic", "finish", "wait" -> {
-                    val radius = 17f * density
+                    // 17dp, but never wider than its cell: on a very narrow screen the cell is 32dp and a 34dp disc
+                    // was clipped on its right edge by the Polish button beside it.
+                    val radius = minOf(17f * density, width / 2f - density)
                     if (kind == "finish" && meter > 0f) {
                         paint.color = HALO; paint.alpha = (60 + meter * 120).toInt().coerceAtMost(255)
                         c.drawCircle(cx, cy, radius + (2f + meter * 4f) * density, paint)
@@ -594,7 +762,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
             const val SURFACE = 0xFF282B2E.toInt()
             const val ICON = 0xFFE7E5DF.toInt()
             const val MUTED = 0xFFB2B5B5.toInt()
-            const val BUBBLE = 0xF2212326.toInt()
+            const val BUBBLE = 0xFF212326.toInt()
             const val HAIRLINE = 0x1FFFFFFF
             /** Done is the pale jade disc, so it never looks like the idle (jade) mic. */
             const val SUCCESS = 0xFF8EDCBB.toInt()

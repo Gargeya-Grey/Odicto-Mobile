@@ -20,10 +20,13 @@ import kotlin.math.roundToLong
 /**
  * Session-local presentation only. Collapsing never detaches the IME's editor or voice target.
  *
- * The IME window keeps the expanded height in both states. Collapsed, the column is pushed down by
- * the typing area's height so only the top row shows, and [contentTop] tells the service which part
- * of the window the host app must keep clear. Motion is a translation of the column, so no frame
- * resizes the IME window or relayouts the host app. The host app is resized once per transition:
+ * The IME window keeps one height in every state. Collapsed, the column is pushed down by the typing
+ * area's height so only the header shows (the voice row and the quick-edit row), and [contentTop] tells
+ * the service which part of the window the host app must keep clear. Expanded, the quick-edit row is
+ * redundant with the grid's own bottom row, so it is squeezed away: the typing area slides up over it
+ * while it shrinks and fades, and the column settles lower by the row's height, leaving that much
+ * transparent window above the keyboard exactly as the collapsed state does. Motion is only
+ * translation, scale and alpha, so no frame resizes the IME window or relayouts the host app. The host app is resized once per transition:
  * before an expand starts (the keys slide into space that is already free) and after a collapse
  * ends (the keys leave before the app takes the space back).
  */
@@ -36,7 +39,13 @@ internal class KeyboardExpansion(
     private val area = root.findViewById<View>(R.id.ime_typing_area)
     private val tools = root.findViewById<View>(R.id.function_row)
     private val toggle = root.findViewById<ImageButton>(R.id.ime_keyboard_toggle)
+    private val quick = root.findViewById<View>(R.id.ime_quick_keys)
     private var expanded = false
+    /** How far the typing area is revealed (0 hidden, 1 shown) and how far the quick row is squeezed (0 whole, 1 gone). */
+    private var reveal = 0f
+    private var squeeze = 0f
+    /** The squeeze the host app is told about, held until a collapse has finished. */
+    private var insetSqueeze = 0
     private var recovery = false
     /** True while the host app is told about the full keyboard height. */
     private var insetExpanded = false
@@ -58,6 +67,7 @@ internal class KeyboardExpansion(
             expanded = !expanded
             render(true)
         }
+        quick.pivotY = 0f
         area.addOnAttachStateChangeListener(attachment)
         area.addOnLayoutChangeListener(sizeWatcher)
         render(false)
@@ -75,11 +85,12 @@ internal class KeyboardExpansion(
         finishAnimation()
         area.removeOnAttachStateChangeListener(attachment)
         area.removeOnLayoutChangeListener(sizeWatcher)
+        toggle.animate().cancel()
         toggle.setOnClickListener(null)
     }
 
     /** Root-relative y of the top edge the host app must keep clear. */
-    fun contentTop(): Int = column.top + if (insetExpanded) 0 else hiddenOffset()
+    fun contentTop(): Int = column.top + if (insetExpanded) insetSqueeze else hiddenOffset()
 
     /** Root-relative y where the keyboard is drawn now, for overlays that avoid it. */
     fun visibleTop(): Int = (column.top + column.translationY).toInt()
@@ -98,13 +109,59 @@ internal class KeyboardExpansion(
         insetsChanged()
     }
 
+    private fun setInsetSqueeze(px: Int) {
+        if (insetSqueeze == px) return
+        insetSqueeze = px
+        if (insetExpanded) insetsChanged()
+    }
+
+    /** Both inset facts at once, so the host app is told exactly once however they change together. */
+    private fun setInsets(expandedValue: Boolean, squeezePx: Int) {
+        val changed = insetExpanded != expandedValue || (expandedValue && insetSqueeze != squeezePx)
+        insetExpanded = expandedValue
+        insetSqueeze = squeezePx
+        if (changed) insetsChanged()
+    }
+
+    private var toggleIcon = 0
+
+    /** transitions.dev icon swap: the old glyph dips out, the new one settles in, so the toggle never just snaps. */
+    private fun swapToggleIcon(res: Int, animate: Boolean) {
+        if (toggleIcon == res) return
+        val first = toggleIcon == 0
+        toggleIcon = res
+        toggle.animate().cancel()
+        val enabled = Build.VERSION.SDK_INT < 26 || ValueAnimator.areAnimatorsEnabled()
+        if (first || !animate || !toggle.isAttachedToWindow || !enabled) {
+            toggle.setImageResource(res); toggle.alpha = 1f
+            return
+        }
+        toggle.animate().alpha(0f).setDuration(80).withEndAction {
+            toggle.setImageResource(res)
+            toggle.animate().alpha(1f).setDuration(170).setInterpolator(PressSurface.SMOOTH_OUT).start()
+        }.start()
+    }
+
+    /** One place that turns the two fractions into pixels, for both the settled and the animated frames. */
+    private fun present(newReveal: Float, newSqueeze: Float) {
+        reveal = newReveal
+        squeeze = newSqueeze
+        val gone = quick.height.toFloat() * newSqueeze
+        column.translationY = hiddenOffset() * (1f - newReveal) + gone
+        area.translationY = -gone
+        quick.scaleY = 1f - newSqueeze
+        // The row thins out faster than it shrinks, so the keys sliding up never pass over live text.
+        quick.alpha = (1f - newSqueeze * 1.6f).coerceIn(0f, 1f)
+    }
+
     /** Final state with no motion: also the state a detached or freshly created view starts in. */
     private fun settle() {
         val show = shown()
-        column.translationY = if (show) 0f else hiddenOffset().toFloat()
+        present(if (show) 1f else 0f, if (expanded) 1f else 0f)
         area.visibility = if (show) View.VISIBLE else View.INVISIBLE
         tools.visibility = if (expanded) View.VISIBLE else View.INVISIBLE
-        setInsetExpanded(show)
+        quick.visibility = if (expanded) View.INVISIBLE else View.VISIBLE
+        setInsets(show, if (expanded) quick.height else 0)
         root.invalidate()
     }
 
@@ -113,25 +170,33 @@ internal class KeyboardExpansion(
         finishAnimation()
         toggle.contentDescription = if (expanded) "Hide keyboard" else "Show keyboard"
         toggle.isSelected = expanded
-        toggle.setImageResource(if (expanded) R.drawable.odicto_ic_keyboard_hide else R.drawable.odicto_ic_keyboard)
+        swapToggleIcon(if (expanded) R.drawable.odicto_ic_keyboard_hide else R.drawable.odicto_ic_keyboard, animate)
         onPresentationChanged?.invoke(expanded && !recovery)
         val show = shown()
-        val target = if (show) 0f else hiddenOffset().toFloat()
-        val from = column.translationY
+        val revealTo = if (show) 1f else 0f
+        val squeezeTo = if (expanded) 1f else 0f
+        val revealFrom = reveal
+        val squeezeFrom = squeeze
         val enabled = Build.VERSION.SDK_INT < 26 || ValueAnimator.areAnimatorsEnabled()
-        if (!animate || !column.isAttachedToWindow || !enabled || hiddenOffset() == 0 || from == target) {
+        // Told before the motion starts, so the keys slide into space the app has already given up.
+        if (expanded) setInsetSqueeze(quick.height)
+        if (!animate || !column.isAttachedToWindow || !enabled || (hiddenOffset() == 0 && quick.height == 0) ||
+            (revealFrom == revealTo && squeezeFrom == squeezeTo)) {
             settle()
             return
         }
         area.visibility = View.VISIBLE
+        quick.visibility = View.VISIBLE
         if (expanded) tools.visibility = View.VISIBLE
         if (show) setInsetExpanded(true)
-        val distance = abs(target - from) / hiddenOffset()
-        animation = ValueAnimator.ofFloat(from, target).apply {
-            duration = ((if (show) OPEN_MS else CLOSE_MS) * distance).roundToLong().coerceAtLeast(1L)
-            interpolator = if (show) OPEN_CURVE else CLOSE_CURVE
+        val opening = revealTo + squeezeTo > revealFrom + squeezeFrom
+        val distance = maxOf(abs(revealTo - revealFrom), abs(squeezeTo - squeezeFrom))
+        animation = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = ((if (opening) OPEN_MS else CLOSE_MS) * distance).roundToLong().coerceAtLeast(1L)
+            interpolator = if (opening) OPEN_CURVE else CLOSE_CURVE
             addUpdateListener {
-                column.translationY = it.animatedValue as Float
+                val u = it.animatedValue as Float
+                present(revealFrom + (revealTo - revealFrom) * u, squeezeFrom + (squeezeTo - squeezeFrom) * u)
                 root.invalidate()
             }
             addListener(object : AnimatorListenerAdapter() {

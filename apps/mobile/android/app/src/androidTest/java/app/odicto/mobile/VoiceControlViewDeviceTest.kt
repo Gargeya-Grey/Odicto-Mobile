@@ -45,7 +45,7 @@ class VoiceControlViewDeviceTest {
                 view.setKeyboardCompact(compact)
                 val width = view.requiredWidth
                 var resizes = 0
-                view.resize = { _, _ -> resizes++ }
+                view.resize = { _, _, _ -> resizes++ }
                 for (phase in listOf("idle", "connecting", "recording", "processing", "done", "error", "idle")) {
                     view.render(VoiceUi(phase = phase, finalText = if (phase == "done") "Synthetic result" else ""))
                     assertEquals(view.dp(if (compact) 240 else 288), view.requiredWidth)
@@ -83,7 +83,7 @@ class VoiceControlViewDeviceTest {
                     override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { textWrites++ }
                     override fun afterTextChanged(s: Editable?) {}
                 })
-                view.resize = { _, _ -> resizes++ }
+                view.resize = { _, _, _ -> resizes++ }
                 repeat(1000) { view.render(recording.copy(interim = "Update $it", level = (it % 10) / 10f)) }
                 assertEquals("Hidden preview must receive no text updates", 0, textWrites)
                 assertEquals("Steady recording must not resize", 0, resizes)

@@ -33,7 +33,7 @@ class OverlayPresentationRenderingTest {
         try {
             val view = VoiceControlView(owner.get())
             owner.get().setContentView(view, FrameLayout.LayoutParams(view.requiredWidth, view.requiredHeight))
-            view.resize = { w, h -> view.layoutParams = view.layoutParams.apply { width = w; height = h } }
+            view.resize = { w, h, _ -> view.layoutParams = view.layoutParams.apply { width = w; height = h } }
             test(view, owner.get())
         } finally {
             owner.pause().stop().destroy()
@@ -76,7 +76,8 @@ class OverlayPresentationRenderingTest {
         advance(2000)
         publish(view, VoiceUi(phase = "recording", mode = "raw"))
         advance(5000)
-        assertEquals(view.dp(304), view.layoutParams.width)
+        // The window is exactly as wide as what is open: a 288dp card plus the microphone and margins.
+        assertEquals(view.dp(296), view.layoutParams.width)
         assertTrue(buttons(view).any { it.contentDescription == "Finish recording" })
     }
 
@@ -122,7 +123,8 @@ class OverlayPresentationRenderingTest {
             activity.setContentView(FrameLayout(activity))
             val result = VoiceUi(phase = phase, resultId = "hidden-$phase", finalText = "Retained")
             app.odicto.mobile.dictation.VoiceSession.update { result }
-            advance(4000)
+            // A finished result folds after 3s; an error or notice is given 5s to be read.
+            advance(if (phase == "done") 4000 else 6000)
             val replacement = VoiceControlView(activity)
             activity.setContentView(replacement)
             assertEquals(replacement.dp(72), replacement.requiredWidth)
@@ -161,7 +163,8 @@ class OverlayPresentationRenderingTest {
     fun accessibilityTimeoutExtendsActualCollapse() = attached { view, _ ->
         publish(view, VoiceUi(phase = "notice", resultId = "accessible", message = "Notice"))
         advance(3000)
-        assertEquals(view.dp(304), view.layoutParams.width)
+        // The window is exactly as wide as what is open: a 288dp card plus the microphone and margins.
+        assertEquals(view.dp(296), view.layoutParams.width)
         advance(3000)
         assertEquals(view.dp(72), view.layoutParams.width)
     }
@@ -171,10 +174,11 @@ class OverlayPresentationRenderingTest {
         try {
             val view = VoiceControlView(owner.get())
             owner.get().setContentView(view, FrameLayout.LayoutParams(view.requiredWidth, view.requiredHeight))
-            view.resize = { w, h -> view.layoutParams = view.layoutParams.apply { width = w; height = h } }
+            view.resize = { w, h, _ -> view.layoutParams = view.layoutParams.apply { width = w; height = h } }
             view.render(VoiceUi(phase = "done", resultId = "completion", finalText = "Retained", message = "Check field before pasting"))
             shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(2999))
-            assertEquals(view.dp(304), view.layoutParams.width)
+            // The window is exactly as wide as what is open: a 288dp card plus the microphone and margins.
+            assertEquals(view.dp(296), view.layoutParams.width)
             shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(1))
             view.measure(View.MeasureSpec.makeMeasureSpec(view.layoutParams.width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(view.layoutParams.height, View.MeasureSpec.EXACTLY))
             view.layout(0, 0, view.measuredWidth, view.measuredHeight)

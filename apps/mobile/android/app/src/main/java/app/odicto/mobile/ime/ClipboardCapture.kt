@@ -23,7 +23,8 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import java.security.MessageDigest
 
-internal data class CapturedClipboard(val texts: List<String>, val token: String, val isChange: Boolean = false)
+/** [copiedAt] is the clip's own creation time (wall clock), or 0 when the platform does not report it. */
+internal data class CapturedClipboard(val texts: List<String>, val token: String, val isChange: Boolean = false, val copiedAt: Long = 0L)
 
 internal interface ClipboardSource {
     fun isDefaultIme(): Boolean
@@ -110,7 +111,7 @@ internal class AndroidClipboardSource(context: Context) : ClipboardSource {
         }
         val hash = digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
         val timestamp = if (Build.VERSION.SDK_INT >= 26) clip.description.timestamp else 0L
-        return CapturedClipboard(texts, "$timestamp:$hash")
+        return CapturedClipboard(texts, "$timestamp:$hash", copiedAt = timestamp)
     }
 
     override fun addListener(listener: () -> Unit) {
@@ -166,7 +167,14 @@ internal class ClipboardCapture(
         }
     }
 
+    /** Called for every eligible, non-sensitive sample: (text, token, copiedAt). Presentation only. */
+    var onFreshClip: ((String, String, Long) -> Unit)? = null
+
     private fun persist(clip: CapturedClipboard) {
+        val first = clip.texts.firstOrNull()
+        // Without a platform timestamp only a change heard just now is known to be fresh.
+        val copiedAt = if (clip.copiedAt > 0L) clip.copiedAt else if (clip.isChange) System.currentTimeMillis() else 0L
+        if (first != null && copiedAt > 0L) onFreshClip?.invoke(first, clip.token, copiedAt)
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
                 repository.capture(clip.texts, clip.token, clip.isChange)

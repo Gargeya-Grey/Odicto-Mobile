@@ -20,6 +20,7 @@ object OverlayPresentation {
 
     fun start(timeoutMillis: Long) {
         timeout = timeoutMillis
+        VoiceSession.messageLifetimeMs = maxOf(VoiceSession.MESSAGE_LIFETIME_MS, timeoutMillis)
         if (observing) return
         observing = true
         scope.launch { VoiceSession.state.collect { observe(it) } }
@@ -31,7 +32,13 @@ object OverlayPresentation {
         key = next
         options = false
         dismissed = false
-        deadline = if (value.phase in listOf("done", "error", "notice")) SystemClock.elapsedRealtime() + timeout else null
+        // A failure is given the time it needs to be read; the session then resets it, so the card and the
+        // stored message end together and a later reopen can never bring a stale error back.
+        deadline = when (value.phase) {
+            "done" -> SystemClock.elapsedRealtime() + timeout
+            "error", "notice" -> SystemClock.elapsedRealtime() + maxOf(timeout, VoiceSession.messageLifetimeMs)
+            else -> null
+        }
     }
 
     fun visible(): Boolean {

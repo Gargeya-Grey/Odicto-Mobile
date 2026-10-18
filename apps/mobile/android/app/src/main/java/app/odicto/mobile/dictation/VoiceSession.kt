@@ -15,11 +15,23 @@ data class VoiceUi(val phase: String = "idle", val mode: String = "ai", val lock
     val active get() = phase == "connecting" || phase == "recording"
     val busy get() = active || phase == "processing"
     /** Ends a result or notice preview. A stale timer must never clear a newer result, a notice, or a live session. */
+    /**
+     * Ends a failure message once it has been on screen long enough to read. A retained result stays (it
+     * is the user's text, still copyable); only the message goes. A newer state is never touched.
+     */
+    fun expireError(expectedMessage: String): VoiceUi = when {
+        phase != "error" || message != expectedMessage -> this
+        finalText.isNotBlank() || interim.isNotBlank() -> copy(phase = "idle", message = "", locked = false, level = 0f)
+        else -> VoiceUi(mode = mode)
+    }
     fun expireResult(expectedId: String): VoiceUi = if (((phase == "done" && inserted) || (phase == "notice" && finalText.isEmpty() && interim.isEmpty())) && resultId == expectedId && expectedId.isNotEmpty()) VoiceUi(mode = mode) else this
 }
 object VoiceSession {
     private val previewScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var previewExpiry: Job? = null
+    /** How long an error or notice stays before it resets itself. Raised for users who ask for more time to read. */
+    var messageLifetimeMs: Long = MESSAGE_LIFETIME_MS
+    const val MESSAGE_LIFETIME_MS = 5_000L
     private val mutable = MutableStateFlow(VoiceUi())
     val state = mutable.asStateFlow()
     var session: Long = -1; private set
@@ -52,7 +64,7 @@ object VoiceSession {
         val editor = DictationCoordinator.activeEditorSession ?: return
         val id = java.util.UUID.randomUUID().toString()
         if (!DictationCoordinator.start(editor, VoicePreferences.state.value.mode == "ai", id)) {
-            update { it.copy(phase = "error", message = "Cannot read this selection. Reselect up to 20,000 characters in a supported editor.") }
+            showError("Cannot read this selection. Reselect up to 20,000 characters in a supported editor.")
             return
         }
         session = editor; operationId = id
@@ -87,18 +99,26 @@ object VoiceSession {
     fun fail(message: String) {
         previewExpiry?.cancel()
         DictationCoordinator.fail(message)
-        // No result id: a real failure stays readable until the user dismisses it.
+        showError(message)
+    }
+
+    /** Shows a failure, then resets it after [messageLifetimeMs]: nobody has to dismiss a stale error. */
+    private fun showError(message: String) {
+        previewExpiry?.cancel()
         update { it.copy(phase = "error", locked = false, level = 0f, message = message, resultId = "") }
+        previewExpiry = previewScope.launch {
+            delay(messageLifetimeMs)
+            update { it.expireError(message) }
+        }
     }
 
     /** A short explanation that clears itself, for taps that cannot start a recording. */
     fun notice(message: String) {
         previewExpiry?.cancel()
         val id = "notice"
-        // "notice" is deliberately not "error": a failure stays until the user dismisses it, this clears.
         update { it.copy(phase = "notice", locked = false, level = 0f, message = message, resultId = id, inserted = false) }
         previewExpiry = previewScope.launch {
-            delay(20_000)
+            delay(messageLifetimeMs)
             update { it.expireResult(id) }
         }
     }

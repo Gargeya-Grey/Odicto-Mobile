@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- transitions.dev "bounce": a small overshoot on the way back, for releasing a pressed control. -->
+<pathInterpolator xmlns:android="http://schemas.android.com/apk/res/android"
+    android:controlX1="0.34" android:controlY1="1.36"
+    android:controlX2="0.64" android:controlY2="1" />

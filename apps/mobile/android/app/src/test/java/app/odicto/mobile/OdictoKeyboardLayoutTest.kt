@@ -183,9 +183,14 @@ class OdictoKeyboardLayoutTest {
         root.findViewById<View>(R.id.ime_keyboard_toggle).performClick()
         measure(root)
         assertEquals("expanding must not resize the IME window", height, root.measuredHeight)
-        assertEquals(column.top, expansion.contentTop())
-        assertEquals(0f, column.translationY)
+        // The quick-edit row duplicates the grid's bottom row, so it is squeezed away and the column
+        // settles lower by exactly its height: the visible keyboard is that much shorter.
+        val quickRow = root.findViewById<View>(R.id.ime_quick_keys)
+        assertTrue(quickRow.height > 0)
+        assertEquals(column.top + quickRow.height, expansion.contentTop())
+        assertEquals(quickRow.height.toFloat(), column.translationY)
         assertEquals(View.VISIBLE, area.visibility)
+        assertEquals(View.INVISIBLE, quickRow.visibility)
         assertTrue("the host app hears about the new inset", insetUpdates > before)
         expansion.dispose()
     }

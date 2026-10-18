@@ -40,6 +40,9 @@ class KeyboardController(
 ) {
     private val context: Context = root.context
     private val keyboard: OdictoKeyboardView = root.findViewById(R.id.ime_keyboard)
+    /** The always-visible header row. It shares every key handler with [keyboard]. */
+    private val quickKeys: OdictoKeyboardView = root.findViewById(R.id.ime_quick_keys)
+    private val keyViews = listOf(keyboard, quickKeys)
     private val functionRow: LinearLayout = root.findViewById(R.id.function_row)
     private val emojiPanel: LinearLayout = root.findViewById(R.id.emoji_panel)
     private val clipboardPanel: LinearLayout = root.findViewById(R.id.clipboard_panel)
@@ -61,6 +64,7 @@ class KeyboardController(
     private var lastNotice = 0L
     private var lastWasSpace = false
     private var emojiPage: String = PAGE_RECENT
+    private var fadeNextEmojiPage = false
     private val editorTail = EditorTail()
     private var enterKind = ImeActions.Kind.NEWLINE
     private var deleteBurst = false
@@ -79,6 +83,9 @@ class KeyboardController(
     private val spellingStrip = SpellingStrip(root.findViewById(R.id.ime_suggestions), ::chooseSpelling,
         keep = ::keepTyped, undo = { feedback(); undoSpelling() }, covered = ::onAssistanceCovered)
     private val assistance: View = root.findViewById(R.id.ime_assistance)
+    private val pasteChip = PasteChip(root.findViewById(R.id.ime_paste), ::pasteSuggested, ::dismissPaste)
+    private var assistanceCovered = false
+    private var pasteTimer: Runnable? = null
 
     fun refreshAppearance() {
         refreshSpelling()
@@ -87,18 +94,23 @@ class KeyboardController(
         if (appearance == next) return
         appearance = next
         cancelTouch()
-        keyboard.refreshAppearance()
+        keyViews.forEach { it.refreshAppearance() }
     }
 
     init {
-        keyboard.setOnKeyListener(::onKey)
+        quickKeys.useQuickRow()
         keyboard.setUppercaseChoiceListener(::uppercaseChoice)
         root.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
-            if (right - left != oldRight - oldLeft) keyboard.cancelTouch()
+            if (right - left != oldRight - oldLeft) keyViews.forEach { it.cancelTouch() }
         }
-        keyboard.setBackspaceReleaseListener(::finishDeleteBurst)
-        keyboard.setBackspaceRepeatGate(::prepareDeleteRepeat)
-        keyboard.setDragListener(::onSpaceDrag) { gestureAllowed() }
+        keyViews.forEach { view ->
+            view.setOnKeyListener(::onKey)
+            view.setBackspaceReleaseListener(::finishDeleteBurst)
+            view.setBackspaceRepeatGate(::prepareDeleteRepeat)
+            view.setDragListener(::onSpaceDrag) { gestureAllowed() }
+        }
+        listOf(R.id.ime_keyboard_toggle, R.id.ime_undo, R.id.ime_polish).forEach { PressSurface.styleIcon(root.findViewById(it)) }
+        for (index in 0 until functionRow.childCount) PressSurface.styleIcon(functionRow.getChildAt(index))
         functionRow.findViewById<ImageButton>(R.id.function_mic).setOnClickListener { toggleVoice() }
         functionRow.findViewById<ImageButton>(R.id.function_emoji).setOnClickListener { toggleEmoji() }
         functionRow.findViewById<ImageButton>(R.id.function_clipboard).setOnClickListener { toggleClipboard() }
@@ -129,7 +141,7 @@ class KeyboardController(
     fun onStartInput(info: EditorInfo?) {
         clearSpelling()
         refreshAppearance()
-        keyboard.cancelTouch()
+        keyViews.forEach { it.cancelTouch() }
         resetCursorWindow()
         invalidateHeldLetter()
         deleteBurst = false
@@ -147,18 +159,20 @@ class KeyboardController(
         editorTail.clear()
         sentenceCap = if (EditorPolicy.typingAssistPermits(info)) null else false
         enterKind = ImeActions.resolve(info)
-        keyboard.setEnterAction(enterKind, ImeActions.displayLabel(info, enterKind))
+        val enterLabel = ImeActions.displayLabel(info, enterKind)
+        keyViews.forEach { it.setEnterAction(enterKind, enterLabel) }
         show(OdictoKeyboardView.Page.LETTERS)
         closePanels()
         hideNotice()
         syncMicButton()
         refreshSpelling()
+        refreshPaste()
     }
 
     fun onFinishInput() {
         editorInfo = null
         clearSpelling()
-        keyboard.cancelTouch()
+        keyViews.forEach { it.cancelTouch() }
         finishDeleteBurst()
         editorSession.reset(null, -1, -1)
         handler.removeCallbacks(hideNoticeTask)
@@ -168,6 +182,8 @@ class KeyboardController(
         editorTail.clear()
         sentenceCap = null
         closePanels()
+        // Hidden while there is no field; the offer itself is kept for the next one.
+        refreshPaste()
     }
 
     fun onSelectionChanged(start: Int, end: Int) = onSelectionChanged(-1, -1, start, end, -1, -1)
@@ -209,8 +225,8 @@ class KeyboardController(
         onExternalEdit(start, end)
     }
 
-    fun stopRepeating() { keyboard.stopRepeating(); finishDeleteBurst() }
-    fun cancelTouch() { keyboard.cancelTouch(); finishDeleteBurst() }
+    fun stopRepeating() { keyViews.forEach { it.stopRepeating() }; finishDeleteBurst() }
+    fun cancelTouch() { keyViews.forEach { it.cancelTouch() }; finishDeleteBurst() }
     fun dispose() { onFinishInput(); spellingStrip.dispose(); voiceControl = null }
 
     fun onExternalEdit(start: Int, end: Int) {
@@ -236,7 +252,7 @@ class KeyboardController(
         val connection = connectionProvider()
         if (spec.key == OdictoKeyboardView.Key.BACKSPACE && spec.repeatOrdinal > 0 &&
             (!deleteBurst || connection == null || connection !== deleteConnection)) {
-            keyboard.cancelTouch()
+            keyViews.forEach { it.cancelTouch() }
             finishDeleteBurst()
             return
         }
@@ -249,7 +265,11 @@ class KeyboardController(
         }
         when (spec.key) {
             OdictoKeyboardView.Key.CHARACTER, OdictoKeyboardView.Key.SPACE,
-            OdictoKeyboardView.Key.ENTER, OdictoKeyboardView.Key.BACKSPACE -> service.cancelFieldPolish()
+            OdictoKeyboardView.Key.ENTER, OdictoKeyboardView.Key.BACKSPACE -> {
+                service.cancelFieldPolish()
+                // Typing ends the paste offer for this copy.
+                service.pasteSuggestion.spend()
+            }
             else -> Unit
         }
         val epoch = editorSession.epoch
@@ -354,6 +374,8 @@ class KeyboardController(
     }
 
     fun onKeyboardPresentationChanged(expanded: Boolean) {
+        // Opening the typing area is the user choosing to type, not to paste.
+        if (expanded && service.pasteSuggestion.current() != null) service.pasteSuggestion.spend()
         typingExpanded = expanded
         if (!expanded) clearSpelling()
         refreshSpelling()
@@ -368,6 +390,7 @@ class KeyboardController(
         spellingStrip.render(allowed && keyboard.visibility == View.VISIBLE, word?.text, correctionUndo?.original,
             word != null && startsSentence(word), word != null && word == keepOriginal)
         layoutAssistance()
+        refreshPaste()
     }
 
     /** The replacement the spacebar applies; the curated table covers the moment before the lexicon loads. */
@@ -398,14 +421,55 @@ class KeyboardController(
     }
 
     private fun onAssistanceCovered(covered: Boolean) {
-        voiceControl?.setKeyboardCovered(covered)
+        assistanceCovered = covered
+        voiceControl?.setKeyboardCovered(assistanceCovered || pasteChip.shown)
         layoutAssistance()
     }
 
     /**
-     * The slot covers the tool cells and nothing else. Idle: everything between the keyboard toggle
-     * and the mic, minus the Copy cell while a result can be copied (explicit Copy recovery must stay
-     * reachable). During voice: only the three mode cells, so cancel and lock stay reachable.
+     * The just-copied text, offered for one-tap paste in the centre slot. Shown only while the offer is
+     * fresh and unspent, this field accepts clipboard text, nothing else is using the slot (a status
+     * message wins), and no voice or Polish work is running. Being hidden for any of those reasons does
+     * not spend the offer; switching apps or fields never does.
+     */
+    fun refreshPaste() {
+        pasteTimer?.let { handler.removeCallbacks(it) }
+        pasteTimer = null
+        val offer = service.pasteSuggestion.current()?.takeIf {
+            EditorPolicy.clipboardPermits(editorInfo) && connectionProvider() != null &&
+                !spellingStrip.statusShown && !VoiceSession.state.value.busy && !service.isPolishBusy() &&
+                DictationCoordinator.aiSelection == null
+        }
+        if (offer != null) {
+            pasteChip.show(offer.text, animate = !pasteChip.shown)
+            val remaining = (service.pasteSuggestion.expiresAt() ?: 0L) - System.currentTimeMillis()
+            pasteTimer = Runnable { refreshPaste() }.also { handler.postDelayed(it, remaining.coerceAtLeast(1L)) }
+        } else pasteChip.hide()
+        voiceControl?.setKeyboardCovered(assistanceCovered || pasteChip.shown)
+        layoutAssistance()
+    }
+
+    /** Any action other than pasting this text ends the offer for this copy. */
+    fun dismissPaste() {
+        service.pasteSuggestion.spend()
+        refreshPaste()
+    }
+
+    private fun pasteSuggested() {
+        val offer = service.pasteSuggestion.current() ?: run { refreshPaste(); return }
+        if (!EditorPolicy.clipboardPermits(editorInfo) || connectionProvider() == null) { refreshPaste(); return }
+        feedback()
+        service.pasteSuggestion.spend()
+        // The same guarded path as pasting from the clipboard panel.
+        commit(offer.text)
+        refreshPaste()
+    }
+
+    /**
+     * The slot covers the tool cells and nothing else. Idle: everything between Undo and the mic,
+     * minus the Copy cell while a result can be copied (explicit Copy recovery must stay reachable).
+     * Undo and the keyboard toggle are never covered. During voice: only the three mode cells, so
+     * cancel and lock stay reachable.
      * The top row is laid out left to right in every locale (see ime_keyboard.xml), so these are
      * absolute left/right margins.
      */
@@ -414,12 +478,14 @@ class KeyboardController(
         val cell = voiceControl?.keyboardCellPx ?: dp(48)
         val voice = VoiceSession.state.value
         val copyable = !voice.busy && (voice.finalText.isNotBlank() || voice.interim.isNotBlank())
-        val left = if (voice.busy && row.width > 0) (row.width - cell * 6).coerceAtLeast(cell * 2) else cell
+        val left = if (voice.busy && row.width > 0) (row.width - cell * 6).coerceAtLeast(cell * 3) else cell * 2
         val right = if (voice.busy || copyable) cell * 3 else cell * 2
-        val params = assistance.layoutParams as? android.view.ViewGroup.MarginLayoutParams ?: return
-        if (params.leftMargin == left && params.rightMargin == right) return
-        params.leftMargin = left; params.rightMargin = right
-        assistance.layoutParams = params
+        listOf(assistance, root.findViewById<View>(R.id.ime_paste)).forEach { slot ->
+            val params = slot.layoutParams as? android.view.ViewGroup.MarginLayoutParams ?: return@forEach
+            if (params.leftMargin == left && params.rightMargin == right) return@forEach
+            params.leftMargin = left; params.rightMargin = right
+            slot.layoutParams = params
+        }
     }
 
     /** True while a status line hides the strip: Space then must not apply an unseen correction. */
@@ -967,13 +1033,15 @@ class KeyboardController(
         keyboard.visibility = View.INVISIBLE
         panel.animate().cancel()
         panel.visibility = View.VISIBLE
-        // Crossfade by alpha only: size and position never animate, and the system animator
-        // setting (which "remove animations" turns off) is honoured.
+        // transitions.dev panel reveal: it rises a few dp as it fades in on the smooth-out curve. Size never animates,
+        // and the system animator setting (which "remove animations" turns off) is honoured.
         if (android.animation.ValueAnimator.areAnimatorsEnabled()) {
             panel.alpha = 0f
-            panel.animate().alpha(1f).setDuration(140L).withLayer().start()
+            panel.translationY = dp(10).toFloat()
+            panel.animate().alpha(1f).translationY(0f).setDuration(250L).setInterpolator(PressSurface.SMOOTH_OUT).withLayer().start()
         } else {
             panel.alpha = 1f
+            panel.translationY = 0f
         }
         panel.bringToFront()
     }
@@ -987,12 +1055,10 @@ class KeyboardController(
         }
         keyboard.visibility = View.VISIBLE
         // Closing is immediate. Stop any fade still running so the next open starts clean.
-        emojiPanel.animate().cancel()
-        emojiPanel.alpha = 1f
+        PressSurface.rest(emojiPanel)
         emojiPanel.visibility = View.GONE
         emojiPanel.removeAllViews()
-        clipboardPanel.animate().cancel()
-        clipboardPanel.alpha = 1f
+        PressSurface.rest(clipboardPanel)
         clipboardPanel.visibility = View.GONE
         clipboardPanel.removeAllViews()
         clipboard.close()
@@ -1035,6 +1101,11 @@ class KeyboardController(
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
             0, 1f,
         ))
+        // A new category fades and rises in; pinning or reopening does not, so the grid never flickers under a tap.
+        if (fadeNextEmojiPage) {
+            fadeNextEmojiPage = false
+            PressSurface.riseIn(scroll, 6f, 200L)
+        }
     }
 
     private fun sectionLabel(title: String): TextView = TextView(context).apply {
@@ -1057,12 +1128,7 @@ class KeyboardController(
         }
         val base = OdictoKeyboardView.typefaceFor(context)
         val medium = if (Build.VERSION.SDK_INT >= 28) android.graphics.Typeface.create(base, 500, false) else base
-        val radius = dp(16).toFloat()
         // The 8dp vertical inset leaves a 32dp pill; the full 48dp row stays tappable.
-        fun pill(fill: Int) = android.graphics.drawable.InsetDrawable(
-            android.graphics.drawable.GradientDrawable().apply { cornerRadius = radius; setColor(fill) },
-            0, dp(8), 0, dp(8),
-        )
         val choices = listOf(PAGE_RECENT) + EmojiCatalog.categories.map { it.label }
         for (choice in choices) {
             val selected = choice == emojiPage
@@ -1074,15 +1140,14 @@ class KeyboardController(
                 typeface = if (selected) medium else base
                 setTextColor(context.getColor(if (selected) R.color.odicto_text_strong else R.color.odicto_text_muted))
                 gravity = android.view.Gravity.CENTER
-                background = android.graphics.drawable.RippleDrawable(
-                    android.content.res.ColorStateList.valueOf(0x26FFFFFF),
-                    pill(if (selected) context.getColor(R.color.odicto_panel_pill_selected) else 0),
-                    pill(0xFFFFFFFF.toInt()),
-                )
+                // A resting fill when selected, and the same soft fade as every other control when pressed.
+                background = PressSurface.tile(context, 16f, base = if (selected) context.getColor(R.color.odicto_panel_pill_selected) else 0, insetVDp = 8f)
+                PressSurface.pressInSoft(this)
                 // After the background: assigning a background replaces the view's padding.
                 setPadding(dp(14), 0, dp(14), 0)
                 setOnClickListener {
                     val scrollX = row.scrollX
+                    if (choice != emojiPage) fadeNextEmojiPage = true
                     emojiPage = choice
                     emojiPanel.removeAllViews()
                     buildEmojiPanel()
@@ -1118,10 +1183,9 @@ class KeyboardController(
         typeface = android.graphics.Typeface.DEFAULT
         gravity = android.view.Gravity.CENTER
         setTextColor(context.getColor(R.color.odicto_toolbar_icon))
-        // A round ripple on press is the only feedback, so a tap never animates the grid.
-        background = android.graphics.drawable.RippleDrawable(
-            android.content.res.ColorStateList.valueOf(0x26FFFFFF), null, null,
-        ).apply { radius = dp(22) }
+        // A soft tile and a small press-in are the only feedback, so a tap never animates the grid itself.
+        background = PressSurface.tile(context, 12f, insetDp = 2f)
+        PressSurface.pressIn(this)
         layoutParams = GridLayout.LayoutParams().apply {
             width = 0
             height = dp(48)
@@ -1201,11 +1265,13 @@ class KeyboardController(
         lastNotice = now
         noticeBanner.text = message
         noticeBanner.visibility = View.VISIBLE
+        PressSurface.toastIn(noticeBanner)
         handler.removeCallbacks(hideNoticeTask)
         handler.postDelayed(hideNoticeTask, NOTICE_MS)
     }
 
     private fun hideNotice() {
+        PressSurface.rest(noticeBanner)
         noticeBanner.visibility = View.GONE
     }
 

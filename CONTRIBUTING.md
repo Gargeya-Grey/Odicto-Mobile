@@ -37,5 +37,6 @@ Release facts that no config file shows:
 - The key lives only in the owner's `~/.odicto-release` (plus their backup) and in the 4 `ODICTO_*` Actions secrets. The script reuses that key on every run; a new key would force every tester to uninstall, and that deletes their data.
 - Debug and release builds share `app.odicto.mobile` but have different signatures. Android refuses to install one over the other; changing between them means uninstalling, which deletes Keystore API keys, settings and history. Get the owner's approval before any uninstall.
 - The owner runs the key script, merges pull requests, and approves each release. These are owner-only: they write secrets or publish to everyone.
+- Installed apps learn about a release by reading GitHub's release list for the highest tag of the exact form `vMAJOR.MINOR.PATCH` (see `docs/android-development.md`, "Update check"). Keep the workflow tagging `v<versionName>` with a plain three-part version; anything else is invisible to the update card, and a draft release is never offered. Releases marked Pre-release are offered on purpose.
 - The workflow uses a Windows runner because `package-lock.json` pins a Windows-only devDependency, so `npm ci` fails on Linux.
 - Run the physical-device checklist in `docs/android-development.md` on the release APK before sharing a release.
