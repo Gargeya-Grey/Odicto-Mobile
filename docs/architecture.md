@@ -4,7 +4,7 @@
 
 Android IME/overlay -> AudioCaptureService -> direct external provider APIs -> session-checked InputConnection insertion.
 
-- Raw: recorded PCM is sent as WAV directly to Groq Whisper after release.
+- Raw: recorded PCM is compressed in memory to lossless FLAC as it arrives and sent directly to Groq Whisper after release; nothing is sent before release.
 - AI: Groq transcribes speech, then Gemini or OpenRouter receives the spoken instruction, any explicitly selected text, and the device-saved custom system prompt (or the default when blank).
 - Live: PCM streams directly to Gemini Live; provisional words update one native composing range in the original editor. Finalization finishes composition without pasting a second copy. Cursor/content verification prevents subsequent writes after the target changes. Cancel/error retains already typed words.
 - Text polish: an explicit IME tap sends only the selected substring, or the whole field when the selection is empty, to OpenRouter with the separate polish model/prompt. Complete-field reads are transient local guards; only the captured target range is replaced after revalidation. Typing alone makes no provider request.

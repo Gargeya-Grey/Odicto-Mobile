@@ -5,10 +5,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.util.concurrent.TimeUnit
 import okio.ByteString.Companion.toByteString
 
 data class DirectVoiceConfig(
@@ -33,18 +29,17 @@ class DirectVoiceTransport(
     private val operation: String,
     private val editor: Long,
     private val event: (JSONObject) -> Unit,
-    private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
-        .callTimeout(40, TimeUnit.SECONDS).pingInterval(20, TimeUnit.SECONDS)
-        .followRedirects(false).followSslRedirects(false).build(),
-    private val socketFactory: WebSocket.Factory = client,
-    private val closeConnections: () -> Unit = { client.connectionPool.evictAll() },
+    client: OkHttpClient? = null,
+    socketFactory: WebSocket.Factory? = null,
     private val log: (String) -> Unit = {},
 ) {
+    private val client by lazy { client ?: HttpClients.voice }
+    private val socketFactory by lazy { socketFactory ?: HttpClients.live }
     @Volatile private var cancelled = false
     @Volatile private var call: Call? = null
-    private var socket: WebSocket? = null
-    private var pcm = ByteArrayOutputStream()
+    @Volatile private var socket: WebSocket? = null
+    // Raw and AI audio is compressed (lossless FLAC) in memory as it arrives, so the upload after release is smaller.
+    private val flac = FlacEncoder()
     @Volatile private var transcript = ""
     @Volatile private var liveInterim = ""
     @Volatile private var finishing = false
@@ -67,7 +62,8 @@ class DirectVoiceTransport(
         val request = Request.Builder()
             .url("https://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent")
             .header("x-goog-api-key", config.liveKey).build()
-        socket = socketFactory.newWebSocket(request, object : WebSocketListener() {
+        if (cancelled) return
+        val ws = socketFactory.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 if (cancelled) { webSocket.cancel(); return }
                 webSocket.send(liveSetup(config.liveModel).toString())
@@ -107,6 +103,8 @@ class DirectVoiceTransport(
                 if (!completed) fail("Gemini Live disconnected. Try again.")
             }
         })
+        // open() runs on IO, so cancel() may already have run: whichever side comes second closes the socket.
+        synchronized(this) { socket = ws; if (cancelled) ws.cancel() }
     }
 
     @Synchronized fun sendAudio(bytes: ByteArray, count: Int): Boolean {
@@ -118,8 +116,8 @@ class DirectVoiceTransport(
                 .put("data", bytes.toByteString(0, count).base64())
             return ws.send(JSONObject().put("realtimeInput", JSONObject().put("audio", audio)).toString())
         }
-        if (pcm.size() + count > MAX_PCM_BYTES) return false
-        pcm.write(bytes, 0, count)
+        if (flac.sampleCount * 2 + count > MAX_PCM_BYTES) return false
+        flac.append(bytes, 0, count)
         return true
     }
 
@@ -132,20 +130,21 @@ class DirectVoiceTransport(
                 if (socket?.send("{\"realtimeInput\":{\"activityEnd\":{}}}") != true) fail("Gemini Live connection closed.")
                 return
             }
-            pcm.toByteArray().also { pcm = ByteArrayOutputStream() }
+            if (flac.sampleCount == 0L) null else flac.finish()
         }
-        if (audio.isEmpty()) { fail("No speech heard. Try again."); return }
+        if (audio == null) { fail("No speech heard. Try again."); return }
         try {
-            val wav = wav(audio)
             val form = MultipartBody.Builder().setType(MultipartBody.FORM)
                 .addFormDataPart("model", "whisper-large-v3-turbo")
                 .addFormDataPart("response_format", "json")
-                .addFormDataPart("file", "recording.wav", wav.toRequestBody("audio/wav".toMediaType())).build()
+                .addFormDataPart("file", "recording.flac", audio.toRequestBody("audio/flac".toMediaType())).build()
             val response = try { execute(Request.Builder().url("https://api.groq.com/openai/v1/audio/transcriptions")
-                .header("Authorization", "Bearer ${config.groqKey}").post(form).build(), "Groq") } finally { wav.fill(0) }
+                .header("Authorization", "Bearer ${config.groqKey}").post(form).build(), "Groq") } finally { audio.fill(0) }
             transcript = response.optString("text").trim()
             if (transcript.isBlank()) { fail("No speech heard. Try again."); return }
             emit(JSONObject().put("type", "final").put("text", transcript))
+            // AI mode now waits on a second provider: say so, rather than leaving "Finishing…" up the whole time.
+            if (config.mode == "ai") emit(JSONObject().put("type", "processing"))
             val output = if (config.mode == "ai") answer(transcript) else transcript
             result(output)
         } catch (e: ProviderFailure) { fail(e.message ?: "Provider request failed.") }
@@ -169,10 +168,10 @@ class DirectVoiceTransport(
             .put("messages", JSONArray().put(JSONObject().put("role", "system").put("content", system))
                 .put(JSONObject().put("role", "user").put("content", instruction)))
             .put("provider", JSONObject().put("sort", "latency"))
-            .let { request -> if (model == "poolside/laguna-xs-2.1:free") request else request.put("reasoning", JSONObject().put("effort", "low").put("exclude", true)) }
+            .apply { ProviderOptions.openRouterReasoning(model)?.let { put("reasoning", it) } }
         else JSONObject().put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))
             .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", instruction)))))
-            .put("generationConfig", JSONObject().put("maxOutputTokens", 2048))
+            .put("generationConfig", JSONObject().put("maxOutputTokens", 2048).apply { ProviderOptions.geminiThinking(model)?.let { put("thinkingConfig", it) } })
         val url = if (openrouter) "https://openrouter.ai/api/v1/chat/completions"
             else "https://generativelanguage.googleapis.com/v1beta/models/${java.net.URLEncoder.encode(model, "UTF-8")}:generateContent"
         val builder = Request.Builder().url(url).post(body.toString().toRequestBody("application/json".toMediaType()))
@@ -217,16 +216,12 @@ class DirectVoiceTransport(
     }
     @Synchronized fun cancel() {
         if (cancelled) return
-        cancelled = true; pcm = ByteArrayOutputStream(); transcript = ""
-        // Cancellation silences callbacks immediately. TLS socket close may write
-        // close_notify bytes, so all network teardown must stay off the UI thread.
-        // Use the request-owned executor: service scope cancellation cannot skip it.
-        client.dispatcher.executorService.execute {
-            try {
-                call?.cancel(); socket?.cancel(); client.dispatcher.cancelAll()
-                closeConnections()
-            } finally { client.dispatcher.executorService.shutdown() }
-        }
+        cancelled = true; flac.clear(); transcript = ""
+        // Cancellation silences callbacks immediately. TLS socket close may write close_notify bytes, so teardown stays
+        // off the caller (often the UI thread). Only this session's call and socket close: the pool is shared, and its
+        // warm connections serve the next dictation.
+        val active = call; val live = socket
+        if (active != null || live != null) client.dispatcher.executorService.execute { active?.cancel(); live?.cancel() }
     }
     private fun checkSetting(valid: Boolean, message: () -> String) { if (!valid) throw VoiceConfigurationException(message()) }
     private class ProviderFailure(message: String) : Exception(message)
@@ -266,9 +261,5 @@ class DirectVoiceTransport(
             .put("model", "models/$model").put("generationConfig", JSONObject().put("responseModalities", JSONArray().put("TEXT")))
             .put("realtimeInputConfig", JSONObject().put("automaticActivityDetection", JSONObject().put("disabled", true)))
             .put("inputAudioTranscription", JSONObject().put("mode", "SMART").put("languageCodes", JSONArray())))
-        fun wav(pcm: ByteArray): ByteArray = ByteBuffer.allocate(44 + pcm.size).order(ByteOrder.LITTLE_ENDIAN)
-            .put("RIFF".toByteArray()).putInt(36 + pcm.size).put("WAVEfmt ".toByteArray()).putInt(16)
-            .putShort(1).putShort(1).putInt(16000).putInt(32000).putShort(2).putShort(16)
-            .put("data".toByteArray()).putInt(pcm.size).put(pcm).array()
     }
 }

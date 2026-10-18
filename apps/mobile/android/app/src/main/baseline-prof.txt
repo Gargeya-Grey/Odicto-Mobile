@@ -1,0 +1,6 @@
+HSPLapp/odicto/mobile/**->**(**)**
+Lapp/odicto/mobile/**;
+HSPLokhttp3/**->**(**)**
+Lokhttp3/**;
+HSPLokio/**->**(**)**
+Lokio/**;

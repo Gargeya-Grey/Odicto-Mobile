@@ -2,6 +2,8 @@ package app.odicto.mobile.ime
 
 import app.odicto.mobile.dictation.PromptComposer
 import app.odicto.mobile.dictation.PromptMode
+import app.odicto.mobile.network.HttpClients
+import app.odicto.mobile.network.ProviderOptions
 import app.odicto.mobile.storage.DEFAULT_POLISH_MODEL
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
@@ -26,15 +28,15 @@ sealed class FieldPolishResult {
     enum class Reason { INVALID_INPUT, AUTHENTICATION, MODEL_UNAVAILABLE, RATE_LIMITED, PROVIDER, NETWORK, INVALID_RESPONSE, TRUNCATED }
 }
 
-class FieldPolishClient(client: OkHttpClient = OkHttpClient()) {
-    private val client = client.newBuilder()
+class FieldPolishClient(client: OkHttpClient? = null) {
+    private val client by lazy { (client ?: HttpClients.shared).newBuilder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .writeTimeout(10, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .callTimeout(40, TimeUnit.SECONDS)
         .followRedirects(false)
         .followSslRedirects(false)
-        .build()
+        .build() }
 
     suspend fun correct(
         text: String,
@@ -54,6 +56,7 @@ class FieldPolishClient(client: OkHttpClient = OkHttpClient()) {
                 .put(JSONObject().put("role", "system").put("content", PromptComposer.compose(DEFAULT_SYSTEM_PROMPT, systemPrompt, promptMode, PromptComposer.POLISH_NOTES_INTRO)))
                 .put(JSONObject().put("role", "user").put("content", text)))
             .put("provider", JSONObject().put("sort", "latency"))
+            .apply { ProviderOptions.openRouterReasoning(model)?.let { put("reasoning", it) } }
         val request = Request.Builder().url(ENDPOINT)
             .header("Authorization", "Bearer $apiKey")
             .post(body.toString().toRequestBody("application/json".toMediaType()))

@@ -24,6 +24,8 @@ data class VoiceUi(val phase: String = "idle", val mode: String = "ai", val lock
         finalText.isNotBlank() || interim.isNotBlank() -> copy(phase = "idle", message = "", locked = false, level = 0f)
         else -> VoiceUi(mode = mode)
     }
+    /** True when [other] differs from this state in the microphone level only (a meter tick). */
+    fun sameExceptLevel(other: VoiceUi): Boolean = copy(level = other.level) == other
     fun expireResult(expectedId: String): VoiceUi = if (((phase == "done" && inserted) || (phase == "notice" && finalText.isEmpty() && interim.isEmpty())) && resultId == expectedId && expectedId.isNotEmpty()) VoiceUi(mode = mode) else this
 }
 object VoiceSession {

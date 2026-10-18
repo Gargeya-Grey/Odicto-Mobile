@@ -10,7 +10,6 @@ import org.junit.Assert.*
 import org.junit.Test
 import okio.ByteString.Companion.encodeUtf8
 import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
 class DirectVoiceTransportTest {
     @Test fun finalizedLiveTextBeforeReleaseCompletesThroughFallbackOnce() {
@@ -100,26 +99,86 @@ class DirectVoiceTransportTest {
             try { transport.open(); fail("Oversized context accepted") } catch (_: VoiceConfigurationException) {} finally { transport.cancel() }
         }
     }
-    @Test fun cancellationClosesConnectionsOffCallerThreadAndOnlyOnce() {
+    @Test fun cancellationClosesOnlyThisSessionOffCallerThreadAndKeepsTheSharedClient() {
         val caller = Thread.currentThread()
         val closed = java.util.concurrent.CountDownLatch(1)
         val cleanupThread = java.util.concurrent.atomic.AtomicReference<Thread>()
         val closures = java.util.concurrent.atomic.AtomicInteger()
+        val ws = object : WebSocket {
+            override fun request() = Request.Builder().url("https://generativelanguage.googleapis.com/").build()
+            override fun queueSize() = 0L
+            override fun send(text: String) = true
+            override fun send(bytes: okio.ByteString) = true
+            override fun close(code: Int, reason: String?) = true
+            override fun cancel() { cleanupThread.set(Thread.currentThread()); closures.incrementAndGet(); closed.countDown() }
+        }
         val client = OkHttpClient()
-        val transport = DirectVoiceTransport(DirectVoiceConfig("raw", groqKey = "test"), "op", 1, {}, client,
-            closeConnections = {
-                cleanupThread.set(Thread.currentThread())
-                closures.incrementAndGet()
-                closed.countDown()
-            })
+        val transport = DirectVoiceTransport(DirectVoiceConfig("live", liveKey = "test"), "op", 1, {}, client,
+            socketFactory = WebSocket.Factory { _, _ -> ws })
         transport.open()
         transport.cancel()
         transport.cancel()
         assertFalse(transport.sendAudio(ByteArray(32), 32))
         assertTrue(closed.await(3, java.util.concurrent.TimeUnit.SECONDS))
         assertNotSame("TLS close must not run on the service/UI caller", caller, cleanupThread.get())
-        assertTrue(client.dispatcher.executorService.awaitTermination(3, java.util.concurrent.TimeUnit.SECONDS))
         assertEquals(1, closures.get())
+        assertFalse("the shared dispatcher keeps serving the next dictation", client.dispatcher.executorService.isShutdown)
+    }
+    @Test fun aSecondDictationReusesTheFirstOnesConnection() {
+        LocalHttpServer("{\"text\":\"Hello\"}").use { server ->
+            val client = OkHttpClient.Builder()
+                .addInterceptor { chain -> chain.proceed(chain.request().newBuilder().url("http://127.0.0.1:${server.port}/").build()) }.build()
+            repeat(2) {
+                val events = mutableListOf<JSONObject>()
+                val transport = DirectVoiceTransport(DirectVoiceConfig("raw", groqKey = "test"), "op$it", 1, { event -> events.add(event) }, client)
+                transport.open(); transport.sendAudio(ByteArray(3200), 3200); transport.finish(); transport.cancel()
+                assertEquals("Hello", events.last().getString("text"))
+            }
+            assertEquals("the second dictation skips DNS, TCP and TLS", 1, server.connections.get())
+        }
+    }
+    @Test fun aCancelThatLandsWhileLiveOpensClosesTheNewSocket() {
+        val cancelled = java.util.concurrent.atomic.AtomicInteger()
+        val ws = object : WebSocket {
+            override fun request() = Request.Builder().url("https://generativelanguage.googleapis.com/").build()
+            override fun queueSize() = 0L
+            override fun send(text: String) = true
+            override fun send(bytes: okio.ByteString) = true
+            override fun close(code: Int, reason: String?) = true
+            override fun cancel() { cancelled.incrementAndGet() }
+        }
+        lateinit var transport: DirectVoiceTransport
+        // open() runs on IO; the user's cancel arrives while the socket is being created.
+        transport = DirectVoiceTransport(DirectVoiceConfig("live", liveKey = "test"), "op", 1, {}, OkHttpClient(),
+            socketFactory = WebSocket.Factory { _, _ -> transport.cancel(); ws })
+        transport.open()
+        assertTrue("the socket created after the cancel is closed", cancelled.get() >= 1)
+        var created = 0
+        val late = DirectVoiceTransport(DirectVoiceConfig("live", liveKey = "test"), "op", 1, {}, OkHttpClient(),
+            socketFactory = WebSocket.Factory { _, _ -> created++; ws })
+        late.cancel(); late.open()
+        assertEquals("a cancel before open() creates no socket and sends no key", 0, created)
+    }
+    @Test fun cancelStopsAnInFlightRawCallWithoutAResult() {
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            entered.countDown()
+            val deadline = System.currentTimeMillis() + 3_000
+            while (!chain.call().isCanceled() && System.currentTimeMillis() < deadline) Thread.sleep(5)
+            if (chain.call().isCanceled()) throw java.io.IOException("Canceled")
+            fail("the call kept running after cancel"); throw AssertionError()
+        }.build()
+        val events = java.util.Collections.synchronizedList(mutableListOf<JSONObject>())
+        val transport = DirectVoiceTransport(DirectVoiceConfig("raw", groqKey = "test"), "op", 1, { events.add(it) }, client)
+        transport.open(); transport.sendAudio(ByteArray(3200), 3200)
+        val finishing = Thread { transport.finish() }.apply { start() }
+        assertTrue(entered.await(3, java.util.concurrent.TimeUnit.SECONDS))
+        transport.cancel()
+        finishing.join(3_000)
+        assertFalse(finishing.isAlive)
+        assertFalse(events.any { it.optString("type") == "result" })
+        assertFalse("a cancelled call reports no failure either", events.any { it.optString("type") == "error" })
+        assertFalse("the shared dispatcher stays up", client.dispatcher.executorService.isShutdown)
     }
     @Test fun liveAcceptsBinaryJsonFramesLikeTheDesktopClient() {
         val events = mutableListOf<JSONObject>()
@@ -153,10 +212,15 @@ class DirectVoiceTransportTest {
         val client = OkHttpClient.Builder().addInterceptor { chain ->
             requests.add(chain.request())
             if (chain.request().url.host == "api.groq.com") {
-                val body = chain.request().body as MultipartBody
-                val buffer = okio.Buffer(); body.parts.last().body.writeTo(buffer)
-                val wav = buffer.readByteArray()
-                assertEquals(3200, ByteBuffer.wrap(wav).order(ByteOrder.LITTLE_ENDIAN).getInt(40))
+                val file = (chain.request().body as MultipartBody).parts.last()
+                assertTrue(file.headers!!["Content-Disposition"]!!.contains("filename=\"recording.flac\""))
+                assertEquals("audio/flac", file.body.contentType().toString())
+                val buffer = okio.Buffer(); file.body.writeTo(buffer)
+                val flac = buffer.readByteArray()
+                assertEquals("fLaC", String(flac, 0, 4, Charsets.US_ASCII))
+                // STREAMINFO total samples: the low 36 bits of bytes 21-25. 3200 bytes of 16-bit PCM are 1600 samples.
+                val total = ((flac[21].toLong() and 0x0F) shl 32) or (ByteBuffer.wrap(flac, 22, 4).int.toLong() and 0xFFFFFFFFL)
+                assertEquals(1600L, total)
             }
             val response = responses[requests.lastIndex]
             Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(response.first).message("test")
@@ -177,6 +241,7 @@ class DirectVoiceTransportTest {
         assertEquals("Bearer groq-test", requests[0].header("Authorization"))
         assertEquals(17, events.last().getInt("editorSession"))
         assertEquals("Hello world", events.last().getString("text"))
+        assertEquals(listOf("ready", "final", "result"), events.map { it.getString("type") })
     }
     @Test fun aiUsesGroqThenGeminiWithSeparateKeys() {
         val (requests, events) = runRequest(DirectVoiceConfig("ai", groqKey = "groq-test", answerKey = "gemini-test"),
@@ -185,6 +250,7 @@ class DirectVoiceTransportTest {
         assertEquals("gemini-test", requests[1].header("x-goog-api-key"))
         assertNull(requests[1].header("Authorization"))
         assertEquals("Happy birthday!", events.last().getString("text"))
+        assertEquals("the user sees the answer step start", listOf("ready", "final", "processing", "result"), events.map { it.getString("type") })
     }
     @Test fun aiUsesOpenRouterAndDoesNotInsertQuestionOnFailure() {
         val (requests, events) = runRequest(DirectVoiceConfig("ai", "openrouter", "test/model", groqKey = "groq-test", answerKey = "router-test"),
@@ -199,6 +265,25 @@ class DirectVoiceTransportTest {
         assertTrue(events.last().getString("message").contains("quota"))
         assertFalse(events.any { it.optString("type") == "result" })
         assertTrue(events.any { it.optString("type") == "final" })
+    }
+    @Test fun geminiFlashAndProThinkLowWhileFlashLiteAndOlderModelsKeepTheirDefault() {
+        val reply = "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hi\"}]}}]}"
+        for ((model, level) in listOf("gemini-3.7-flash" to "low", "gemini-3.1-pro-preview" to "low", "" to null, "gemini-3.5-flash-lite" to null, "gemini-2.5-flash" to null)) {
+            val (requests, _) = runRequest(DirectVoiceConfig("ai", "gemini", model, groqKey = "test", answerKey = "test"),
+                listOf(200 to "{\"text\":\"Say hi\"}", 200 to reply))
+            val buffer = okio.Buffer(); requests[1].body!!.writeTo(buffer)
+            val config = JSONObject(buffer.readUtf8()).getJSONObject("generationConfig")
+            assertEquals("model '$model'", level, config.optJSONObject("thinkingConfig")?.getString("thinkingLevel"))
+            assertEquals(2048, config.getInt("maxOutputTokens"))
+        }
+    }
+    @Test fun freeOpenRouterDefaultKeepsItsReasoningDefault() {
+        val (requests, _) = runRequest(DirectVoiceConfig("ai", "openrouter", "openrouter/free", groqKey = "test", answerKey = "test"),
+            listOf(200 to "{\"text\":\"Say hi\"}", 200 to "{\"choices\":[{\"message\":{\"content\":\"Hi\"}}]}"))
+        val buffer = okio.Buffer(); requests[1].body!!.writeTo(buffer)
+        val body = JSONObject(buffer.readUtf8())
+        assertEquals("poolside/laguna-xs-2.1:free", body.getString("model"))
+        assertFalse(body.has("reasoning"))
     }
     @Test fun cancelledAudioNeverReachesProvider() {
         val client = OkHttpClient.Builder().addInterceptor { throw AssertionError("Cancelled audio was sent") }.build()

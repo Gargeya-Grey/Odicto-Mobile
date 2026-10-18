@@ -35,6 +35,11 @@ class AudioCaptureService : Service() {
     private var timeout: Job? = null
     private var audioBytes = 0L
     private var startedAt = 0L
+    @Volatile private var releasedAt = 0L
+    @Volatile private var framesRead = 0L
+    /** Set at the stop request: the frame the capture loop reads up to before it ends. */
+    @Volatile private var stopFrame = Long.MAX_VALUE
+    private val levels = LevelRelay({ block -> scope.launch { block() } }) { level -> if (!finishing) updateVoice { it.copy(level = level) } }
     private val backlog = AudioBacklog(MAX_BACKLOG_FRAMES)
     private val verbose by lazy { (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0 }
     override fun onBind(intent: Intent?): IBinder? = null
@@ -82,7 +87,8 @@ class AudioCaptureService : Service() {
                 if (ended || (operation.isNotEmpty() && !VoiceSession.owns(operation))) return@launch
                 val created = DirectVoiceTransport(config, operation, editor, { event -> scope.launch { receive(event.toString()) } }, log = { if (verbose) android.util.Log.i(TAG, "transport: $it") })
                 transport = created
-                created.open()
+                // The shared HTTP client is built on first use; keep that and the Live socket setup off the main thread.
+                withContext(Dispatchers.IO) { created.open() }
             } catch (e: VoiceConfigurationException) { error(e.message ?: "Check your voice settings.") }
             catch (_: Exception) { error("Cannot connect. Check your connection and voice settings.") }
         }
@@ -107,7 +113,7 @@ class AudioCaptureService : Service() {
                     ended = true; timeout?.cancel()
                     val output = event.getString("text"); val transcript = event.getString("transcript")
                     val outcome = DictationCoordinator.deliver(editor, output, operation)
-                    if (verbose) android.util.Log.i(TAG, "result after ${SystemClock.uptimeMillis() - startedAt}ms, recorded=${audioBytes / 32}ms, outcome=$outcome")
+                    if (verbose) android.util.Log.i(TAG, "result after ${SystemClock.uptimeMillis() - startedAt}ms, release->result=${SystemClock.uptimeMillis() - releasedAt}ms, recorded=${audioBytes / 32}ms, outcome=$outcome")
                     VoiceSession.completed(operation, output, outcome)
                     scope.launch {
                         try {
@@ -127,7 +133,7 @@ class AudioCaptureService : Service() {
     }
     private fun startCapture(): Boolean {
         return try {
-            val size = maxOf(3200, AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT))
+            val size = CaptureTail.bufferBytes(AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT))
             val audio = AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, 16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, size)
             if (audio.state != AudioRecord.STATE_INITIALIZED) { audio.release(); error("Microphone unavailable"); return false }
             recorder = audio; audio.startRecording()
@@ -138,29 +144,33 @@ class AudioCaptureService : Service() {
                 var dropping = false
                 try {
                     while (isActive && !ended) {
-                        val count = audio.read(buffer, 0, buffer.size)
+                        val count = audio.read(buffer, 0, CaptureTail.nextRead(buffer.size, framesRead, stopFrame))
                         if (count <= 0) {
                             if (!finishing && !ended) withContext(Dispatchers.Main) { error("Microphone interrupted. Try again.") }
                             break
                         }
-                        audioBytes += count
+                        audioBytes += count; framesRead += count / 2
                         // Frames queue in memory until the provider handshake finishes, then replay in order.
                         val sent = if (transportReady) flushBacklog() && sendFrame(buffer, count) else backlog.add(buffer.copyOf(count))
                         // A transient stall must not kill a long dictation: skip the frame and keep the
                         // session alive. A transport that is truly gone reports its own failure event.
-                        if (!sent && transportReady && !dropping) { dropping = true; withContext(Dispatchers.Main) { updateVoice { it.copy(message = "Connection is slow. Some audio may be missing.") } } }
+                        if (!sent && transportReady && !dropping && !finishing) { dropping = true; withContext(Dispatchers.Main) { updateVoice { it.copy(message = "Connection is slow. Some audio may be missing.") } } }
                         if (sent) dropping = false
                         // Nothing is buffering into a provider that never connected; the timeout is the bound.
                         if (!sent && !transportReady && backlog.isFull) { withContext(Dispatchers.Main) { error("Connection timed out. Try again.") }; break }
                         var peak = 0
                         for (i in 0 until count - 1 step 2) peak = maxOf(peak, abs(((buffer[i + 1].toInt() shl 8) or (buffer[i].toInt() and 255)).toShort().toInt()))
-                        withContext(Dispatchers.Main) { updateVoice { it.copy(level = (peak / 10000f).coerceIn(0f, 1f)) } }
-                        if (finishing) break
+                        // The meter must never hold up the next read: a stalled main thread would overrun the microphone.
+                        if (!finishing) levels.offer((peak / 10000f).coerceIn(0f, 1f))
+                        if (finishing && CaptureTail.done(framesRead, stopFrame, SystemClock.uptimeMillis() - releasedAt)) break
                         if (audioBytes >= 295L * 32000) { withContext(Dispatchers.Main) { if (VoiceSession.owns(operation)) VoiceSession.finish(this@AudioCaptureService) }; break }
                     }
+                    // The microphone stops the moment the loop ends: the wait for a slow handshake below records nothing.
+                    try { audio.stop() } catch (_: Exception) {}
                     // A release can land before the handshake finished: hold on briefly so the words that
                     // were already captured still reach the provider instead of being discarded.
                     if (!ended && backlog.isNotEmpty) flushWhenReady()
+                    if (verbose && finishing) android.util.Log.i(TAG, "capture ended ${SystemClock.uptimeMillis() - releasedAt}ms after release")
                 } catch (_: Exception) { if (!finishing && !ended) withContext(Dispatchers.Main) { error("Microphone interrupted. Try again.") } }
             }
             true
@@ -179,13 +189,26 @@ class AudioCaptureService : Service() {
     }
     private fun finish() {
         if (finishing || ended) return
-        finishing = true
+        releasedAt = SystemClock.uptimeMillis()
         val audio = recorder
         // A release before the microphone opened has nothing to transcribe. Ending the session here keeps
         // the service from staying started with no transport left to shut it down.
-        if (audio == null) { stopBeforeCapture(); return }
-        try { audio.stop() } catch (_: Exception) {}
-        scope.launch { capture?.join(); audio.release(); if (recorder === audio) recorder = null; sendFinish() }
+        if (audio == null) { finishing = true; stopBeforeCapture(); return }
+        // Stopping now would drop the audio still in the pipeline, the end of the last word. The capture loop reads
+        // on until it covers this request plus a short tail, then ends; the microphone stops after it.
+        stopFrame = tailStopFrame(audio)
+        finishing = true
+        scope.launch { capture?.join(); try { audio.stop() } catch (_: Exception) {}; audio.release(); if (recorder === audio) recorder = null; sendFinish() }
+        // A stalled read (an audio route change, say) would never reach the tail check: stopping the recorder wakes it.
+        scope.launch { delay(CaptureTail.MAX_WAIT_MS + 200); if (recorder === audio) try { audio.stop() } catch (_: Exception) {} }
+    }
+    private fun tailStopFrame(audio: AudioRecord): Long {
+        if (android.os.Build.VERSION.SDK_INT >= 24) {
+            val stamp = AudioTimestamp()
+            val status = try { audio.getTimestamp(stamp, AudioTimestamp.TIMEBASE_MONOTONIC) } catch (_: Exception) { AudioRecord.ERROR }
+            if (status == AudioRecord.SUCCESS) return CaptureTail.stopFrame(stamp.framePosition, stamp.nanoTime, System.nanoTime())
+        }
+        return CaptureTail.fallbackStopFrame(framesRead)
     }
     private fun stopBeforeCapture() {
         ended = true; timeout?.cancel(); transport?.cancel(); transport = null

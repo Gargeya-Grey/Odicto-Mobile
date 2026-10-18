@@ -1,5 +1,13 @@
 # S24 Ultra voice UI check
 
+## October 18: light-mode scroll freeze
+
+- Report: the app screens scrolled badly in light mode and smoothly in dark. Phone: S24 Ultra, Android 16, Android System WebView 155, 120 Hz, debug build of 1.4.0.
+- Cause: only in light, the status-bar scrim (`.voice-app::before`) faded in with a CSS scroll-driven animation (`animation-timeline: scroll(root block)`). While it ran, Android WebView stalled touch flings. In one `adb shell input swipe` fling on Settings, the page moved 283 px, stayed still for about 1 s, then jumped 980 px. Dark coasted over 138 frames. Light with only that animation removed (CSS injected over DevTools) matched dark. DevTools synthetic scroll gestures hid most of the fault; real touch input showed it.
+- Fix: `VoiceHome.tsx` sets `data-scrolled` on `.voice-app` from `src/lib/pageScroll.ts` while the page is away from the top, and the light scrim fades with a 160 ms opacity transition on that attribute. No scroll timeline is left.
+- Settings, the same scripted real-touch swipes for 14 s, `dumpsys gfxinfo`: before the fix, light drew 849–851 frames with 28–29 janky (3.3–3.4%), 99th percentile 22–23 ms (2 runs). After the fix, light drew 1237–1264 frames with 13–16 janky (1.03–1.27%), 99th percentile 13–18 ms; dark drew 1238–1251 frames with 14–16 janky (1.12–1.28%), 99th percentile 13–14 ms (5 alternating runs each, theme switched with the app's own toggle). One light fling now coasts for 1.17 s over 139 frames with no freeze. Home matched dark (1 run each). History had too few entries to scroll.
+- Light screens checked by screenshot: Home, Settings (top, scrolled, end) and History. The scrim is hidden at the top and shown once scrolled; the status-bar icons are dark in light. The owner then scrolled the fixed build in light by hand and confirmed it is smooth.
+
 ## September 29: phone tap tolerance and Samsung comparison
 
 - The phone began this pass on unified APK hash `01C1A96AC3C91B5147ABDA0E53CB7A829FE99C788479D17D46F26D58A05583D0`. Samsung Keyboard was initially selected; the tester confirmed the missed-letter report concerned Odicto and manually selected it for the baseline. The 40-character synthetic overlapping-thumb baseline passed with exact output/caret and balanced batches.
