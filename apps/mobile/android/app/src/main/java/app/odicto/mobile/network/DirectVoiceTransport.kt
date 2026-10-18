@@ -143,6 +143,8 @@ class DirectVoiceTransport(
             transcript = response.optString("text").trim()
             if (transcript.isBlank()) { fail("No speech heard. Try again."); return }
             emit(JSONObject().put("type", "final").put("text", transcript))
+            // AI mode now waits on a second provider: say so, rather than leaving "Finishing…" up the whole time.
+            if (config.mode == "ai") emit(JSONObject().put("type", "processing"))
             val output = if (config.mode == "ai") answer(transcript) else transcript
             result(output)
         } catch (e: ProviderFailure) { fail(e.message ?: "Provider request failed.") }

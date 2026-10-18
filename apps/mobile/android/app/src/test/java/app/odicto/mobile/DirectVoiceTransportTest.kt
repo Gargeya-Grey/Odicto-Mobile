@@ -194,6 +194,7 @@ class DirectVoiceTransportTest {
         assertEquals("Bearer groq-test", requests[0].header("Authorization"))
         assertEquals(17, events.last().getInt("editorSession"))
         assertEquals("Hello world", events.last().getString("text"))
+        assertEquals(listOf("ready", "final", "result"), events.map { it.getString("type") })
     }
     @Test fun aiUsesGroqThenGeminiWithSeparateKeys() {
         val (requests, events) = runRequest(DirectVoiceConfig("ai", groqKey = "groq-test", answerKey = "gemini-test"),
@@ -202,6 +203,7 @@ class DirectVoiceTransportTest {
         assertEquals("gemini-test", requests[1].header("x-goog-api-key"))
         assertNull(requests[1].header("Authorization"))
         assertEquals("Happy birthday!", events.last().getString("text"))
+        assertEquals("the user sees the answer step start", listOf("ready", "final", "processing", "result"), events.map { it.getString("type") })
     }
     @Test fun aiUsesOpenRouterAndDoesNotInsertQuestionOnFailure() {
         val (requests, events) = runRequest(DirectVoiceConfig("ai", "openrouter", "test/model", groqKey = "groq-test", answerKey = "router-test"),
