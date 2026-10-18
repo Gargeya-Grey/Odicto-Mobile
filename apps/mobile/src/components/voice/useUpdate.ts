@@ -94,5 +94,23 @@ export function useUpdate(
     [notify],
   );
 
-  return { status, dismiss, download, setEnabled };
+  /** "Check now": ignores the hourly pause. Says what it found, so the user is never left guessing. */
+  const [checking, setChecking] = useState(false);
+  const checkNow = useCallback(async () => {
+    epoch.current += 1;
+    setChecking(true);
+    try {
+      const next = await updates.check(true);
+      setStatus(next);
+      if (next.failed) notify('Could not reach GitHub. Try again.', 'error');
+      else if (next.available) notify(`Odicto ${next.version} is available.`);
+      else notify('You have the latest version.');
+    } catch {
+      notify('Could not check for updates.', 'error');
+    } finally {
+      setChecking(false);
+    }
+  }, [notify]);
+
+  return { status, checking, checkNow, dismiss, download, setEnabled };
 }

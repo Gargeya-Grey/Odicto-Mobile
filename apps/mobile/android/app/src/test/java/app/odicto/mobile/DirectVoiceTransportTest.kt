@@ -1,5 +1,6 @@
 package app.odicto.mobile
 
+import app.odicto.mobile.dictation.PromptMode
 import app.odicto.mobile.network.*
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
@@ -40,7 +41,7 @@ class DirectVoiceTransportTest {
             val reply = if (provider == "gemini") "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"revised\"}]}}]}"
                 else "{\"choices\":[{\"message\":{\"content\":\"revised\"}}]}"
             val (requests, events) = runRequest(DirectVoiceConfig("ai", provider, "test-model", groqKey = "test", answerKey = "answer",
-                selectedText = "Original \"quoted\" text\nSecond line", systemPrompt = "Use British English."),
+                selectedText = "Original \"quoted\" text\nSecond line", systemPrompt = "Use British English.", systemPromptMode = PromptMode.REPLACE),
                 listOf(200 to "{\"text\":\"Refactor this\"}", 200 to reply))
             val buffer = okio.Buffer(); requests[1].body!!.writeTo(buffer)
             val body = JSONObject(buffer.readUtf8())
@@ -68,16 +69,31 @@ class DirectVoiceTransportTest {
     }
     @Test fun aiWithoutSelectionUsesPlainInstructionAndPromptDefaultOrOverride() {
         for (prompt in listOf("", "Write very briefly.")) {
-            val (requests, _) = runRequest(DirectVoiceConfig("ai", groqKey = "test", answerKey = "test", systemPrompt = prompt),
+            val (requests, _) = runRequest(DirectVoiceConfig("ai", groqKey = "test", answerKey = "test", systemPrompt = prompt, systemPromptMode = PromptMode.REPLACE),
                 listOf(200 to "{\"text\":\"Write a greeting\"}", 200 to "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hello\"}]}}]}"))
             val buffer = okio.Buffer(); requests[1].body!!.writeTo(buffer)
             val body = JSONObject(buffer.readUtf8())
             assertEquals("Write a greeting", body.getJSONArray("contents").getJSONObject(0).getJSONArray("parts").getJSONObject(0).getString("text"))
             val system = body.getJSONObject("systemInstruction").getJSONArray("parts").getJSONObject(0).getString("text")
-            if (prompt.isEmpty()) assertTrue(system.startsWith("Execute the user's spoken instruction")) else assertEquals(prompt, system)
+            if (prompt.isEmpty()) assertTrue(system.startsWith(DirectVoiceTransport.ANSWER_PROMPT)) else assertEquals(prompt, system)
         }
     }
-    @Test fun aiRejectsOversizedContextBeforeRecording() {
+    @Test fun appendModeSendsOurRulesFirstThenTheUsersNotesToBothProviders() {
+        for (provider in listOf("gemini", "openrouter")) {
+            val reply = if (provider == "gemini") "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hello\"}]}}]}"
+                else "{\"choices\":[{\"message\":{\"content\":\"Hello\"}}]}"
+            val (requests, _) = runRequest(DirectVoiceConfig("ai", provider, "test-model", groqKey = "test", answerKey = "answer",
+                systemPrompt = "I am Asha, a designer. Keep it warm.", systemPromptMode = PromptMode.APPEND),
+                listOf(200 to "{\"text\":\"Write a greeting\"}", 200 to reply))
+            val buffer = okio.Buffer(); requests[1].body!!.writeTo(buffer)
+            val body = JSONObject(buffer.readUtf8())
+            val system = if (provider == "gemini") body.getJSONObject("systemInstruction").getJSONArray("parts").getJSONObject(0).getString("text")
+                else body.getJSONArray("messages").getJSONObject(0).getString("content")
+            assertTrue("$provider: our rules come first", system.startsWith(DirectVoiceTransport.ANSWER_PROMPT))
+            assertTrue("$provider: then the notes", system.endsWith("I am Asha, a designer. Keep it warm."))
+            assertTrue(system.contains(app.odicto.mobile.dictation.PromptComposer.AI_NOTES_INTRO))
+        }
+    }    @Test fun aiRejectsOversizedContextBeforeRecording() {
         for (config in listOf(DirectVoiceConfig("ai", groqKey = "test", answerKey = "test", selectedText = "a".repeat(20_001)),
             DirectVoiceConfig("ai", groqKey = "test", answerKey = "test", systemPrompt = "a".repeat(8_001)))) {
             val transport = DirectVoiceTransport(config, "op", 1, { fail("Oversized request became ready") })

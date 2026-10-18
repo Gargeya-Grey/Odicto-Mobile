@@ -1,5 +1,6 @@
 package app.odicto.mobile.storage
 
+import app.odicto.mobile.dictation.PromptMode
 import android.content.Context
 import androidx.datastore.preferences.core.*
 import kotlinx.coroutines.*
@@ -63,8 +64,11 @@ data class VoiceSettings(
     val anchorY: Int = -1,
     val liveModel: String = "gemini-3.5-transcribe-live",
     val systemPrompt: String = "",
+    /** "append" adds [systemPrompt] after Odicto's rules; "replace" uses it instead. See [app.odicto.mobile.dictation.PromptMode]. */
+    val systemPromptMode: String = "append",
     val polishModel: String = DEFAULT_POLISH_MODEL,
     val polishSystemPrompt: String = "",
+    val polishSystemPromptMode: String = "append",
     val showTextPreview: Boolean = true,
     val paused: Boolean = false,
     val keys: KeySettings = KeySettings(),
@@ -109,6 +113,8 @@ object VoicePreferences {
                 .catch { emit(emptyPreferences()) }
                 .collect { preferences ->
                     val haptics = preferences[booleanPreferencesKey("voice_haptics")] ?: true
+                    val savedPrompt = preferences[stringPreferencesKey("voice_system_prompt")] ?: ""
+                    val savedPolishPrompt = preferences[stringPreferencesKey("voice_polish_system_prompt")]?.takeIf { it.length <= 8_000 } ?: ""
                     val fontChoiceRecorded = preferences[booleanPreferencesKey("voice_key_font_migrated")] ?: false
                     val rawFont = preferences[stringPreferencesKey("voice_key_font")]
                     val keyFont = KeySettings.resolveFont(rawFont, fontChoiceRecorded)
@@ -124,11 +130,12 @@ object VoicePreferences {
                         anchorX = readAnchor(preferences, "voice_anchor_fx", "voice_anchor_x"),
                         anchorY = readAnchor(preferences, "voice_anchor_fy", "voice_anchor_y"),
                         liveModel = preferences[stringPreferencesKey("voice_live_model")] ?: "gemini-3.5-transcribe-live",
-                        systemPrompt = preferences[stringPreferencesKey("voice_system_prompt")] ?: "",
+                        systemPrompt = savedPrompt,
+                        systemPromptMode = PromptMode.forStored(preferences[stringPreferencesKey("voice_system_prompt_mode")], savedPrompt).wire,
                         polishModel = preferences[stringPreferencesKey("voice_polish_model")]
                             ?.takeIf { it.isNotBlank() && it.length <= 200 } ?: DEFAULT_POLISH_MODEL,
-                        polishSystemPrompt = preferences[stringPreferencesKey("voice_polish_system_prompt")]
-                            ?.takeIf { it.length <= 8_000 } ?: "",
+                        polishSystemPrompt = savedPolishPrompt,
+                        polishSystemPromptMode = PromptMode.forStored(preferences[stringPreferencesKey("voice_polish_system_prompt_mode")], savedPolishPrompt).wire,
                         showTextPreview = preferences[booleanPreferencesKey("voice_show_text_preview")] ?: true,
                         paused = preferences[booleanPreferencesKey("voice_paused")] ?: false,
                         keys = KeySettings(
@@ -164,8 +171,10 @@ object VoicePreferences {
             p[intPreferencesKey("voice_anchor_fx")] = value.anchorX; p[intPreferencesKey("voice_anchor_fy")] = value.anchorY
             p[stringPreferencesKey("voice_live_model")] = value.liveModel
             p[stringPreferencesKey("voice_system_prompt")] = value.systemPrompt
+            p[stringPreferencesKey("voice_system_prompt_mode")] = value.systemPromptMode
             p[stringPreferencesKey("voice_polish_model")] = value.polishModel
             p[stringPreferencesKey("voice_polish_system_prompt")] = value.polishSystemPrompt
+            p[stringPreferencesKey("voice_polish_system_prompt_mode")] = value.polishSystemPromptMode
             p[booleanPreferencesKey("voice_show_text_preview")] = value.showTextPreview
             p[booleanPreferencesKey("voice_paused")] = value.paused
             p[intPreferencesKey("voice_haptic_level")] = value.keys.hapticLevel

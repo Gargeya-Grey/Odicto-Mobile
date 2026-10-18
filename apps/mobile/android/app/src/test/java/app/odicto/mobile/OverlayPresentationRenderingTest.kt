@@ -1,5 +1,6 @@
 package app.odicto.mobile
 
+import app.odicto.mobile.overlay.OverlayGeometry
 import android.app.Activity
 import android.os.Looper
 import android.view.View
@@ -76,8 +77,8 @@ class OverlayPresentationRenderingTest {
         advance(2000)
         publish(view, VoiceUi(phase = "recording", mode = "raw"))
         advance(5000)
-        // The window is exactly as wide as what is open: a 288dp card plus the microphone and margins.
-        assertEquals(view.dp(296), view.layoutParams.width)
+        // The window is exactly as wide as what is open: a 288dp card plus the microphone and the 8dp margins.
+        assertEquals(view.dp(304), view.layoutParams.width)
         assertTrue(buttons(view).any { it.contentDescription == "Finish recording" })
     }
 
@@ -114,6 +115,7 @@ class OverlayPresentationRenderingTest {
         assertEquals(result, app.odicto.mobile.dictation.VoiceSession.state.value)
         advance(3000)
         assertEquals(view.dp(72), view.layoutParams.width)
+        // With no text field the icon is faded.
         assertEquals(0.5f, buttons(view).single().alpha)
     }
 
@@ -163,8 +165,8 @@ class OverlayPresentationRenderingTest {
     fun accessibilityTimeoutExtendsActualCollapse() = attached { view, _ ->
         publish(view, VoiceUi(phase = "notice", resultId = "accessible", message = "Notice"))
         advance(3000)
-        // The window is exactly as wide as what is open: a 288dp card plus the microphone and margins.
-        assertEquals(view.dp(296), view.layoutParams.width)
+        // The window is exactly as wide as what is open: a 288dp card plus the microphone and the 8dp margins.
+        assertEquals(view.dp(304), view.layoutParams.width)
         advance(3000)
         assertEquals(view.dp(72), view.layoutParams.width)
     }
@@ -177,8 +179,8 @@ class OverlayPresentationRenderingTest {
             view.resize = { w, h, _ -> view.layoutParams = view.layoutParams.apply { width = w; height = h } }
             view.render(VoiceUi(phase = "done", resultId = "completion", finalText = "Retained", message = "Check field before pasting"))
             shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(2999))
-            // The window is exactly as wide as what is open: a 288dp card plus the microphone and margins.
-            assertEquals(view.dp(296), view.layoutParams.width)
+            // The window is exactly as wide as what is open: a 288dp card plus the microphone and the 8dp margins.
+            assertEquals(view.dp(304), view.layoutParams.width)
             shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(1))
             view.measure(View.MeasureSpec.makeMeasureSpec(view.layoutParams.width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(view.layoutParams.height, View.MeasureSpec.EXACTLY))
             view.layout(0, 0, view.measuredWidth, view.measuredHeight)
@@ -228,5 +230,44 @@ class OverlayPresentationRenderingTest {
         assertEquals("same height, so the end is a half circle around it", micLp.height, pillLp.height)
         assertEquals(micLp.topMargin, pillLp.topMargin)
         assertTrue(micCentre > 0)
+    }
+
+    private fun reopenDetached(mic: View) {
+        val node = mic.createAccessibilityNodeInfo()
+        val action = node.actionList.single { it.label == "Show voice options" }
+        assertTrue(mic.performAccessibilityAction(action.id, null))
+    }
+
+    @Test fun aDetachedMicrophoneLeavesTheDrawerWindowAndTheDrawerEndsWhereItsWindowBegins() = attached { view, _ ->
+        var offset = -1
+        view.resize = { w, h, off -> offset = off; view.layoutParams = view.layoutParams.apply { width = w; height = h } }
+        val mic = view.detachMic()
+        assertNull("the microphone is no longer part of the drawer window", mic.parent)
+        reopenDetached(mic)
+        assertTrue(buttons(view).none { it.contentDescription?.contains("Double tap") == true })
+        val pill = (0 until view.childCount).map { view.getChildAt(it) }.single { it.visibility == View.VISIBLE && it.layoutParams.width > view.dp(200) }
+        val lp = pill.layoutParams as FrameLayout.LayoutParams
+        assertEquals("as tall as the microphone", view.dp(OverlayGeometry.MIC_DP), lp.height)
+        // The microphone's window covers [offset, offset + 56dp) of this window's width: the drawer must end exactly there.
+        assertEquals("the drawer ends at the microphone's far edge", offset + view.dp(OverlayGeometry.MIC_DP), lp.leftMargin + lp.width)
+    }
+    @Test fun theDrawerWindowShrinksOnlyAfterItsContentIsGone() = attached { view, _ ->
+        fun contentVisible() = (0 until view.childCount).any { view.getChildAt(it).visibility == View.VISIBLE }
+        var shrunkAt = -1L
+        var contentVisibleWhenItShrank = true
+        view.resize = { w, h, _ ->
+            if (w < view.layoutParams.width) { shrunkAt = android.os.SystemClock.uptimeMillis(); contentVisibleWhenItShrank = contentVisible() }
+            view.layoutParams = view.layoutParams.apply { width = w; height = h }
+        }
+        val mic = view.detachMic()
+        reopenDetached(mic)
+        val openedAt = android.os.SystemClock.uptimeMillis()
+        assertTrue(view.layoutParams.width > view.dp(200))
+        advance(8_400)
+        assertTrue("the window shrank", shrunkAt > 0)
+        assertFalse("the drawer was already gone from the window when its frame changed", contentVisibleWhenItShrank)
+        // The options fold after 8000 ms; the window follows 64 ms later, not in the same frame.
+        assertEquals(8_064.0, (shrunkAt - openedAt).toDouble(), 4.0)
+        assertEquals(view.dp(72), view.layoutParams.width)
     }
 }

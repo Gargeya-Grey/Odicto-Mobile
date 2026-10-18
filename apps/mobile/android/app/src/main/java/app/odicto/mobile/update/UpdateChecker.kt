@@ -19,11 +19,23 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /** What the app shows: whether checking is on, the installed version, and the version on offer, if any. */
-data class UpdateSnapshot(val enabled: Boolean, val current: String, val offer: ReleaseVersion?)
+data class UpdateSnapshot(
+    val enabled: Boolean,
+    val current: String,
+    val offer: ReleaseVersion?,
+    /** When the release list was last read successfully (epoch ms), or 0 if it never was. */
+    val checkedAt: Long = 0L,
+    /** True when the most recent attempt failed, so the screen can say so instead of implying everything is current. */
+    val failed: Boolean = false,
+)
+
+/** The release list, or 
+ull body when GitHub says it has not changed since [etag]. */
+class FeedAnswer(val body: String?, val etag: String? = null)
 
 /**
  * Tells the user when a newer Odicto has been published. It asks GitHub for the repository's release list,
- * at most once a day, only while the setting is on, and only when the app is opened. It sends no identifier,
+ * at most once an hour (a cheap conditional request), only while the setting is on, and only when the app is opened. It sends no identifier,
  * account, or app data, reads nothing but release numbers from the answer, and never downloads or installs:
  * the offer opens the release page in the browser, built from the validated version number and never from a
  * link in the response.
@@ -38,6 +50,7 @@ object UpdateChecker {
     private val dismissedKey = stringPreferencesKey("update_dismissed")
     private val checkedAtKey = longPreferencesKey("update_checked_at")
     private val attemptedAtKey = longPreferencesKey("update_attempted_at")
+    private val etagKey = stringPreferencesKey("update_etag")
 
     /** One request at a time, so a quick return to the app cannot start a second check. */
     private val lock = Mutex()
@@ -53,6 +66,8 @@ object UpdateChecker {
             enabled = enabled,
             current = name,
             // Turned off means nothing is shown, even a version found before it was turned off.
+            checkedAt = prefs[checkedAtKey] ?: 0L,
+            failed = (prefs[attemptedAtKey] ?: 0L) > (prefs[checkedAtKey] ?: 0L),
             offer = if (!enabled) null else UpdatePolicy.offer(
                 installed = ReleaseVersion.parse(name),
                 latest = ReleaseVersion.parse(prefs[latestKey]),
@@ -65,15 +80,23 @@ object UpdateChecker {
     suspend fun check(
         context: Context,
         now: Long = System.currentTimeMillis(),
-        fetch: suspend () -> String = ::fetchFeed,
+        force: Boolean = false,
+        fetch: suspend (etag: String?) -> FeedAnswer = ::fetchFeed,
     ): UpdateSnapshot = lock.withLock {
         val prefs = context.dataStore.data.first()
-        val due = UpdatePolicy.due(prefs[enabledKey] ?: true, now, prefs[checkedAtKey] ?: 0L, prefs[attemptedAtKey] ?: 0L)
+        val enabled = prefs[enabledKey] ?: true
+        // A deliberate "Check now" skips the timing rules, but never the switch.
+        val due = enabled && (force || UpdatePolicy.due(true, now, prefs[checkedAtKey] ?: 0L, prefs[attemptedAtKey] ?: 0L))
         if (due) {
             try {
-                val newest = ReleaseFeed.newest(fetch())
+                val answer = fetch(prefs[etagKey])
+                val newest = answer.body?.let { ReleaseFeed.newest(it) }
                 context.dataStore.edit {
-                    if (newest != null) it[latestKey] = newest.toString()
+                    if (newest != null) {
+                        it[latestKey] = newest.toString()
+                        // Only a list that was understood may be remembered as "unchanged".
+                        answer.etag?.let { tag -> it[etagKey] = tag } ?: it.remove(etagKey)
+                    }
                     it[checkedAtKey] = now
                     it[attemptedAtKey] = now
                 }
@@ -101,13 +124,15 @@ object UpdateChecker {
     private fun installedName(context: Context): String =
         try { context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty() } catch (_: Exception) { "" }
 
-    private suspend fun fetchFeed(): String = withContext(Dispatchers.IO) {
+    private suspend fun fetchFeed(etag: String?): FeedAnswer = withContext(Dispatchers.IO) {
         val request = Request.Builder()
             .url(FEED_URL)
             .header("Accept", "application/vnd.github+json")
             .header("X-GitHub-Api-Version", "2022-11-28")
+            .apply { if (etag != null) header("If-None-Match", etag) }
             .get().build()
         client.newCall(request).execute().use { response ->
+            if (response.code == 304) return@use FeedAnswer(null)
             if (!response.isSuccessful) throw IOException("Release list request failed (${response.code})")
             val stream = response.body?.byteStream() ?: throw IOException("Release list was empty")
             val out = ByteArrayOutputStream()
@@ -120,7 +145,7 @@ object UpdateChecker {
                 if (total > MAX_FEED_BYTES) throw IOException("Release list was too large")
                 out.write(buffer, 0, read)
             }
-            out.toString("UTF-8")
+            FeedAnswer(out.toString("UTF-8"), response.header("ETag"))
         }
     }
 }

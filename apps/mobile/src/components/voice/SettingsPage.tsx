@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { modelGroups, modelLabel, MAX_MODEL_ID } from '../../lib/modelGroups';
 import type { Appearance, Point } from '../../lib/theme';
-import { updateSettingLine } from '../../lib/updateCard';
+import { PROMPT_MODE_OPTIONS, promptHint } from '../../lib/promptMode';
+import { checkResultLine, updateSettingLine } from '../../lib/updateCard';
+import { formatRelativeTime } from '../../lib/relativeTime';
 import type { OnboardingStatus } from '../../native/onboarding';
 import type { UpdateStatus } from '../../native/update';
 import type { OpenRouterModel, VoiceSettings } from '../../native/voice';
@@ -15,6 +17,7 @@ import {
   Segmented,
   Switch,
 } from './controls';
+import { useNow } from './HistoryEntry';
 import { Select, type SelectGroup } from './Select';
 import {
   DEFAULT_OPENROUTER_MODEL,
@@ -185,6 +188,8 @@ export function SettingsPage({
   onSetAppearance,
   appUpdate: updateStatus,
   onSetUpdateEnabled,
+  onCheckUpdate,
+  checkingUpdate,
 }: {
   settings: VoiceSettings | null;
   status: OnboardingStatus | null;
@@ -198,7 +203,10 @@ export function SettingsPage({
   onSetAppearance: (value: Appearance, origin?: Point) => void;
   appUpdate: UpdateStatus | null;
   onSetUpdateEnabled: (enabled: boolean) => void;
+  onCheckUpdate: () => void;
+  checkingUpdate: boolean;
 }) {
+  const now = useNow();
   const [modelSearch, setModelSearch] = useState('');
   const themeOrigin = useRef<Point | undefined>(undefined);
   const provider = draft.value('provider') ?? 'gemini';
@@ -423,20 +431,36 @@ export function SettingsPage({
           <Row
             title="AI system prompt"
             asLabel
-            info="Saved on this device and sent only with AI requests. Leave blank for the default prompt. Maximum 8,000 characters; selected text is limited to 20,000 characters."
+            info="Saved on this device and sent only with AI requests. Odicto's built-in instructions already handle editing and drafting, keep your language, and return only the text to insert. Choose 'Add to Odicto's rules' to put your own notes (your name, role, tone) after them, or 'Replace them' to write the whole prompt yourself. Maximum 8,000 characters; selected text is limited to 20,000 characters."
+            hint={promptHint(
+              draft.value('systemPromptMode') ?? 'append',
+              (draft.value('systemPrompt') ?? '').trim() !== '',
+              'ai',
+            )}
             below={({ id, describedBy }) => (
-              <textarea
-                id={id}
-                className="voice-input"
-                value={draft.value('systemPrompt') ?? ''}
-                onChange={(event) =>
-                  draft.setFields({ systemPrompt: event.target.value })
-                }
-                maxLength={8000}
-                rows={4}
-                aria-describedby={describedBy}
-                placeholder="Example: Keep my tone, use British English, and return only the revised text."
-              />
+              <>
+                <Segmented
+                  label="How your AI prompt is used"
+                  options={PROMPT_MODE_OPTIONS}
+                  value={draft.value('systemPromptMode') ?? 'append'}
+                  onChange={(systemPromptMode) =>
+                    draft.setFields({ systemPromptMode })
+                  }
+                />
+                <textarea
+                  id={id}
+                  className="voice-input"
+                  style={{ marginTop: 10 }}
+                  value={draft.value('systemPrompt') ?? ''}
+                  onChange={(event) =>
+                    draft.setFields({ systemPrompt: event.target.value })
+                  }
+                  maxLength={8000}
+                  rows={4}
+                  aria-describedby={describedBy}
+                  placeholder="For example: I'm Asha, a product designer. Keep replies warm and brief."
+                />
+              </>
             )}
           />
           <Row
@@ -565,20 +589,36 @@ export function SettingsPage({
           <Row
             title="Text polish system prompt"
             asLabel
-            info="Leave the prompt blank to preserve the built-in correction rules, including names as written. A model can still make mistakes; review its result. Fields over 20,000 characters are refused rather than partially rewritten."
+            info="The built-in rules clean up dictation: they remove um, uh and other fillers, stutters and false starts, then fix spelling, grammar, punctuation and capitalization while keeping your wording, tone and language (including Hinglish) and leaving names, links, @mentions and emojis alone. Choose 'Add to Odicto's rules' to add your own notes after them (for example spellings to keep), or 'Replace them' to write the whole prompt yourself. A model can still make mistakes; review its result. Fields over 20,000 characters are refused rather than partially rewritten."
+            hint={promptHint(
+              draft.value('polishSystemPromptMode') ?? 'append',
+              (draft.value('polishSystemPrompt') ?? '').trim() !== '',
+              'polish',
+            )}
             below={({ id, describedBy }) => (
-              <textarea
-                id={id}
-                className="voice-input"
-                value={draft.value('polishSystemPrompt') ?? ''}
-                onChange={(event) =>
-                  draft.setFields({ polishSystemPrompt: event.target.value })
-                }
-                maxLength={8000}
-                rows={4}
-                aria-describedby={describedBy}
-                placeholder="Blank uses the built-in grammar, spelling, and capitalization instruction."
-              />
+              <>
+                <Segmented
+                  label="How your Polish prompt is used"
+                  options={PROMPT_MODE_OPTIONS}
+                  value={draft.value('polishSystemPromptMode') ?? 'append'}
+                  onChange={(polishSystemPromptMode) =>
+                    draft.setFields({ polishSystemPromptMode })
+                  }
+                />
+                <textarea
+                  id={id}
+                  className="voice-input"
+                  style={{ marginTop: 10 }}
+                  value={draft.value('polishSystemPrompt') ?? ''}
+                  onChange={(event) =>
+                    draft.setFields({ polishSystemPrompt: event.target.value })
+                  }
+                  maxLength={8000}
+                  rows={4}
+                  aria-describedby={describedBy}
+                  placeholder="For example: Keep 'Odicto' and my name, Asha, exactly as written."
+                />
+              </>
             )}
           />
         </Group>
@@ -682,6 +722,20 @@ export function SettingsPage({
                   checked={updateStatus.enabled}
                   onChange={onSetUpdateEnabled}
                 />
+              )}
+            />
+            <Row
+              title="Check now"
+              secondary={checkResultLine(updateStatus, now, formatRelativeTime)}
+              trailing={() => (
+                <button
+                  type="button"
+                  className="voice-link"
+                  disabled={checkingUpdate || !updateStatus.enabled}
+                  onClick={onCheckUpdate}
+                >
+                  {checkingUpdate ? 'Checking…' : 'Check'}
+                </button>
               )}
             />
             {updateStatus.current && (
