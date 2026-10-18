@@ -59,8 +59,7 @@ export function summarizeReadiness(
     return {
       tone: 'paused',
       headline: 'Odicto is paused',
-      detail:
-        'The floating microphone and voice typing in other keyboards are off.',
+      detail: 'The floating microphone is off.',
       items,
     };
   }

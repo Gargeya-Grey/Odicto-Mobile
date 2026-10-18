@@ -10,11 +10,8 @@ export type OnboardingStatus = {
   imeSelected: boolean;
   overlay: boolean;
   notifications: boolean;
-  accessibility: boolean;
   /** Whether this build ships the floating microphone at all. */
   overlaySupported: boolean;
-  /** Whether this build ships an accessibility service at all. */
-  accessibilitySupported: boolean;
 };
 const plugin = registerPlugin<{
   status(): Promise<OnboardingStatus>;
@@ -23,7 +20,6 @@ const plugin = registerPlugin<{
   openKeyboardSettings(): Promise<void>;
   showKeyboardPicker(): Promise<void>;
   openOverlaySettings(): Promise<void>;
-  openAccessibilitySettings(): Promise<void>;
   addListener(
     eventName: 'statusChanged',
     listener: () => void,
@@ -37,7 +33,6 @@ export const onboarding = {
   openKeyboardSettings: () => plugin.openKeyboardSettings(),
   showKeyboardPicker: () => plugin.showKeyboardPicker(),
   openOverlaySettings: () => plugin.openOverlaySettings(),
-  openAccessibilitySettings: () => plugin.openAccessibilitySettings(),
   /** Fires when the default or enabled keyboards change, e.g. after the system picker. */
   onStatusChanged: (listener: () => void) =>
     plugin.addListener('statusChanged', listener),

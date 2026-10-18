@@ -59,10 +59,13 @@ class OverlayGeometryTest {
     }
 
     @Test fun mirroringAReachesPiecesAcrossTheMicrophone() {
-        // The options pill: 296 wide, starting 236 left of the microphone, ends 4 past its right edge.
-        val x = OverlayGeometry.mirror(-236, 296)
-        assertEquals(-4, x)
-        assertEquals(292, x + 296)
+        // The options pill ends exactly at the microphone's far edge, so mirrored it starts exactly at the microphone's near
+        // edge: both ends are concentric with the disc, with nothing sticking out past it.
+        val width = OverlayGeometry.OPTIONS_REACH_DP + OverlayGeometry.MIC_DP
+        assertEquals(OverlayGeometry.MIC_DP, -OverlayGeometry.OPTIONS_REACH_DP + width)
+        val x = OverlayGeometry.mirror(-OverlayGeometry.OPTIONS_REACH_DP, width)
+        assertEquals(0, x)
+        assertEquals(width, x + width)
     }
 
     @Test fun aBareMicrophoneIsTheCollapsedSeventyTwoWindow() {
@@ -72,9 +75,9 @@ class OverlayGeometryTest {
     }
 
     @Test fun theWindowWrapsEverythingWithTheMicrophoneInsideItAtAKnownOffset() {
-        val box = OverlayGeometry.bounds(-236, 60)
-        assertEquals(304, box.width)
-        assertEquals(240, box.micOffset)
+        val box = OverlayGeometry.bounds(-OverlayGeometry.OPTIONS_REACH_DP, OverlayGeometry.MIC_DP)
+        assertEquals(OverlayGeometry.OPTIONS_REACH_DP + OverlayGeometry.MIC_DP + 8, box.width)
+        assertEquals(OverlayGeometry.OPTIONS_REACH_DP + 4, box.micOffset)
         val stacked = OverlayGeometry.bounds(-100, 132)
         assertEquals(232 + 8, stacked.width)
         assertEquals(104, stacked.micOffset)
@@ -99,5 +102,19 @@ class OverlayGeometryTest {
         val share = OverlayGeometry.shareOf(500, 0, 1000)
         assertEquals(1000, OverlayGeometry.valueAt(share, 0, 2000))
         assertEquals(OverlayGeometry.ANCHOR_SCALE / 2, OverlayGeometry.shareOf(7, 10, 10))
+    }
+}
+class OptionsPillGeometryTest {
+    @Test fun thePillIsAsTallAsTheMicrophoneSoItsEndIsAHalfCircleAroundTheDisc() {
+        assertEquals(OverlayGeometry.MIC_DP, OverlayGeometry.OPTIONS_HEIGHT_DP)
+    }
+
+    @Test fun fiveControlsAreCentredInTheVisiblePartOfThePill() {
+        val first = -OverlayGeometry.OPTIONS_REACH_DP + (OverlayGeometry.OPTIONS_REACH_DP - (4 * OverlayGeometry.OPTION_PITCH_DP + 40)) / 2
+        val lastEnd = first + 4 * OverlayGeometry.OPTION_PITCH_DP + 40
+        val before = first - -OverlayGeometry.OPTIONS_REACH_DP
+        val after = 0 - lastEnd
+        assertEquals("equal space before the first control and between the last and the disc", before, after)
+        assertTrue("room to breathe", before >= 8)
     }
 }

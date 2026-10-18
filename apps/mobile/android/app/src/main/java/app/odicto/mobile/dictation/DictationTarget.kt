@@ -1,6 +1,6 @@
 package app.odicto.mobile.dictation
 
-/** Insertion channel for a dictation session: the Odicto IME, or the accessibility fallback used while another keyboard is active. */
+/** Insertion channel for a dictation session: the Odicto IME, the only one. */
 enum class DeliveryOutcome { CONFIRMED, ACCEPTED_UNVERIFIED, REJECTED_STALE }
 
 interface DictationTarget {
@@ -17,6 +17,5 @@ interface DictationTarget {
     fun endLive() {}
     companion object {
         const val IME = "ime"
-        const val ACCESSIBILITY = "accessibility"
     }
 }

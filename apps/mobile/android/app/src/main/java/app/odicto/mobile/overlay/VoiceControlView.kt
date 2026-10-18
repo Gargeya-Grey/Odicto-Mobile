@@ -11,6 +11,7 @@ import app.odicto.mobile.MainActivity
 import app.odicto.mobile.dictation.*
 import app.odicto.mobile.ime.Haptics
 import app.odicto.mobile.ime.PressSurface
+import androidx.core.graphics.ColorUtils
 import app.odicto.mobile.R
 import app.odicto.mobile.storage.VoicePreferences
 import kotlin.math.*
@@ -105,7 +106,8 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
     private val back = Icon(context, "back", "Collapse voice controls")
     private val cancel = Icon(context, "cancel", "Cancel recording")
     private val copy = Icon(context, "copy", "Copy available text")
-    private val pill = View(context).apply { background = round(cardFill, 36f) }
+    private val pill = View(context).apply { background = round(cardFill, OverlayGeometry.OPTIONS_HEIGHT_DP / 2f) }
+    private var pillReveal: ValueAnimator? = null
     /** Keyboard header only: the jade chip behind the active mode. It glides to a new mode instead of jumping. */
     private val indicator = View(context).apply { background = round(jadeFill, 13f); visibility = GONE }
     private var indicatorIndex = -1
@@ -119,7 +121,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
             // The control stays on screen but disabled outside supported fields; say why rather than
             // leaving the user with a microphone that silently ignores the press.
             if (keyboard) keyboardNotice("Voice unavailable in this field")
-            else VoiceSession.notice("No text field for voice here. Some apps hide their editors from accessibility; select the Odicto keyboard to dictate in this app.")
+            else VoiceSession.notice("Voice types through the Odicto keyboard. Tap a text field and switch to it to dictate here.")
             render(VoiceSession.state.value)
         }
     }
@@ -322,8 +324,11 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
                 fixed(pill, left, band, width, 56)
                 controls.forEachIndexed { i, button -> fixed(button, left + 8 + pitch * i, band + 8, 40, 40) }
             } else {
-                beside(pill, -OverlayGeometry.OPTIONS_REACH_DP, row, 296, 56)
-                listOf(-232, -188, -144, -100, -56).forEachIndexed { i, x -> beside(controls[i], x, row + 8, 40, 40) }
+                // The pill ends exactly at the microphone's far edge, concentric with it; the five controls sit with equal
+                // space before the first and between the last and the disc.
+                beside(pill, -OverlayGeometry.OPTIONS_REACH_DP, row, OverlayGeometry.OPTIONS_REACH_DP + OverlayGeometry.MIC_DP, OverlayGeometry.OPTIONS_HEIGHT_DP)
+                val first = -OverlayGeometry.OPTIONS_REACH_DP + (OverlayGeometry.OPTIONS_REACH_DP - (4 * OverlayGeometry.OPTION_PITCH_DP + 40)) / 2
+                controls.forEachIndexed { i, button -> beside(button, first + i * OverlayGeometry.OPTION_PITCH_DP, row + 8, 40, 40) }
             }
             settings.isEnabled = !value.busy
         }
@@ -403,7 +408,11 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
             else -> "mic"
         }
         mic.highlighted = value.active; mic.level = value.level
-        mic.alpha = if (!value.busy && DictationCoordinator.activeEditorSession == null) 0.5f else 1f
+        // Without a field the mic is dimmed. Over the options pill it is dimmed by colour instead of alpha, because a see-through
+        // disc would show the pill's end behind it.
+        val noField = !value.busy && DictationCoordinator.activeEditorSession == null
+        mic.alpha = if (noField && !optionsShown) 0.5f else 1f
+        mic.dimmed = noField && optionsShown
         mic.contentDescription = when {
             keyboard && compactKeyboard && value.busy && !value.active -> "Cancel voice processing"
             value.active -> "Finish recording"
@@ -416,9 +425,14 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
             // transitions.dev dropdown/modal open: what appears fades and scales in on the smooth-out curve, cards
             // barely and buttons a little more, with a 40ms stagger so a row unfolds instead of popping.
             var stagger = 0
+            pillReveal?.cancel(); pill.clipBounds = null
+            val beside = optionsShown && !stacked
+            val rowControls = listOf(back, settings, raw, ai, live)
             for (piece in pieces.filter { it.visibility == View.VISIBLE && it !in wasShown }) {
                 val card = piece === panel || piece === pill
                 piece.animate().cancel()
+                if (beside && piece === pill) { revealPill(side == OverlayGeometry.Side.LEFT); continue }
+                if (beside && piece in rowControls) { emerge(piece, rowControls.size - 1 - rowControls.indexOf(piece), box.micOffset); continue }
                 piece.alpha = 0f
                 piece.scaleX = if (card) 0.97f else 0.85f; piece.scaleY = piece.scaleX
                 piece.translationY = if (piece === panel) dp(8).toFloat() else 0f
@@ -431,6 +445,39 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         }
         mic.invalidate()
     }
+    /** The pill grows out from under the microphone: a wipe from the mic's end, so its rounded shape never squashes. */
+    private fun revealPill(fromRight: Boolean) {
+        val w = pill.layoutParams.width; val h = pill.layoutParams.height
+        pill.alpha = 1f; pill.scaleX = 1f; pill.scaleY = 1f
+        fun clip(shown: Int) = android.graphics.Rect(if (fromRight) w - shown else 0, 0, if (fromRight) w else shown, h)
+        pill.clipBounds = clip(0)
+        pillReveal = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 320L; interpolator = PressSurface.SMOOTH_OUT
+            addUpdateListener { pill.clipBounds = clip((w * (it.animatedValue as Float)).toInt()) }
+            addListener(object : android.animation.AnimatorListenerAdapter() { override fun onAnimationEnd(a: android.animation.Animator) { pill.clipBounds = null } })
+            start()
+        }
+    }
+
+    /** A control slides out from beneath the microphone to its place, the nearest first, fading and growing as it goes. */
+    private fun emerge(piece: View, rank: Int, micOffsetDp: Int) {
+        val lp = piece.layoutParams as LayoutParams
+        val toMic = (dp(micOffsetDp) + dp(OverlayGeometry.MIC_DP) / 2) - (lp.leftMargin + lp.width / 2)
+        piece.alpha = 0f; piece.scaleX = 0.6f; piece.scaleY = 0.6f; piece.translationX = toMic.toFloat()
+        piece.animate().alpha(1f).scaleX(1f).scaleY(1f).translationX(0f)
+            .setStartDelay(20L * rank).setDuration(300L).setInterpolator(PressSurface.SMOOTH_OUT).start()
+    }
+
+    /** A touch on the open options keeps them open a while longer. */
+    override fun dispatchTouchEvent(e: MotionEvent): Boolean {
+        if (!keyboard && e.actionMasked == MotionEvent.ACTION_DOWN && OverlayPresentation.options) {
+            OverlayPresentation.touch()
+            removeCallbacks(collapseTimer)
+            OverlayPresentation.remaining()?.let { postDelayed(collapseTimer, it.coerceAtLeast(1)) }
+        }
+        return super.dispatchTouchEvent(e)
+    }
+
     /**
      * The keyboard row is six fixed cells: settings or cancel, Raw, AI, Live, copy or lock, mic.
      * When the keyboard shows suggestions or a status line, that text takes the place of the tool
@@ -609,6 +656,9 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
             }
         var highlighted = false
             set(value) { field = value; isSelected = value; invalidate() }
+        /** Drawn in muted colours instead of with alpha, for a disc that sits over something it must not show through. */
+        var dimmed = false
+            set(value) { if (field == value) return; field = value; invalidate() }
         private var meter = 0f
         private var meterAnimation: ValueAnimator? = null
         var level = 0f
@@ -702,12 +752,14 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
                 glyph(id)?.apply { setBounds((cx - half).toInt(), (cy - half).toInt(), (cx + half).toInt(), (cy + half).toInt()); setTint(color); draw(c) }
             }
             paint.reset(); paint.isAntiAlias = true
-            val (fill, ink) = when {
+            val (baseFill, baseInk) = when {
                 kind == "done" -> palette.success to palette.onSuccess
                 kind == "error" -> palette.danger to palette.onDanger
                 kind == "mic" || kind == "finish" || highlighted -> palette.accent to palette.onAccent
                 else -> palette.bubble to palette.icon
             }
+            val fill = if (dimmed) ColorUtils.blendARGB(baseFill, palette.bubble, 0.5f) else baseFill
+            val ink = if (dimmed) ColorUtils.blendARGB(baseInk, fill, 0.35f) else baseInk
             val listening = (kind == "finish" || kind == "mic") && meter > 0f
             if (listening) {
                 paint.color = palette.halo; paint.alpha = (60 + meter * 120).toInt().coerceAtMost(255)
@@ -718,8 +770,8 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
             // While listening the disc breathes with the input level inside a soft halo.
             val discRadius = if (listening) radius - (1f - meter) * 3f * density - 2f * density else radius
             c.drawCircle(cx, cy, discRadius, paint)
-            if (fill == palette.accent) ring(c, cx, cy, discRadius)
-            if (fill == palette.bubble) {
+            if (baseFill == palette.accent && !dimmed) ring(c, cx, cy, discRadius)
+            if (baseFill == palette.bubble) {
                 paint.style = Paint.Style.STROKE; paint.strokeWidth = density; paint.color = palette.hairline
                 c.drawCircle(cx, cy, radius - density / 2f, paint)
                 paint.style = Paint.Style.FILL

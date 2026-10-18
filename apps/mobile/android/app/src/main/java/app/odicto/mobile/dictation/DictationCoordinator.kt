@@ -20,10 +20,6 @@ object DictationCoordinator {
     private var live = false
     private var liveTarget: DictationTarget? = null
 
-    /** True while the Odicto IME owns the focused editor, so the accessibility fallback stands down. */
-    var imeAttached = false
-        private set
-
     val busy get() = operation != null
     val protectedField = MutableStateFlow(false)
     val keyboardVisible = MutableStateFlow(false)
@@ -34,16 +30,11 @@ object DictationCoordinator {
 
     fun unregisterTarget(id: String) {
         targets.remove(id)?.endLive()
-        if (id == DictationTarget.IME) { imeAttached = false; editorClosed() }
+        if (id == DictationTarget.IME) editorClosed()
     }
 
-    fun setImeAttached(value: Boolean) { imeAttached = value }
-
-    // The IME wins while it owns the editor so selection context and Live composing stay native.
-    // The accessibility target is the second channel that answers while another keyboard is active.
-    private fun target(): DictationTarget? =
-        if (imeAttached) targets[DictationTarget.IME]
-        else targets[DictationTarget.ACCESSIBILITY] ?: targets[DictationTarget.IME]
+    /** The Odicto IME is the only insertion channel, so selection context and Live composing stay native. */
+    private fun target(): DictationTarget? = targets[DictationTarget.IME]
 
     /** Re-resolve the focused field. Events are the normal trigger, but a restarted process can miss them. */
     fun refreshTarget() { target()?.refresh() }

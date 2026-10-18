@@ -8,9 +8,7 @@ const ready: OnboardingStatus = {
   imeSelected: true,
   overlay: true,
   notifications: true,
-  accessibility: false,
   overlaySupported: true,
-  accessibilitySupported: false,
 };
 
 describe('summarizeReadiness', () => {

@@ -352,8 +352,8 @@ class OdictoImeService : InputMethodService() {
         controller?.stopRepeating()
         liveInsertion?.stop(); liveInsertion = null; liveEditor = null; liveConnection = null
         selectionStart = attribute?.initialSelStart ?: -1; selectionEnd = attribute?.initialSelEnd ?: -1
-        if (EditorPolicy.permits(attribute) && currentInputConnection != null) { session = DictationCoordinator.editorReady(); DictationCoordinator.setImeAttached(true) }
-        else { session = null; DictationCoordinator.setImeAttached(false); DictationCoordinator.editorClosed(true); if (VoiceSession.state.value.active) VoiceSession.cancel(this) }
+        if (EditorPolicy.permits(attribute) && currentInputConnection != null) { session = DictationCoordinator.editorReady() }
+        else { session = null; DictationCoordinator.editorClosed(true); if (VoiceSession.state.value.active) VoiceSession.cancel(this) }
         control?.visibility = View.VISIBLE
         control?.render(VoiceSession.state.value)
         controller?.onStartInput(attribute)
@@ -398,7 +398,7 @@ class OdictoImeService : InputMethodService() {
         controller?.stopRepeating()
         controller?.onFinishInput()
         endLive()
-        session = null; DictationCoordinator.setImeAttached(false); DictationCoordinator.editorClosed(); control?.visibility = View.VISIBLE
+        session = null; DictationCoordinator.editorClosed(); control?.visibility = View.VISIBLE
         if (VoiceSession.state.value.active) VoiceSession.finish(this)
         renderRecovery()
         super.onFinishInput()

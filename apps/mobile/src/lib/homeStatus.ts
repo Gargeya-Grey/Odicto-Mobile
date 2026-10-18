@@ -42,8 +42,8 @@ export function floatingMicLine(
 /** One line under "Pause Odicto". */
 export function pauseLine(paused: boolean): string {
   return paused
-    ? 'Paused. Protected apps see nothing.'
-    : 'Stops the mic and voice typing elsewhere';
+    ? 'Paused. The floating microphone is hidden.'
+    : 'Hides the floating microphone for protected apps';
 }
 
 export const MODE_HINT: Record<VoiceSettings['mode'], string> = {
