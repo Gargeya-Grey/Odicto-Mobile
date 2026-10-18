@@ -160,6 +160,9 @@ class VoiceOverlayService : Service() {
             PixelFormat.TRANSLUCENT).apply {
             gravity = Gravity.TOP or Gravity.LEFT
             if (Build.VERSION.SDK_INT >= 28) layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER
+            // Android slides a window that changes place and size in one update. Opening toward the left or above does both, and
+            // the slide would start the drawer away from the microphone instead of under it.
+            if (Build.VERSION.SDK_INT >= 34) setCanPlayMoveAnimation(false)
         }
         // The microphone leaves the drawer's view for a window of its own, added second so it is drawn above the drawer.
         val mic = view.detachMic()
@@ -190,18 +193,17 @@ class VoiceOverlayService : Service() {
             clamp(layout); update(view, layout)
         }
         view.dragStart = {
-            // The drag starts from where the microphone is drawn, wherever it was last placed.
-            anchorMicLeft = micLeftOf(view, layout)
             dragOriginSet = false
             movedVertically = false
         }
         view.drag = { totalX, totalY ->
             // Place the microphone from the finger's total travel, not from accumulated steps: it stays exactly
             // the grabbed distance from the finger, and a clamp at an edge cannot make it drift out of step.
-            // The origin is read on the first move, after the open card has folded away around the microphone.
+            // The drag starts from the anchor, where the microphone's own window is. It is not read back from the drawer window:
+            // folding the open drawer changes the microphone's offset at once but shrinks that window a few frames later.
             if (!dragOriginSet) {
                 dragOriginSet = true
-                dragStartMicLeft = micLeftOf(view, layout)
+                dragStartMicLeft = anchorMicLeft
                 dragStartBottom = layout.y + layout.height
             }
             val micLeft = clampMic(view, dragStartMicLeft + totalX.roundToInt())
@@ -219,7 +221,6 @@ class VoiceOverlayService : Service() {
             update(view, layout)
         }
         view.dragEnd = {
-            anchorMicLeft = micLeftOf(view, layout)
             saveAnchors(view)
             view.setPlacement(anchorMicLeft, bounds().first)
         }
@@ -231,7 +232,6 @@ class VoiceOverlayService : Service() {
         }
         catch (_: Exception) { hide(); recover() }
     }
-    private fun micLeftOf(view: VoiceControlView, layout: WindowManager.LayoutParams): Int = layout.x + view.micOffsetPx
 
     /**
      * The room the microphone's left edge can move in: anywhere on screen, right up to either side. The
