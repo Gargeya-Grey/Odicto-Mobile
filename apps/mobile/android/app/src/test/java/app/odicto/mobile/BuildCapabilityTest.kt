@@ -1,13 +1,11 @@
 package app.odicto.mobile
 
-import app.odicto.mobile.BuildCapability
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The single build ships both optional capabilities and must claim both. */
+/** The single build ships the floating microphone, and nothing that Google Play Protect blocks on sideload. */
 class BuildCapabilityTest {
-    @Test fun theBuildShipsOverlayAndAccessibility() {
+    @Test fun theBuildShipsTheOverlay() {
         assertTrue("overlay capability must be shipped", BuildCapability.overlaySupported)
-        assertTrue("accessibility capability must be shipped", BuildCapability.accessibilitySupported)
     }
 }

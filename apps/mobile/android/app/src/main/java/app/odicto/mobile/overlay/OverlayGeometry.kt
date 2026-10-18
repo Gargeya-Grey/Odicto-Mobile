@@ -16,8 +16,14 @@ internal object OverlayGeometry {
     /** Space kept around the whole group once something is open. */
     const val GROUP_MARGIN_DP = 4
     const val SCREEN_MARGIN_DP = 8f
-    /** The full options pill, with the mic inside it, reaches this far left of the mic. */
-    const val OPTIONS_REACH_DP = 236
+    /**
+     * The full options pill reaches this far left of the mic. It is as tall as the mic and ends exactly at the mic's far
+     * edge, so its rounded end is concentric with the disc and the controls look as if they slide out from under it.
+     */
+    const val OPTIONS_REACH_DP = 240
+    const val OPTIONS_HEIGHT_DP = 56
+    /** A control inside the pill: 40dp wide on a 44dp pitch, with equal space either side of the row. */
+    const val OPTION_PITCH_DP = 44
     const val CARD_WIDTH_DP = 288
     /** One button slot in a stacked row: a 40dp button on a 44dp pitch. */
     const val BUTTON_PITCH_DP = 44

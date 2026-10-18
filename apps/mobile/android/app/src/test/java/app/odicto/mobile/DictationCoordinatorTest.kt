@@ -158,7 +158,7 @@ class DictationCoordinatorTest {
         DictationCoordinator.process(session)
         assertEquals(DeliveryOutcome.REJECTED_STALE, DictationCoordinator.deliver(session, "result"))
     }
-    @After fun reset() { DictationCoordinator.cancel(); DictationCoordinator.unregisterTarget(DictationTarget.IME); DictationCoordinator.unregisterTarget(DictationTarget.ACCESSIBILITY) }
+    @After fun reset() { DictationCoordinator.cancel(); DictationCoordinator.unregisterTarget(DictationTarget.IME) }
     @Test fun repeatedRecordingsWorkWithoutRefocusing() {
         val session = DictationCoordinator.editorReady()
         DictationCoordinator.registerTarget(target())
@@ -212,27 +212,23 @@ class DictationCoordinatorTest {
         assertTrue(DictationCoordinator.start(session, true))
         assertEquals(AiSelection(0, 4, "text"), DictationCoordinator.aiSelection)
     }
-    @Test fun imeTargetWinsOnlyWhileTheImeOwnsTheEditor() {
+    @Test fun theImeIsTheOnlyChannelAndReceivesEveryDelivery() {
         var ime = 0
-        var accessibility = 0
-        DictationCoordinator.registerTarget(object : DictationTarget {
-            override val id = DictationTarget.ACCESSIBILITY
-            override fun readSelection() = null
-            override fun insert(text: String): Boolean { accessibility++; return true }
-        })
         DictationCoordinator.registerTarget(object : DictationTarget {
             override val id = DictationTarget.IME
             override fun readSelection() = null
             override fun insert(text: String): Boolean { ime++; return true }
         })
-        DictationCoordinator.setImeAttached(true)
-        var session = DictationCoordinator.editorReady()
+        repeat(2) {
+            val session = DictationCoordinator.editorReady()
+            DictationCoordinator.start(session); DictationCoordinator.process(session)
+            assertEquals(DeliveryOutcome.ACCEPTED_UNVERIFIED, DictationCoordinator.deliver(session, "text"))
+        }
+        assertEquals(2, ime)
+    }
+    @Test fun withNoImeRegisteredNothingIsDelivered() {
+        val session = DictationCoordinator.editorReady()
         DictationCoordinator.start(session); DictationCoordinator.process(session)
-        assertEquals(DeliveryOutcome.ACCEPTED_UNVERIFIED, DictationCoordinator.deliver(session, "a"))
-        DictationCoordinator.setImeAttached(false)
-        session = DictationCoordinator.editorReady()
-        DictationCoordinator.start(session); DictationCoordinator.process(session)
-        assertEquals(DeliveryOutcome.ACCEPTED_UNVERIFIED, DictationCoordinator.deliver(session, "b"))
-        assertEquals(1, ime); assertEquals(1, accessibility)
+        assertEquals(DeliveryOutcome.REJECTED_STALE, DictationCoordinator.deliver(session, "text"))
     }
 }

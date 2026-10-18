@@ -14,9 +14,7 @@ const base: OnboardingStatus = {
   imeSelected: true,
   overlay: true,
   notifications: true,
-  accessibility: false,
   overlaySupported: true,
-  accessibilitySupported: false,
 };
 const live = { enabled: true, paused: false };
 const statusFor = (status: Partial<OnboardingStatus>, settings = live) =>
@@ -72,8 +70,8 @@ describe('row lines', () => {
     expect(floatingMicLine(null, undefined)).toMatch(/within reach/);
   });
   it('describes pause', () => {
-    expect(pauseLine(true)).toMatch(/Protected apps/);
-    expect(pauseLine(false)).toMatch(/Stops/);
+    expect(pauseLine(true)).toMatch(/floating microphone is hidden/);
+    expect(pauseLine(false)).toMatch(/Hides the floating microphone/);
   });
   it('has a hint for every mode', () => {
     expect(Object.keys(MODE_HINT).sort()).toEqual(['ai', 'live', 'raw']);

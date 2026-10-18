@@ -18,12 +18,7 @@ object EditorPolicy {
     fun permits(info: EditorInfo?): Boolean {
         if (info == null) return false
         if ((info.imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0) return false
-        return permits(info.inputType, false)
-    }
-
-    /** Same field rules for an accessibility node, which exposes inputType and isPassword but no imeOptions. */
-    fun permits(inputType: Int, isPassword: Boolean): Boolean {
-        if (isPassword) return false
+        val inputType = info.inputType
         val inputClass = inputType and InputType.TYPE_MASK_CLASS
         if (inputClass == InputType.TYPE_CLASS_NUMBER || inputClass == InputType.TYPE_CLASS_PHONE) return false
         val variation = inputType and InputType.TYPE_MASK_VARIATION
@@ -129,43 +124,6 @@ object EditorPolicy {
     private fun refusesLearning(info: EditorInfo): Boolean =
         (info.imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0
 
-    /** Accessibility nodes can omit the input class; trust the editable flag there, but never for secure or numeric fields. */
-    fun permitsNode(inputType: Int, isPassword: Boolean, isEditable: Boolean): Boolean = nodeReason(inputType, isPassword, isEditable) == OK
-
-    /** Why a node is accepted or refused, so a "the mic never activated" report names its own cause. */
-    fun nodeReason(
-        inputType: Int,
-        isPassword: Boolean,
-        isEditable: Boolean,
-        isFocused: Boolean = false,
-        supportsText: Boolean = false,
-        className: String? = null,
-    ): String {
-        if (isPassword) return "password"
-        val inputClass = inputType and InputType.TYPE_MASK_CLASS
-        if (inputClass == InputType.TYPE_CLASS_NUMBER) return "numeric"
-        if (inputClass == InputType.TYPE_CLASS_PHONE) return "phone"
-        // Compose and other custom editors can report no input class and no editable flag while still
-        // being a focused text widget that accepts text. The widget class plus the text action is proof
-        // that insertion works there; an unidentified field is otherwise refused.
-        val textWidget = isFocused && supportsText && className?.contains("EditText") == true
-        if (inputClass == InputType.TYPE_CLASS_TEXT) {
-            val variation = inputType and InputType.TYPE_MASK_VARIATION
-            if (variation in setOf(
-                    InputType.TYPE_TEXT_VARIATION_PASSWORD,
-                    InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
-                    InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD,
-                )) return "password-variation"
-            return if (isEditable || textWidget) OK else "not-editable"
-        }
-        if (inputClass == 0) {
-            if (isEditable) return OK
-            return if (textWidget) OK else "not-editable"
-        }
-        return if (isEditable) "unsupported" else "not-editable"
-    }
-
     private fun inputClass(inputType: Int) = inputType and InputType.TYPE_MASK_CLASS
 
-    const val OK = "ok"
 }

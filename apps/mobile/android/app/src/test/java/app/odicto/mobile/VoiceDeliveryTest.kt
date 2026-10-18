@@ -34,7 +34,6 @@ class VoiceDeliveryTest {
             override fun readSelection() = AiSelection(0, 0, "")
             override fun insert(text: String) = connection.commitText(text, 1)
         })
-        DictationCoordinator.setImeAttached(true)
         DictationCoordinator.editorReady()
     }
     private fun complete(): String {

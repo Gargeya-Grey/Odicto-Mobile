@@ -102,7 +102,6 @@ export function VoiceHome() {
     page === 'settings',
     settings?.openrouterKeySet ?? false,
   );
-  const accessibilitySupported = onboardingStatus?.accessibilitySupported;
   const showSaveBar = page === 'settings' && draft.dirty;
 
   useEffect(() => {
@@ -168,18 +167,7 @@ export function VoiceHome() {
     return () => window.removeEventListener('popstate', pop);
   }, [navigate]);
 
-  const togglePause = async () => {
-    const pausing = !settings?.paused;
-    if (!(await update({ paused: pausing }))) return;
-    if (!pausing && accessibilitySupported && onboarding.supported) {
-      try {
-        const status = await onboarding.status();
-        if (!status.accessibility) await onboarding.openAccessibilitySettings();
-      } catch {
-        // Pause is saved either way; the Android setup card still shows the accessibility row.
-      }
-    }
-  };
+  const togglePause = () => void update({ paused: !settings?.paused });
   const toggleOverlay = async () => {
     if (settings?.enabled) {
       void update({ enabled: false });
@@ -271,7 +259,7 @@ export function VoiceHome() {
               status={onboardingStatus}
               onSetMode={(mode) => void update({ mode })}
               onToggleOverlay={() => void toggleOverlay()}
-              onTogglePause={() => void togglePause()}
+              onTogglePause={togglePause}
               onRefreshStatus={refreshOnboarding}
               onOpenHistory={() => go('history')}
               onCopied={tap}

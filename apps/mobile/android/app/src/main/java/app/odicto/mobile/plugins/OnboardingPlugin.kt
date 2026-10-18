@@ -9,7 +9,6 @@ import android.view.inputmethod.InputMethodManager
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import app.odicto.mobile.BuildCapability
-import app.odicto.mobile.accessibility.AccessibilityState
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
@@ -55,16 +54,13 @@ class OnboardingPlugin : Plugin() {
         val notifications = android.os.Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
         // Ask BuildCapability rather than probing for a service the build may not ship.
         val overlay = BuildCapability.overlaySupported && Settings.canDrawOverlays(context)
-        val accessibility = if (BuildCapability.accessibilitySupported) AccessibilityState.enabled(context) else false
         call.resolve(JSObject()
             .put("microphone", microphone)
             .put("imeEnabled", enabled)
             .put("imeSelected", selected)
             .put("notifications", notifications)
             .put("overlay", overlay)
-            .put("accessibility", accessibility)
-            .put("overlaySupported", BuildCapability.overlaySupported)
-            .put("accessibilitySupported", BuildCapability.accessibilitySupported))
+            .put("overlaySupported", BuildCapability.overlaySupported))
     }
     @PluginMethod fun requestNotifications(call: PluginCall) { val host = activity ?: return call.reject("Odicto is not in the foreground"); host.runOnUiThread { if (android.os.Build.VERSION.SDK_INT >= 33) ActivityCompat.requestPermissions(host, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 42); call.resolve() } }
     @PluginMethod fun requestMicrophone(call: PluginCall) { val host = activity ?: return call.reject("Odicto is not in the foreground"); host.runOnUiThread { ActivityCompat.requestPermissions(host, arrayOf(Manifest.permission.RECORD_AUDIO), 41); call.resolve() } }
@@ -73,9 +69,5 @@ class OnboardingPlugin : Plugin() {
     @PluginMethod fun openOverlaySettings(call: PluginCall) {
         if (!BuildCapability.overlaySupported) { call.reject("This build has no floating microphone"); return }
         context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); call.resolve()
-    }
-    @PluginMethod fun openAccessibilitySettings(call: PluginCall) {
-        if (!BuildCapability.accessibilitySupported) { call.reject("This build has no accessibility service"); return }
-        context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); call.resolve()
     }
 }

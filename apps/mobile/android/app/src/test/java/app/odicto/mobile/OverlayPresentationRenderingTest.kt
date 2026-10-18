@@ -186,4 +186,47 @@ class OverlayPresentationRenderingTest {
             assertEquals(view.dp(72), view.height)
         } finally { owner.pause().stop().destroy() }
     }
+
+    @Test fun theOpenOptionsAndTheLastResultFoldAwayOnTheirOwn() = attached { view, _ ->
+        publish(view, VoiceUi(phase = "done", resultId = "old", finalText = "Old words"))
+        advance(4000)
+        assertEquals("the result card has had its moment", view.dp(72), view.layoutParams.width)
+        reopen(view)
+        assertTrue("options are open, with the last result", view.layoutParams.width > view.dp(72))
+        assertTrue(buttons(view).any { it.contentDescription == "Copy available text" })
+        advance(7000)
+        assertTrue("still open before the idle time", view.layoutParams.width > view.dp(72))
+        advance(1500)
+        assertEquals("folded away, taking the card with it", view.dp(72), view.layoutParams.width)
+        assertEquals("the result itself is kept for Copy", "Old words", app.odicto.mobile.dictation.VoiceSession.state.value.finalText)
+        reopen(view)
+        assertTrue("opening again brings it back", view.layoutParams.width > view.dp(72))
+    }
+
+    @Test fun touchingTheOpenOptionsKeepsThemOpenLonger() = attached { view, _ ->
+        publish(view, VoiceUi(phase = "done", resultId = "old", finalText = "Old words"))
+        advance(4000)
+        reopen(view)
+        advance(6000)
+        view.dispatchTouchEvent(android.view.MotionEvent.obtain(0, 0, android.view.MotionEvent.ACTION_DOWN, 1f, 1f, 0))
+        advance(6000)
+        assertTrue("six seconds after the touch it is still open", view.layoutParams.width > view.dp(72))
+        advance(3000)
+        assertEquals(view.dp(72), view.layoutParams.width)
+    }
+
+    @Test fun theOptionsPillEndsExactlyAtTheMicrophoneAndIsAsTallAsIt() = attached { view, _ ->
+        reopen(view)
+        val pill = (0 until view.childCount).map { view.getChildAt(it) }.single { it.visibility == View.VISIBLE && it.layoutParams.height == view.dp(56) && it.layoutParams.width > view.dp(200) }
+        val mic = buttons(view).single { it.contentDescription?.contains("Double tap") == true }
+        val pillLp = pill.layoutParams as FrameLayout.LayoutParams
+        val micLp = mic.layoutParams as FrameLayout.LayoutParams
+        val micCentre = micLp.leftMargin + micLp.width / 2
+        val pillEndsAt = if (pillLp.leftMargin < micLp.leftMargin) pillLp.leftMargin + pillLp.width else pillLp.leftMargin
+        val micEdge = if (pillLp.leftMargin < micLp.leftMargin) micLp.leftMargin + micLp.width else micLp.leftMargin
+        assertEquals("the pill's rounded end is concentric with the disc", micEdge, pillEndsAt)
+        assertEquals("same height, so the end is a half circle around it", micLp.height, pillLp.height)
+        assertEquals(micLp.topMargin, pillLp.topMargin)
+        assertTrue(micCentre > 0)
+    }
 }
