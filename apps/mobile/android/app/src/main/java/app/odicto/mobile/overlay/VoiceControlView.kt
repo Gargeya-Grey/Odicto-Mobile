@@ -764,7 +764,11 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
                 if (field == value) return
                 field = value; meterAnimation?.cancel()
                 if (!isShown || !isAttachedToWindow || (Build.VERSION.SDK_INT >= 26 && !ValueAnimator.areAnimatorsEnabled())) { meter = value; invalidate(); return }
-                meterAnimation = ValueAnimator.ofFloat(meter, value).apply { duration = 100; addUpdateListener { meter = it.animatedValue as Float; invalidate() }; start() }
+                // One animator for the whole session, retargeted on each level (ten a second while recording).
+                val animator = meterAnimation ?: ValueAnimator().apply {
+                    duration = 100; addUpdateListener { meter = it.animatedValue as Float; invalidate() }
+                }.also { meterAnimation = it }
+                animator.setFloatValues(meter, value); animator.start()
             }
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         init { contentDescription = description; isClickable = true; isFocusable = true; importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES }

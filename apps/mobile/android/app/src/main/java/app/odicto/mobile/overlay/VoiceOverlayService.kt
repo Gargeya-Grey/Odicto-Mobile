@@ -40,6 +40,8 @@ class VoiceOverlayService : Service() {
     private var dragOriginSet = false
     private var dragStartMicLeft = 0
     private var dragStartBottom = 0
+    /** Screen bounds held for one drag: each move would otherwise ask the window manager twice. Cleared when it ends or the screen changes. */
+    private var dragBounds: Pair<Int, Int>? = null
     private var screenOff = false
     private var recovery: Job? = null
     private var recoveryAttempts = 0
@@ -195,6 +197,7 @@ class VoiceOverlayService : Service() {
         view.dragStart = {
             dragOriginSet = false
             movedVertically = false
+            dragBounds = null; dragBounds = bounds()
         }
         view.drag = { totalX, totalY ->
             // Place the microphone from the finger's total travel, not from accumulated steps: it stays exactly
@@ -221,6 +224,7 @@ class VoiceOverlayService : Service() {
             update(view, layout)
         }
         view.dragEnd = {
+            dragBounds = null
             saveAnchors(view)
             view.setPlacement(anchorMicLeft, bounds().first)
         }
@@ -289,6 +293,7 @@ class VoiceOverlayService : Service() {
     }
 
     private fun bounds(withKeyboard: Boolean = true): Pair<Int, Int> {
+        if (withKeyboard) dragBounds?.let { return it }
         if (Build.VERSION.SDK_INT >= 30) {
             val metrics = manager.currentWindowMetrics
             val inset = metrics.windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
@@ -342,7 +347,7 @@ class VoiceOverlayService : Service() {
     }
     private fun hide() {
         val view = control ?: return
-        control = null; params = null; preferredBottom = null
+        control = null; params = null; preferredBottom = null; dragBounds = null
         val host = micHost; micHost = null; micParams = null
         view.resize = null; view.dragStart = null; view.drag = null; view.dragEnd = null
         if (host != null) try { manager.removeViewImmediate(host) } catch (_: IllegalArgumentException) {}
@@ -352,6 +357,7 @@ class VoiceOverlayService : Service() {
     }
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        dragBounds = null
         // Text is sized when the view is built, so a font-size or display-size change needs a fresh view. The saved
         // placement puts it back exactly where it was.
         val scaleKey = "${newConfig.fontScale}/${newConfig.densityDpi}"
