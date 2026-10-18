@@ -149,19 +149,27 @@ class OdictoImeService : InputMethodService() {
         }
         scope.launch { fieldPolish().recovery.collect { renderRecovery() } }
         scope.launch { fieldPolish().undoAvailable.collect { renderUndoButton() } }
-        scope.launch { VoiceSession.state.collect { state ->
-            if (state.busy) {
-                cancelFieldPolish()
-                // Speaking is the user's chosen action: the copy is no longer offered.
-                pasteSuggestion.spend()
+        scope.launch {
+            var previous: VoiceUi? = null
+            VoiceSession.state.collect { state ->
+                // Ten meter ticks a second while recording change only the level: redraw the control, skip the rest.
+                val meterOnly = previous?.let(state::sameExceptLevel) == true
+                previous = state
+                if (state.busy) {
+                    cancelFieldPolish()
+                    // Speaking is the user's chosen action: the copy is no longer offered.
+                    pasteSuggestion.spend()
+                }
+                if (!meterOnly) {
+                    controller?.refreshSpelling()
+                    observeVoiceStatus()
+                }
+                if (DictationCoordinator.keyboardVisible.value) {
+                    control?.render(state)
+                    if (!meterOnly) renderTopStatus()
+                }
             }
-            controller?.refreshSpelling()
-            observeVoiceStatus()
-            if (DictationCoordinator.keyboardVisible.value) {
-                control?.render(state)
-                renderTopStatus()
-            }
-        } }
+        }
         scope.launch { VoicePreferences.state.collect {
             controller?.refreshAppearance()
             if (DictationCoordinator.keyboardVisible.value) control?.render(VoiceSession.state.value)
