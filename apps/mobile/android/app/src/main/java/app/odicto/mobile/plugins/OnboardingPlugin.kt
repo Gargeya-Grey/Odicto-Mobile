@@ -9,11 +9,25 @@ import android.view.inputmethod.InputMethodManager
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import app.odicto.mobile.BuildCapability
+import app.odicto.mobile.storage.ClipboardRepository
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import org.json.JSONObject
 
 @CapacitorPlugin(name = "OdictoOnboarding")
 class OnboardingPlugin : Plugin() {
@@ -26,16 +40,44 @@ class OnboardingPlugin : Plugin() {
         override fun onChange(selfChange: Boolean) { notifyListeners("statusChanged", JSObject()) }
     }
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
     override fun load() {
         super.load()
         for (key in listOf(Settings.Secure.DEFAULT_INPUT_METHOD, Settings.Secure.ENABLED_INPUT_METHODS)) {
             runCatching { context.contentResolver.registerContentObserver(Settings.Secure.getUriFor(key), false, keyboardWatcher) }
         }
+        // The keyboard panel has its own switch for the same setting; the page re-reads when either one changes.
+        scope.launch {
+            try {
+                ClipboardRepository.get(context).data.map { it.automaticCapture }.distinctUntilChanged().drop(1)
+                    .collect { notifyListeners("statusChanged", JSObject()) }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { }
+        }
     }
 
     override fun handleOnDestroy() {
+        scope.cancel()
         runCatching { context.contentResolver.unregisterContentObserver(keyboardWatcher) }
         super.handleOnDestroy()
+    }
+
+    /** Null when the saved setting cannot be read, so the page can say so instead of claiming on or off. */
+    private fun clipboardSaving(): Boolean? = try {
+        runBlocking { ClipboardRepository.get(context).data.first().automaticCapture }
+    } catch (cancelled: CancellationException) { throw cancelled }
+    catch (_: Exception) { null }
+
+    @PluginMethod fun setClipboardSaving(call: PluginCall) {
+        val enabled = call.getBoolean("enabled") ?: return call.reject("enabled is required")
+        scope.launch {
+            try {
+                ClipboardRepository.get(context).setAutomaticCapture(enabled)
+                call.resolve()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { call.reject("Could not save this choice") }
+        }
     }
 
     @PluginMethod fun status(call: PluginCall) {
@@ -60,7 +102,8 @@ class OnboardingPlugin : Plugin() {
             .put("imeSelected", selected)
             .put("notifications", notifications)
             .put("overlay", overlay)
-            .put("overlaySupported", BuildCapability.overlaySupported))
+            .put("overlaySupported", BuildCapability.overlaySupported)
+            .put("clipboardSaving", clipboardSaving() ?: JSONObject.NULL))
     }
     @PluginMethod fun requestNotifications(call: PluginCall) { val host = activity ?: return call.reject("Odicto is not in the foreground"); host.runOnUiThread { if (android.os.Build.VERSION.SDK_INT >= 33) ActivityCompat.requestPermissions(host, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 42); call.resolve() } }
     @PluginMethod fun requestMicrophone(call: PluginCall) { val host = activity ?: return call.reject("Odicto is not in the foreground"); host.runOnUiThread { ActivityCompat.requestPermissions(host, arrayOf(Manifest.permission.RECORD_AUDIO), 41); call.resolve() } }

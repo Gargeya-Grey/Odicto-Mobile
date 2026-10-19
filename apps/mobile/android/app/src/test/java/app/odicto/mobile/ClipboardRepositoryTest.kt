@@ -33,6 +33,7 @@ class ClipboardRepositoryTest {
             produceFile = { file },
         ))
         var repo = repository()
+        repo.setAutomaticCapture(true)
         val text = " \n" + "x".repeat(800) + "\u001F👩🏽‍💻\n "
         repo.capture(listOf(text, text + "second"), "event-1")
         assertEquals(listOf(text, text + "second"), repo.data.first().history)
@@ -75,6 +76,42 @@ class ClipboardRepositoryTest {
         assertEquals("unchanged-model", prefs[stringPreferencesKey("voice_model")])
     }
 
+    @Test fun aNewInstallStartsWithSavingOffAndSavesNothingUntilTheUserTurnsItOn() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        try {
+            val file = folder.newFile("fresh.json").apply { delete() }
+            val repo = ClipboardRepository(DataStoreFactory.create(
+                serializer = ClipboardSerializer,
+                migrations = listOf(ClipboardMigration { mutablePreferencesOf() }),
+                scope = scope,
+                produceFile = { file },
+            ))
+            assertFalse(repo.data.first().automaticCapture)
+            repo.capture(listOf("before consent"), "event-1", isChange = true)
+            assertTrue(repo.data.first().history.isEmpty())
+            repo.setAutomaticCapture(true)
+            repo.capture(listOf("after consent"), "event-2", isChange = true)
+            assertEquals(listOf("after consent"), repo.data.first().history)
+        } finally { scope.coroutineContext[Job]!!.cancelAndJoin() }
+    }
+
+    @Test fun anUpgradeWithSavedClipsOrPinsKeepsSavingOn() = runBlocking {
+        val pinsOnly = ClipboardMigration { mutablePreferencesOf(stringSetPreferencesKey("voice_pinned_clips") to setOf("pinned")) }
+            .migrate(ClipboardState())
+        assertTrue(pinsOnly.automaticCapture)
+        val historyOnly = ClipboardMigration { mutablePreferencesOf(stringPreferencesKey("voice_clip_history") to "kept") }
+            .migrate(ClipboardState())
+        assertTrue(historyOnly.automaticCapture)
+        val nothing = ClipboardMigration { mutablePreferencesOf() }.migrate(ClipboardState())
+        assertFalse(nothing.automaticCapture)
+        assertEquals(1, nothing.migrationVersion)
+    }
+
+    @Test fun theMigrationNeverTurnsOffAChoiceThatWasAlreadyMade() = runBlocking {
+        val chosen = ClipboardMigration { mutablePreferencesOf() }.migrate(ClipboardState(automaticCapture = true))
+        assertTrue(chosen.automaticCapture)
+    }
+
     @Test fun migrationCleanupRunsOnlyAfterTheNewJsonIsDurable() = runBlocking {
         val file = folder.newFile("migration.json").apply { delete() }
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -110,6 +147,7 @@ class ClipboardRepositoryTest {
                 scope = scope,
                 produceFile = { file },
             ))
+            repo.setAutomaticCapture(true)
             repeat(8) {
                 repo.capture(listOf("pin-$it"), "p-$it")
                 repo.setPinned("pin-$it", true)

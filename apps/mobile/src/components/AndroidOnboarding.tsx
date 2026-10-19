@@ -1,7 +1,12 @@
 import { useState } from 'react';
 import { onboarding, type OnboardingStatus } from '../native/onboarding';
 import { Check, ChevronRight } from './voice/icons';
-import { Footer, Group, SectionLabel } from './voice/controls';
+import { Footer, Group, Row, SectionLabel, Switch } from './voice/controls';
+import {
+  CLIPBOARD_CONSENT_TEXT,
+  CLIPBOARD_CONSENT_TITLE,
+  describeClipboardSaving,
+} from '../lib/clipboardConsent';
 
 type Step = {
   key: string;
@@ -84,6 +89,11 @@ export function AndroidOnboarding({
   const optional = steps.filter((step) => step.optional);
   const requiredDone = status !== null && required.every((step) => step.ready);
   const listed = requiredDone ? (optionalOpen ? optional : []) : steps;
+  const showConsent = status !== null && (!requiredDone || optionalOpen);
+  const consent = describeClipboardSaving(
+    status?.clipboardSaving ?? null,
+    Boolean(status?.imeSelected),
+  );
 
   const stepRow = (step: Step) => (
     <li key={step.key}>
@@ -124,15 +134,7 @@ export function AndroidOnboarding({
             <p className="voice-row-note">Checking setup…</p>
           </li>
         )}
-        {requiredDone && optional.length === 0 && (
-          <li className="voice-row voice-step" data-ready="true">
-            <span className="voice-step-mark" aria-hidden="true">
-              <Check size={14} />
-            </span>
-            <span className="voice-step-label">Setup complete</span>
-          </li>
-        )}
-        {requiredDone && optional.length > 0 && (
+        {requiredDone && (
           <li>
             <button
               type="button"
@@ -155,6 +157,25 @@ export function AndroidOnboarding({
           </li>
         )}
         {status !== null && listed.map(stepRow)}
+        {showConsent && (
+          <Row
+            title={CLIPBOARD_CONSENT_TITLE}
+            badge={<span className="voice-step-note">Optional</span>}
+            secondary={consent.line}
+            hint={CLIPBOARD_CONSENT_TEXT}
+            trailing={({ describedBy }) => (
+              <Switch
+                label={CLIPBOARD_CONSENT_TITLE}
+                describedBy={describedBy}
+                checked={consent.checked}
+                disabled={consent.disabled}
+                onChange={(enabled) =>
+                  run(() => onboarding.setClipboardSaving(enabled))
+                }
+              />
+            )}
+          />
+        )}
       </Group>
       {!requiredDone && status !== null && (
         <Footer>

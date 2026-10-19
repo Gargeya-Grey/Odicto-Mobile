@@ -80,10 +80,13 @@ internal class ClipboardMigration(
             }.filter { it.isNotEmpty() }.distinct()
         }
         val pins = (currentData.pins + read("voice_pinned_clips")).distinct()
+        val history = (currentData.history + read("voice_clip_history")).distinct().filter { it !in pins }.take(50)
+        // Saving stays on only for people who already had saved clips. A new install starts off until the user
+        // turns it on in setup, so the choice is theirs.
         return currentData.copy(
             pins = pins,
-            history = (currentData.history + read("voice_clip_history")).distinct().filter { it !in pins }.take(50),
-            automaticCapture = true,
+            history = history,
+            automaticCapture = currentData.automaticCapture || pins.isNotEmpty() || history.isNotEmpty(),
             migrationVersion = 1,
         )
     }
