@@ -15,6 +15,7 @@ const base: OnboardingStatus = {
   overlay: true,
   notifications: true,
   overlaySupported: true,
+  clipboardSaving: false,
 };
 const live = { enabled: true, paused: false };
 const statusFor = (status: Partial<OnboardingStatus>, settings = live) =>

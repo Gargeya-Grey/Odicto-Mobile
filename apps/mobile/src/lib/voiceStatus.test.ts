@@ -9,6 +9,7 @@ const ready: OnboardingStatus = {
   overlay: true,
   notifications: true,
   overlaySupported: true,
+  clipboardSaving: false,
 };
 
 describe('summarizeReadiness', () => {
