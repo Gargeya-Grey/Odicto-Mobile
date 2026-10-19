@@ -491,7 +491,12 @@ class KeyboardController(
     /** True while a status line hides the strip: Space then must not apply an unseen correction. */
     private fun strippedOfView(): Boolean = spellingStrip.statusShown
 
-    fun setSpellingStatusVisible(visible: Boolean) = spellingStrip.setStatusVisible(visible)
+    fun setSpellingStatusVisible(visible: Boolean) {
+        val changed = spellingStrip.statusShown != visible
+        spellingStrip.setStatusVisible(visible)
+        // A status message hides the paste offer without spending it; bring it back when the message ends.
+        if (changed) refreshPaste()
+    }
 
     private fun spellingEligible(): Boolean = typingExpanded && VoicePreferences.state.value.keys.autocorrectEnabled &&
         EditorPolicy.autocorrectPermits(service.currentInputEditorInfo ?: editorInfo) &&
