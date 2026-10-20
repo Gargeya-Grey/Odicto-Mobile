@@ -13,6 +13,7 @@ apps/mobile/android/app/build/
 .odicto-*
 *.tsbuildinfo
 coverage/
+work/
 .DS_Store
 Thumbs.db
 
