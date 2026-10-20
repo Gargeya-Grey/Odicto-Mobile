@@ -70,4 +70,4 @@ See `docs/architecture.md`, `docs/android-development.md`, `docs/environment.md`
 
 ## License
 
-[Apache License 2.0](LICENSE).
+[Apache License 2.0](LICENSE). Keep the [LICENSE](LICENSE) and the [NOTICE](NOTICE) file, which credits Gargeya Sharma as the author, with any copy or derivative work you distribute.
