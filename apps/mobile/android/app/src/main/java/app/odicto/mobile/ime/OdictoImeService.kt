@@ -46,12 +46,14 @@ class OdictoImeService : InputMethodService() {
     private var recoveryRow: LinearLayout? = null
     private var recoveryCovered = emptyMap<View, Int>()
     private var recoveryCopy: Button? = null
-    private var recoveryCountdown: TextView? = null
-    private var recoveryViewJob: Job? = null
+    private var recoveryExplanation: TextView? = null
     private var polish: FieldPolishCoordinator? = null
     private val polishClient = FieldPolishClient()
     private var polishButton: ImageButton? = null
     private var undoButton: ImageButton? = null
+    private var editorUndo: EditorUndoCoordinator? = null
+    private var undoEditorEpoch = 0L
+    private var undoEditorActive = false
     /** The just-copied text offered for one-tap paste. Held here so it outlives any one field or app. */
     internal val pasteSuggestion = PasteSuggestion()
     private var polishBusyDrawable: PolishBusyDrawable? = null
@@ -122,7 +124,7 @@ class OdictoImeService : InputMethodService() {
         control?.render(VoiceSession.state.value)
         renderTopStatus()
         controller?.onExternalEdit(selectionStart, selectionEnd)
-        startRecoveryCountdown()
+        renderRecovery()
         inputRoot?.post { publishKeyboardBounds() }
     }
 
@@ -148,7 +150,7 @@ class OdictoImeService : InputMethodService() {
             } }
         }
         scope.launch { fieldPolish().recovery.collect { renderRecovery() } }
-        scope.launch { fieldPolish().undoAvailable.collect { renderUndoButton() } }
+        scope.launch { editorUndo().busy.collect { renderUndoButton() } }
         scope.launch {
             var previous: VoiceUi? = null
             VoiceSession.state.collect { state ->
@@ -157,12 +159,14 @@ class OdictoImeService : InputMethodService() {
                 previous = state
                 if (state.busy) {
                     cancelFieldPolish()
+                    cancelEditorUndo()
                     // Speaking is the user's chosen action: the copy is no longer offered.
                     pasteSuggestion.spend()
                 }
                 if (!meterOnly) {
                     controller?.refreshSpelling()
                     observeVoiceStatus()
+                    renderUndoButton()
                 }
                 if (DictationCoordinator.keyboardVisible.value) {
                     control?.render(state)
@@ -178,12 +182,12 @@ class OdictoImeService : InputMethodService() {
     override fun onDestroy() {
         pauseStatusView()
         cancelFieldPolish()
+        cancelEditorUndo()
         polish?.clearUndo()
         controller?.dispose()
         controller = null
         expansion?.dispose(); expansion = null
-        stopRecoveryCountdown()
-        recoveryRow = null; recoveryCopy = null; recoveryCountdown = null
+        recoveryRow = null; recoveryCopy = null; recoveryExplanation = null
         cancelStatusCallback()
         DictationCoordinator.keyboardVisible.value = false
         DictationCoordinator.keyboardTopPx.value = null
@@ -220,16 +224,17 @@ class OdictoImeService : InputMethodService() {
         inputRoot?.post { publishKeyboardBounds() }
         control?.render(VoiceSession.state.value)
         renderTopStatus()
-        startRecoveryCountdown()
+        renderRecovery()
+        renderUndoButton()
     }
     override fun onWindowHidden() {
         pauseStatusView()
         cancelFieldPolish()
+        cancelEditorUndo()
         DictationCoordinator.keyboardVisible.value = false
         DictationCoordinator.keyboardTopPx.value = null
         controller?.onFinishInput()
         expansion?.reset()
-        stopRecoveryCountdown()
         if (BuildConfig.DEBUG) KeyLatencyProbe.flushAsync()
         super.onWindowHidden()
     }
@@ -237,9 +242,9 @@ class OdictoImeService : InputMethodService() {
     override fun onCreateInputView(): View {
         pauseStatusView()
         cancelFieldPolish()
+        cancelEditorUndo()
         controller?.dispose()
         expansion?.dispose()
-        stopRecoveryCountdown()
         val ui = ui()
         val root = android.view.LayoutInflater.from(ui).inflate(R.layout.ime_keyboard, null)
         inputRoot = root
@@ -281,11 +286,17 @@ class OdictoImeService : InputMethodService() {
             }
         })
         undoButton = root.findViewById<ImageButton>(R.id.ime_undo).apply {
+            contentDescription = "Undo last text edit"
             setOnClickListener {
                 Haptics.tap(this@OdictoImeService, VoicePreferences.levelOf(VoicePreferences.state.value))
                 pasteSuggestion.spend()
+                if (polish?.busy == true) {
+                    cancelFieldPolish()
+                    showKeyboardNotice("Polish cancelled")
+                    return@setOnClickListener
+                }
                 controller?.onExternalEdit(selectionStart, selectionEnd)
-                fieldPolish().undo()
+                editorUndo().undo()
             }
         }
         renderUndoButton()
@@ -297,6 +308,7 @@ class OdictoImeService : InputMethodService() {
         voice.keyboardCopyAllowed = ::canCopyRecovery
         voice.keyboardNotice = ::showKeyboardNotice
         polishButton?.setOnClickListener {
+            cancelEditorUndo()
             Haptics.tap(this, VoicePreferences.levelOf(VoicePreferences.state.value))
             pasteSuggestion.spend()
             val refusal = EditorPolicy.voiceRefusal(currentInputEditorInfo)
@@ -353,6 +365,9 @@ class OdictoImeService : InputMethodService() {
     }
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
+        cancelEditorUndo()
+        undoEditorEpoch++
+        undoEditorActive = attribute != null
         if (!restarting) expansion?.reset()
         clipboardCapture?.onEditorChanged(attribute)
         pauseStatusView()
@@ -366,6 +381,7 @@ class OdictoImeService : InputMethodService() {
         control?.render(VoiceSession.state.value)
         controller?.onStartInput(attribute)
         updatePolishButton(attribute)
+        renderUndoButton()
         renderRecovery()
         VoiceOverlayController.sync(this, scope)
     }
@@ -399,6 +415,9 @@ class OdictoImeService : InputMethodService() {
         outInsets.touchableRegion.set(0, top, decor.width, decor.height)
     }
     override fun onFinishInput() {
+        undoEditorActive = false
+        undoEditorEpoch++
+        cancelEditorUndo()
         clipboardCapture?.onEditorChanged(null)
         pauseStatusView()
         cancelFieldPolish()
@@ -412,6 +431,9 @@ class OdictoImeService : InputMethodService() {
         super.onFinishInput()
     }
     override fun onUnbindInput() {
+        undoEditorActive = false
+        undoEditorEpoch++
+        cancelEditorUndo()
         clipboardCapture?.onEditorChanged(null)
         pauseStatusView()
         cancelFieldPolish()
@@ -427,25 +449,39 @@ class OdictoImeService : InputMethodService() {
     private fun attachRecoveryControls(root: View) {
         recoveryCovered = emptyMap()
         val ui = root.context
-        val accent = ui.getColor(R.color.odicto_accent)
+        fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
         val row = LinearLayout(ui).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.CENTER
-            setBackgroundColor(ui.getColor(R.color.odicto_keyboard_background))
-            elevation = 8 * resources.displayMetrics.density
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = PressSurface.tile(ui, 16f, ui.getColor(R.color.odicto_panel_card))
             isClickable = true
             visibility = View.GONE
         }
-        val touchHeight = (48 * resources.displayMetrics.density).toInt()
+        val title = TextView(ui).apply {
+            text = "Polish result ready"
+            textSize = 14f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(ui.getColor(R.color.odicto_text_strong))
+        }
+        val explanation = TextView(ui).apply {
+            textSize = 13f
+            setTextColor(ui.getColor(R.color.odicto_text_muted))
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
+        val actions = LinearLayout(ui).apply { orientation = LinearLayout.HORIZONTAL }
+        val touchHeight = dp(48)
         val copy = Button(ui).apply {
-            text = "Copy completed result"
+            text = "Copy"
             contentDescription = "Copy completed result"
             isAllCaps = false
-            textSize = 12f
+            textSize = 14f
             minimumWidth = 0
             minWidth = 0
             minimumHeight = touchHeight
-            setTextColor(accent)
+            setPadding(dp(12), 0, dp(12), 0)
+            backgroundTintList = null
+            background = PressSurface.tile(ui, 12f, ui.getColor(R.color.odicto_key_accent))
+            setTextColor(ui.getColor(R.color.odicto_on_accent))
             setOnClickListener {
                 val id = row.tag as? Long ?: return@setOnClickListener
                 val copied = polish?.copyCompletedResult(id) { text ->
@@ -462,45 +498,44 @@ class OdictoImeService : InputMethodService() {
                 } == true
                 if (copied) showKeyboardNotice("Copied")
                 else if (polish?.completedResult()?.operationId == id) {
-                    showKeyboardNotice("Could not copy result. Focus an eligible text field.")
+                    val message = "Could not copy. Focus an eligible text field and try again."
+                    showKeyboardNotice(message)
+                    explanation.text = message
                 }
-                renderRecovery()
+                if (copied || polish?.completedResult()?.operationId != id) renderRecovery()
             }
-        }
-        val countdown = TextView(ui).apply {
-            textSize = 12f
-            setTextColor(accent)
-            gravity = android.view.Gravity.CENTER
-            // Do not announce every tick as a live-region update.
-            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_NONE
         }
         val dismiss = Button(ui).apply {
             text = "Dismiss"
             contentDescription = "Dismiss completed result"
             isAllCaps = false
-            textSize = 12f
+            textSize = 14f
             minimumWidth = 0
             minWidth = 0
             minimumHeight = touchHeight
-            setTextColor(accent)
+            setPadding(dp(12), 0, dp(12), 0)
+            backgroundTintList = null
+            background = PressSurface.tile(ui, 12f, ui.getColor(R.color.odicto_surface_raised))
+            setTextColor(ui.getColor(R.color.odicto_text_strong))
             setOnClickListener {
                 (row.tag as? Long)?.let { polish?.dismissCompletedResult(it) }
                 renderRecovery()
             }
         }
-        row.addView(copy, LinearLayout.LayoutParams(0, -2, 1f))
-        row.addView(countdown, LinearLayout.LayoutParams(-2, -2))
-        row.addView(dismiss, LinearLayout.LayoutParams(-2, -2))
-        recoveryRow = row; recoveryCopy = copy; recoveryCountdown = countdown
-        root.findViewById<FrameLayout>(R.id.ime_content).addView(row, FrameLayout.LayoutParams(-1, -1))
-        row.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
-            override fun onViewAttachedToWindow(view: View) {
-                if (recoveryRow === view) startRecoveryCountdown()
-            }
-            override fun onViewDetachedFromWindow(view: View) {
-                if (recoveryRow === view) stopRecoveryCountdown()
-            }
+        actions.addView(copy, LinearLayout.LayoutParams(0, touchHeight, 1f))
+        actions.addView(dismiss, LinearLayout.LayoutParams(0, touchHeight, 1f).apply { marginStart = dp(8) })
+        row.addView(title, LinearLayout.LayoutParams(-1, -2))
+        row.addView(explanation, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+        row.addView(actions, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+        recoveryRow = row; recoveryCopy = copy; recoveryExplanation = explanation
+        root.findViewById<FrameLayout>(R.id.ime_content).addView(row, FrameLayout.LayoutParams(-1, -2).apply {
+            setMargins(dp(8), dp(8), dp(8), dp(8))
         })
+        row.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            if (recoveryRow === row && row.visibility == View.VISIBLE) {
+                expansion?.recoveryVisible(true, row.height + dp(16))
+            }
+        }
     }
 
     private fun canCopyRecovery(): Boolean = session != null && currentInputConnection != null &&
@@ -520,33 +555,10 @@ class OdictoImeService : InputMethodService() {
             recoveryCovered = emptyMap()
         }
         recoveryRow?.visibility = if (result == null) View.GONE else View.VISIBLE
-        expansion?.recoveryVisible(result != null)
+        val margins = (recoveryRow?.layoutParams as? FrameLayout.LayoutParams)?.let { it.topMargin + it.bottomMargin } ?: 0
+        expansion?.recoveryVisible(result != null, (recoveryRow?.height ?: 0) + margins)
         recoveryCopy?.isEnabled = result != null && canCopyRecovery()
-        if (result == null) {
-            recoveryCountdown?.text = ""
-            recoveryCountdown?.contentDescription = null
-            return
-        }
-        val seconds = ((result.expiresAtElapsedRealtime - SystemClock.elapsedRealtime()).coerceAtLeast(0) + 999) / 1000
-        recoveryCountdown?.text = "${seconds}s"
-        recoveryCountdown?.contentDescription = "Completed result expires in $seconds seconds"
-    }
-
-    private fun startRecoveryCountdown() {
-        stopRecoveryCountdown()
-        renderRecovery()
-        if (recoveryRow?.isAttachedToWindow != true || !DictationCoordinator.keyboardVisible.value) return
-        recoveryViewJob = scope.launch {
-            while (isActive) {
-                delay(1_000)
-                renderRecovery()
-            }
-        }
-    }
-
-    private fun stopRecoveryCountdown() {
-        recoveryViewJob?.cancel()
-        recoveryViewJob = null
+        recoveryExplanation?.text = result?.explanation.orEmpty()
     }
 
     fun cancelFieldPolish() {
@@ -554,6 +566,30 @@ class OdictoImeService : InputMethodService() {
         if (polish?.busy == true) polish?.cancel()
         else if (polishBusy) showPolishStatus("", false)
     }
+
+    fun cancelEditorUndo() { editorUndo?.cancel() }
+
+    private fun undoTarget(): UndoEditor? {
+        if (!undoEditorActive) return null
+        val connection = currentInputConnection ?: return null
+        return UndoEditor(undoEditorEpoch, connection, currentInputEditorInfo)
+    }
+
+    private fun editorUndo(): EditorUndoCoordinator = editorUndo ?: EditorUndoCoordinator(
+        scope = scope,
+        editor = ::undoTarget,
+        allowed = { DictationCoordinator.keyboardVisible.value && !VoiceSession.state.value.busy && DictationCoordinator.aiSelection == null },
+        state = { message, busy ->
+            observeVoiceStatus()
+            if (message.isNotEmpty() || !VoiceSession.state.value.busy) {
+                statusPresentation.notice(message, busy, SystemClock.uptimeMillis(), statusTimeout())
+            }
+            controller?.refreshSpelling()
+            renderTopStatus()
+        },
+        dispatched = { polish?.clearUndo() },
+        applied = { start, end -> controller?.onExternalEdit(start, end) },
+    ).also { editorUndo = it }
 
     private fun fieldPolish(): FieldPolishCoordinator {
         polish?.let { return it }
@@ -573,12 +609,15 @@ class OdictoImeService : InputMethodService() {
             },
             state = ::showPolishStatus,
             applied = { start, end -> controller?.onExternalEdit(start, end) },
+            diagnostic = { flags -> if (BuildConfig.DEBUG) Log.i("OdictoPolishDelivery", flags) },
         ).also { polish = it }
     }
 
-    /** Dimmed, not hidden, when there is nothing to undo; a tap then says so. */
+    /** The host owns history and exposes no universal canUndo query. An eligible field can request it. */
     private fun renderUndoButton() {
-        undoButton?.let { PressSurface.fadeTo(it, if (polish?.undoAvailable?.value == true) 1f else 0.35f) }
+        val available = EditorUndoCoordinator.permits(undoTarget()?.info) && DictationCoordinator.keyboardVisible.value &&
+            !VoiceSession.state.value.busy && DictationCoordinator.aiSelection == null && editorUndo?.busy?.value != true
+        undoButton?.let { PressSurface.fadeTo(it, if (available) 1f else 0.35f) }
     }
 
     private fun updatePolishButton(info: EditorInfo?) {
@@ -776,10 +815,10 @@ class OdictoImeService : InputMethodService() {
         renderTopStatus()
         controller?.onStartInput(info)
         controller?.onExternalEdit(selectionStart, selectionEnd)
-        startRecoveryCountdown()
+        renderRecovery()
     }
     override fun onFinishInputView(finishingInput: Boolean) {
-        pauseStatusView(); cancelFieldPolish(); controller?.onFinishInput(); stopRecoveryCountdown(); super.onFinishInputView(finishingInput)
+        pauseStatusView(); cancelFieldPolish(); cancelEditorUndo(); controller?.onFinishInput(); super.onFinishInputView(finishingInput)
     }
 
     private companion object {

@@ -7,8 +7,9 @@
  *
  * - The system back gesture pops the menu entry. The menu closes and the page
  *   stays; the page never sees that pop.
- * - When the menu closes by any other way (choice, outside tap, Escape), the
- *   menu entry is popped with one `history.back()`. The pop that call causes is
+ * - Opening another menu transfers this entry and closes the previous menu.
+ * - When the menu closes itself (choice, toggle, Escape, or an outside tap for
+ *   a non-searchable picker), one `history.back()` pops its entry. That pop is
  *   counted and swallowed, so the page does not navigate.
  */
 
@@ -49,11 +50,17 @@ export function createMenuHistory(history: HistoryLike) {
   let active: { onBack: () => void; done: boolean } | null = null;
 
   return {
-    /** Push the menu entry. `onBack` runs when the user's back press pops it. */
+    /** Own the menu entry. `onBack` closes it on Back or another menu opening. */
     open(onBack: () => void): MenuEntry {
       const entry = { onBack, done: false };
-      history.pushState(menuEntryState(history.state), '');
+      const previous = active;
       active = entry;
+      if (previous) {
+        previous.done = true;
+        previous.onBack();
+      } else {
+        history.pushState(menuEntryState(history.state), '');
+      }
       return {
         release() {
           if (entry.done) return;

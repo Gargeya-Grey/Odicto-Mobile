@@ -1,6 +1,8 @@
 package app.odicto.mobile
 
 import android.os.Looper
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.text.InputType
 import android.view.LayoutInflater
 import android.view.View
@@ -13,12 +15,15 @@ import app.odicto.mobile.dictation.VoiceUi
 import app.odicto.mobile.ime.KeyboardController
 import app.odicto.mobile.ime.OdictoImeService
 import app.odicto.mobile.ime.OdictoKeyboardView
+import app.odicto.mobile.theme.Appearance
+import app.odicto.mobile.theme.AppearanceStore
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.GraphicsMode
 import java.time.Duration
 
 @RunWith(RobolectricTestRunner::class)
@@ -140,9 +145,20 @@ class VoiceFirstKeyboardTest {
                 .apply { isAccessible = true }.invoke(coordinator, 1L, "Synthetic recovery")
             shadowOf(Looper.getMainLooper()).idle()
             measure(root)
-            val copy = descendants(root).filterIsInstance<android.widget.Button>().single { it.text == "Copy completed result" }
+            val copy = descendants(root).filterIsInstance<android.widget.Button>().single { it.contentDescription == "Copy completed result" }
             assertTrue(visible(copy))
             assertTrue(shown(service, root) > collapsedHeight)
+            assertTrue("Recovery reveals a compact card, not the full typing area",
+                shown(service, root) - collapsedHeight <= (190 * root.resources.displayMetrics.density).toInt())
+            assertEquals("Copy", copy.text.toString())
+            assertTrue(descendants(root).filterIsInstance<TextView>().any { it.text == "Polish result ready" && visible(it) })
+            val explanation = coordinator.completedResult()!!.explanation
+            assertTrue(descendants(root).filterIsInstance<TextView>().any { it.text == explanation && visible(it) })
+            assertFalse("Recovery must not display an expiry countdown", descendants(root).filterIsInstance<TextView>()
+                .any { it.text.matches(Regex("[0-9]+s")) || it.contentDescription?.contains("expires in") == true })
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(5))
+            assertTrue("Explanation outlives the transient toolbar status", descendants(root).filterIsInstance<TextView>()
+                .any { it.text == explanation && visible(it) })
             assertFalse(visible(root.findViewById<View>(R.id.ime_keyboard)))
             descendants(root).filterIsInstance<android.widget.Button>().single { it.text == "Dismiss" }.performClick()
             shadowOf(Looper.getMainLooper()).idle()
@@ -150,5 +166,61 @@ class VoiceFirstKeyboardTest {
             assertEquals(collapsedHeight, shown(service, root))
             assertEquals("Show keyboard", root.findViewById<View>(R.id.ime_keyboard_toggle).contentDescription)
         } finally { owner.destroy() }
+    }
+
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Test fun polishRecoveryUsesThePaletteAndKeepsBothActionsInsideTheCardAtNarrowWidths() {
+        val previous = AppearanceStore.current
+        for (appearance in listOf(Appearance.LIGHT, Appearance.DARK)) {
+            val owner = Robolectric.buildService(OdictoImeService::class.java).create()
+            try {
+                val service = owner.get()
+                AppearanceStore.set(service, appearance)
+                val root = service.onCreateInputView()
+                service.onWindowShown()
+                val coordinator = service.javaClass.getDeclaredField("polish").apply { isAccessible = true }.get(service)
+                    as app.odicto.mobile.ime.FieldPolishCoordinator
+                coordinator.javaClass.getDeclaredMethod("retain", Long::class.javaPrimitiveType, String::class.java)
+                    .apply { isAccessible = true }.invoke(coordinator, 1L, "Synthetic recovery")
+                shadowOf(Looper.getMainLooper()).idle()
+                for (width in listOf(288, 412, 720)) {
+                    measure(root, width)
+                    val copy = descendants(root).filterIsInstance<android.widget.Button>().single { it.text == "Copy" }
+                    val dismiss = descendants(root).filterIsInstance<android.widget.Button>().single { it.text == "Dismiss" }
+                    val card = copy.parent.parent as View
+                    val density = root.resources.displayMetrics.density
+                    assertTrue("The compact card stays within the window", shown(service, root) <= (286 * density).toInt())
+                    assertTrue(copy.width >= (48 * density).toInt())
+                    assertTrue(dismiss.width >= (48 * density).toInt())
+                    assertTrue(copy.right <= dismiss.left)
+                    assertTrue(dismiss.right <= (dismiss.parent as View).width)
+                    fun top(view: View): Float {
+                        var position = view.y
+                        var parent = view.parent as? View
+                        while (parent != null && parent !== root) {
+                            position += parent.y
+                            parent = parent.parent as? View
+                        }
+                        return position
+                    }
+                    assertTrue("The complete card fits below the toolbar", top(card) >= 0f)
+                    assertTrue("The actions must not be clipped by the bottom edge", top(dismiss) + dismiss.height <= root.height + 0.5f)
+                    fun fill(view: View): Int {
+                        val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+                        view.background.setBounds(0, 0, view.width, view.height)
+                        view.background.draw(Canvas(bitmap))
+                        return bitmap.getPixel(view.width / 2, (8 * density).toInt()).also { bitmap.recycle() }
+                    }
+                    assertEquals(card.context.getColor(R.color.odicto_panel_card), fill(card))
+                    assertEquals(copy.context.getColor(R.color.odicto_key_accent), fill(copy))
+                    assertEquals(copy.context.getColor(R.color.odicto_on_accent), copy.currentTextColor)
+                    assertEquals(dismiss.context.getColor(R.color.odicto_surface_raised), fill(dismiss))
+                    assertEquals(dismiss.context.getColor(R.color.odicto_text_strong), dismiss.currentTextColor)
+                }
+            } finally {
+                AppearanceStore.set(owner.get(), previous)
+                owner.destroy()
+            }
+        }
     }
 }

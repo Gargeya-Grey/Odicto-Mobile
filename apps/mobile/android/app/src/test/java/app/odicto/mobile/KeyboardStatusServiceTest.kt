@@ -21,6 +21,24 @@ import java.time.Duration
 @RunWith(RobolectricTestRunner::class)
 @LooperMode(LooperMode.Mode.PAUSED)
 class KeyboardStatusServiceTest {
+    @Test fun cancellingUndoDoesNotClearNewBusyVoiceFeedback() {
+        val previous = VoiceSession.state.value
+        val owner = Robolectric.buildService(OdictoImeService::class.java).create()
+        try {
+            val service = owner.get()
+            val root = service.onCreateInputView()
+            service.onWindowShown()
+            val undo = service.javaClass.getDeclaredMethod("editorUndo").apply { isAccessible = true }.invoke(service) as EditorUndoCoordinator
+            @Suppress("UNCHECKED_CAST")
+            val feedback = undo.javaClass.getDeclaredField("state").apply { isAccessible = true }.get(undo) as (String, Boolean) -> Unit
+            feedback("Undoing…", true)
+            VoiceSession.update { VoiceUi(phase = "connecting", resultId = "undo-cancel-voice", message = "Connecting voice") }
+            shadowOf(Looper.getMainLooper()).idle()
+            feedback("", false)
+            assertEquals("Connecting voice", root.findViewById<TextView>(R.id.ime_polish_status).text.toString())
+        } finally { owner.destroy(); VoiceSession.update { previous } }
+    }
+
     private data class Geometry(val height: Int, val controls: List<Rect>, val keys: List<Rect>, val tools: Rect)
     private fun children(view: View): List<View> = listOf(view) + if (view is ViewGroup) (0 until view.childCount).flatMap { children(view.getChildAt(it)) } else emptyList()
     private fun measure(root: View, width: Int = 360, maximum: Int = 800): Geometry {
@@ -176,7 +194,7 @@ class KeyboardStatusServiceTest {
         } finally { owner.destroy(); VoiceSession.update { previous } }
     }
 
-    @Test fun polishRecoveryReplacesContentWithoutChangingBottomAnchoredGeometry() {
+    @Test fun polishRecoveryIsCompactAndDismissOrExpiryRestoresExpandedGeometry() {
         val owner = Robolectric.buildService(OdictoImeService::class.java).create()
         try {
             val service = owner.get()
@@ -184,17 +202,20 @@ class KeyboardStatusServiceTest {
             root.findViewById<View>(R.id.ime_keyboard_toggle).performClick()
             service.onWindowShown()
             val baseline = measure(root)
+            val expansion = service.javaClass.getDeclaredField("expansion").apply { isAccessible = true }.get(service) as KeyboardExpansion
+            val expandedTop = expansion.contentTop()
             // Seed only a synthetic retained result; provider/delivery guards have their own coordinator tests.
             val coordinator = service.javaClass.getDeclaredField("polish").apply { isAccessible = true }.get(service) as FieldPolishCoordinator
             val retain = coordinator.javaClass.getDeclaredMethod("retain", Long::class.javaPrimitiveType, String::class.java).apply { isAccessible = true }
             fun show(id: Long) { retain.invoke(coordinator, id, "synthetic recovery"); shadowOf(Looper.getMainLooper()).idle() }
             show(1)
-            assertEquals(baseline, measure(root))
-            val copy = children(root).filterIsInstance<Button>().single { it.text == "Copy completed result" }
+            assertEquals("Recovery keeps the IME window height", baseline.height, measure(root).height)
+            assertTrue("Recovery keeps the host's document visible", expansion.contentTop() > expandedTop)
+            val copy = children(root).filterIsInstance<Button>().single { it.text == "Copy" }
             assertFalse("No eligible editor: recovery copy must be disabled", copy.isEnabled)
-            assertEquals(R.id.ime_content, (copy.parent.parent as View).id)
+            assertEquals(R.id.ime_content, ((copy.parent as View).parent.parent as View).id)
             shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(5))
-            assertEquals(baseline, measure(root))
+            assertEquals(baseline.height, measure(root).height)
             children(root).filterIsInstance<Button>().single { it.text == "Dismiss" }.performClick()
             assertNull(coordinator.completedResult())
             assertEquals(baseline, measure(root))

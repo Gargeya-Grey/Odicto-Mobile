@@ -37,14 +37,22 @@ class FieldPolishCoordinatorTest {
         var rejectCommit = false
         var ignoreCommit = false
         var rejectSelection = false
+        var keepsFinalNewline = false
+        var readbackDelayMs = 0L
+        private var previousReadback: Triple<String, Int, Int>? = null
+        private var readbackReadyAt = 0L
+        private fun readback(): Triple<String, Int, Int> = previousReadback?.takeIf {
+            System.nanoTime() / 1_000_000 < readbackReadyAt
+        } ?: Triple(text, start, end)
 
         override fun getExtractedText(request: ExtractedTextRequest?, flags: Int): ExtractedText = ExtractedText().apply {
             reads++
-            this.text = this@Editor.text
+            val shown = readback()
+            this.text = shown.first
             startOffset = 0
             partialStartOffset = -1
-            selectionStart = start
-            selectionEnd = end
+            selectionStart = shown.second
+            selectionEnd = shown.third
         }
         override fun performContextMenuAction(id: Int): Boolean {
             if (id != android.R.id.selectAll) return false
@@ -52,9 +60,9 @@ class FieldPolishCoordinatorTest {
             end = text.length
             return true
         }
-        override fun getSelectedText(flags: Int): CharSequence = text.substring(minOf(start, end), maxOf(start, end))
-        override fun getTextBeforeCursor(length: Int, flags: Int): CharSequence = text.substring(0, minOf(start, end)).takeLast(length)
-        override fun getTextAfterCursor(length: Int, flags: Int): CharSequence = text.substring(maxOf(start, end)).take(length)
+        override fun getSelectedText(flags: Int): CharSequence = readback().let { it.first.substring(minOf(it.second, it.third), maxOf(it.second, it.third)) }
+        override fun getTextBeforeCursor(length: Int, flags: Int): CharSequence = readback().let { it.first.substring(0, minOf(it.second, it.third)).takeLast(length) }
+        override fun getTextAfterCursor(length: Int, flags: Int): CharSequence = readback().let { it.first.substring(maxOf(it.second, it.third)).take(length) }
         override fun setSelection(start: Int, end: Int): Boolean {
             if (rejectSelection) return false
             this.start = start
@@ -68,8 +76,11 @@ class FieldPolishCoordinatorTest {
             commits++
             if (rejectCommit) return false
             if (ignoreCommit) return true
+            previousReadback = Triple(this.text, start, end)
+            readbackReadyAt = System.nanoTime() / 1_000_000 + readbackDelayMs
             val low = minOf(start, end)
             this.text = this.text.replaceRange(low, maxOf(start, end), text.toString())
+            if (keepsFinalNewline && !this.text.endsWith("\n")) this.text += "\n"
             start = low + text.toString().length
             end = start
             return true
@@ -77,6 +88,85 @@ class FieldPolishCoordinatorTest {
     }
 
     private val normal = EditorInfo().apply { inputType = InputType.TYPE_CLASS_TEXT }
+
+    @Test fun wholeFieldPolishPreservesTheHostFinalLineBoundaryAndCanBeUndone() = runBlocking {
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        try {
+            val editor = Editor("Helo\n").apply { keepsFinalNewline = true }
+            val finished = kotlinx.coroutines.channels.Channel<String>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+            val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true }, { "key" },
+                { "model" to "" }, { _, _, _, _ -> FieldPolishResult.Success("Hello") },
+                { message, busy -> if (!busy && message.isNotEmpty()) finished.trySend(message) }, { _, _ -> })
+            coordinator.start()
+            assertEquals("Text polished", withTimeout(5_000) { finished.receive() })
+            assertEquals("Hello\n", editor.text)
+            assertEquals(6, editor.start)
+            assertEquals(null, coordinator.completedResult())
+            assertEquals(1, editor.commits)
+            coordinator.undo()
+            assertEquals("Polish undone", withTimeout(5_000) { finished.receive() })
+            assertEquals("Helo\n", editor.text)
+            assertEquals(2, editor.commits)
+        } finally { scope.cancel() }
+    }
+
+    @Test fun delayedReadbackConfirmsPolishAndUndoWithoutRepeatingEitherWrite() = runBlocking {
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        try {
+            val editor = Editor("Helo\n").apply { keepsFinalNewline = true; readbackDelayMs = 60 }
+            val messages = kotlinx.coroutines.channels.Channel<String>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+            var requests = 0
+            val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true }, { "key" },
+                { "model" to "" }, { _, _, _, _ -> requests++; FieldPolishResult.Success("Hello") },
+                { message, busy -> if (!busy && message.isNotEmpty()) messages.trySend(message) }, { _, _ -> })
+            coordinator.start()
+            assertEquals("Text polished", withTimeout(5_000) { messages.receive() })
+            assertEquals("Hello\n", editor.text)
+            assertEquals(1, editor.commits)
+            assertEquals(1, requests)
+            coordinator.undo()
+            assertEquals("Polish undone", withTimeout(5_000) { messages.receive() })
+            assertEquals("Helo\n", editor.text)
+            assertEquals(2, editor.commits)
+            assertEquals(1, requests)
+        } finally { scope.cancel() }
+    }
+
+    @Test fun changingTargetsDuringReadbackNeverWritesToTheNewFieldOrReportsSuccess() = runBlocking {
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        try {
+            val original = Editor("Helo").apply { readbackDelayMs = 100 }
+            val other = Editor("Unrelated")
+            var current = original
+            val finished = CompletableDeferred<String>()
+            val coordinator = FieldPolishCoordinator(scope, { PolishEditor(if (current === original) 1L else 2L, current, normal) }, { true }, { "key" },
+                { "model" to "" }, { _, _, _, _ -> FieldPolishResult.Success("Hello") },
+                { message, busy -> if (!busy && message.isNotEmpty()) finished.complete(message) }, { _, _ -> })
+            coordinator.start()
+            withTimeout(5_000) { while (original.commits == 0) kotlinx.coroutines.delay(1) }
+            current = other
+            assertTrue(withTimeout(5_000) { finished.await() }.startsWith("Correction delivery not verified"))
+            assertEquals("Unrelated", other.text)
+            assertEquals(0, other.commits)
+            assertEquals(1, original.commits)
+        } finally { scope.cancel() }
+    }
+
+    @Test fun aHostCannotAddAParagraphMarkerThatWasNotInTheOriginalField() = runBlocking {
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        try {
+            val editor = Editor("Helo").apply { keepsFinalNewline = true }
+            val finished = CompletableDeferred<String>()
+            val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true }, { "key" },
+                { "model" to "" }, { _, _, _, _ -> FieldPolishResult.Success("Hello") },
+                { message, busy -> if (!busy && message.isNotEmpty()) finished.complete(message) }, { _, _ -> })
+            coordinator.start()
+            assertTrue(withTimeout(5_000) { finished.await() }.startsWith("Correction delivery not verified"))
+            assertEquals("Hello", coordinator.completedResult()!!.text)
+            assertFalse(coordinator.undoAvailable.value)
+            assertEquals(1, editor.commits)
+        } finally { scope.cancel() }
+    }
 
     @Test fun successRechecksAndReplacesOnlyTheOriginalField() = runBlocking {
         val scope = CoroutineScope(coroutineContext + SupervisorJob())
@@ -360,7 +450,7 @@ class FieldPolishCoordinatorTest {
             withTimeout(5_000) { called.await() }
             active = PolishEditor(2L, Editor("other"), normal)
             response.complete(FieldPolishResult.Success("Hello"))
-            assertEquals("Field changed. Copy completed result within 120 seconds, or dismiss.", withTimeout(5_000) { finished.await() })
+            assertEquals("Field changed. You can copy the result or dismiss it.", withTimeout(5_000) { finished.await() })
             assertEquals("Hello", coordinator.completedResult()!!.text)
             assertEquals("Helo", editor.text)
             assertEquals(0, editor.commits)
@@ -381,7 +471,7 @@ class FieldPolishCoordinatorTest {
             withTimeout(5_000) { called.await() }
             editor.text = "Helo!"
             response.complete(FieldPolishResult.Success("Hello"))
-            assertEquals("Field changed. Copy completed result within 120 seconds, or dismiss.", withTimeout(5_000) { finished.await() })
+            assertEquals("Field changed. You can copy the result or dismiss it.", withTimeout(5_000) { finished.await() })
             assertEquals("Hello", coordinator.completedResult()!!.text)
             assertEquals("Helo!", editor.text)
             assertEquals(0, editor.commits)
@@ -483,9 +573,9 @@ class FieldPolishCoordinatorTest {
             return withTimeout(5_000) { messages.receive() }
         }
 
-        fun undo(): String {
+        suspend fun undo(): String {
             coordinator.undo()
-            return messages.tryReceive().getOrThrow()
+            return withTimeout(5_000) { messages.receive() }
         }
     }
 
