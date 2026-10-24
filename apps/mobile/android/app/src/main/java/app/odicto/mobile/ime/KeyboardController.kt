@@ -267,6 +267,7 @@ class KeyboardController(
             OdictoKeyboardView.Key.CHARACTER, OdictoKeyboardView.Key.SPACE,
             OdictoKeyboardView.Key.ENTER, OdictoKeyboardView.Key.BACKSPACE -> {
                 service.cancelFieldPolish()
+                service.cancelEditorUndo()
                 // Typing ends the paste offer for this copy.
                 service.pasteSuggestion.spend()
             }
@@ -875,6 +876,7 @@ class KeyboardController(
         if (editorSession.connection !== connection || selectionStart < 0 || selectionEnd < 0) return
         var epoch = editorSession.epoch
         service.cancelFieldPolish()
+        service.cancelEditorUndo()
         val selected = selectionStart != selectionEnd
         val window = if (!selected && horizontal != 0) surroundingText(connection) ?: return else null
         val steps = if (selected || horizontal == 0) 1 else abs(horizontal).coerceAtMost(SURROUNDING * 2)
@@ -990,6 +992,7 @@ class KeyboardController(
 
     private fun toggleVoice() {
         service.cancelFieldPolish()
+        service.cancelEditorUndo()
         val reason = EditorPolicy.voiceRefusal(editorInfo)
         if (reason != null) { notice(reason); return }
         val control = voiceControl ?: return
@@ -1235,6 +1238,7 @@ class KeyboardController(
         if (reason != null) { notice(reason); return }
         val connection = connectionProvider() ?: return
         service.cancelFieldPolish()
+        service.cancelEditorUndo()
         onExternalEdit(selectionStart, selectionEnd)
         write(connection, text)
         // Retain category, scroll position and tile identity so consecutive taps stay predictable.
@@ -1247,6 +1251,7 @@ class KeyboardController(
         if (!EditorPolicy.clipboardPermits(editorInfo)) return
         val connection = connectionProvider() ?: return
         service.cancelFieldPolish()
+        service.cancelEditorUndo()
         onExternalEdit(selectionStart, selectionEnd)
         write(connection, text)
         closePanels()

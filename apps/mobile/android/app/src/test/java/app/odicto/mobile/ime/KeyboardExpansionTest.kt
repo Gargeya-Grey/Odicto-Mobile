@@ -236,14 +236,32 @@ class KeyboardExpansionTest {
 
     @Test fun recoveryShowsItsPanelWhileCollapsedAndDismissalReturnsToTheBar() {
         Fixture().use { f ->
-            f.expansion.recoveryVisible(true); f.measure()
-            assertEquals(0f, f.column.translationY)
+            val cardHeight = (120 * f.root.resources.displayMetrics.density).toInt()
+            f.expansion.recoveryVisible(true, cardHeight); f.measure()
+            assertEquals((f.area.height - cardHeight).toFloat(), f.column.translationY, 0.5f)
             assertEquals(View.VISIBLE, f.area.visibility)
             assertEquals("tools stay hidden: the keyboard was not expanded", View.INVISIBLE, f.tools.visibility)
-            assertEquals(f.column.top, f.expansion.contentTop())
+            assertEquals(f.column.top + f.area.height - cardHeight, f.expansion.contentTop())
             f.expansion.recoveryVisible(false); f.measure()
             assertEquals(f.area.height.toFloat(), f.column.translationY)
             assertEquals(View.INVISIBLE, f.area.visibility)
+        }
+    }
+
+    @Test fun recoveryTemporarilyCompactsAnExpandedKeyboardAndRestoresIt() {
+        Fixture().use { f ->
+            f.toggle.performClick(); f.finish()
+            val expandedTop = f.expansion.contentTop()
+            val cardHeight = (120 * f.root.resources.displayMetrics.density).toInt()
+            f.expansion.recoveryVisible(true, cardHeight); f.measure()
+            assertTrue(f.expansion.isExpanded)
+            assertEquals(View.VISIBLE, f.quick.visibility)
+            assertEquals(View.INVISIBLE, f.tools.visibility)
+            assertEquals(f.column.top + f.area.height - cardHeight, f.expansion.contentTop())
+            f.expansion.recoveryVisible(false); f.measure()
+            assertEquals(expandedTop, f.expansion.contentTop())
+            assertEquals(View.INVISIBLE, f.quick.visibility)
+            assertEquals(View.VISIBLE, f.tools.visibility)
         }
     }
 

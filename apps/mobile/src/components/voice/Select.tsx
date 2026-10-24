@@ -145,7 +145,7 @@ export function Select({
     });
     setHost(trigger.current?.closest('.voice-app') ?? document.body);
     historyEntry.current = menuHistory().open(() => {
-      // The system back gesture popped the menu's entry: close, and stay on the page.
+      // Back or another picker opening closes this menu without a page navigation.
       historyEntry.current = null;
       typed.current = { buffer: '', at: 0 };
       search?.onChange('');
@@ -337,9 +337,9 @@ export function Select({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchValue]);
 
-  // A tap outside closes the menu.
+  // Searchable pickers stay open while the user scrolls the surrounding page.
   useEffect(() => {
-    if (!open) return;
+    if (!open || hasSearch) return;
     const outside = (event: PointerEvent) => {
       const target = event.target as Node;
       if (menu.current?.contains(target) || trigger.current?.contains(target))
@@ -348,7 +348,7 @@ export function Select({
     };
     document.addEventListener('pointerdown', outside, true);
     return () => document.removeEventListener('pointerdown', outside, true);
-  }, [open]);
+  }, [open, hasSearch]);
 
   const style: CSSProperties =
     place?.ready === true

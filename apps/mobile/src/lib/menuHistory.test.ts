@@ -123,6 +123,44 @@ describe('menu history order', () => {
     expect(b.pops).toEqual([]);
   });
 
+  it('switches the open menu without adding an extra back step', () => {
+    const b = fakeBrowser([null, settings]);
+    let firstClosed = 0;
+    let secondClosed = 0;
+    const first = b.menus.open(() => (firstClosed += 1));
+    b.menus.open(() => (secondClosed += 1));
+
+    expect(firstClosed).toBe(1);
+    expect(secondClosed).toBe(0);
+    expect(b.stack()).toHaveLength(3);
+    first.release();
+    b.settle();
+    expect(b.stack()).toHaveLength(3);
+
+    b.press();
+    expect(secondClosed).toBe(1);
+    expect(b.stack()).toEqual([null, settings]);
+    expect(b.pops).toEqual([]);
+    b.press();
+    expect(b.pops).toEqual([null]);
+  });
+
+  it('releases the shared entry when the replacement menu closes itself', () => {
+    const b = fakeBrowser([null, settings]);
+    const first = b.menus.open(() => undefined);
+    const second = b.menus.open(() => undefined);
+
+    first.release();
+    second.release();
+    second.release();
+    b.settle();
+
+    expect(b.stack()).toEqual([null, settings]);
+    expect(b.pops).toEqual([]);
+    b.press();
+    expect(b.pops).toEqual([null]);
+  });
+
   it('ignores pops when no menu is open', () => {
     const b = fakeBrowser([null, settings]);
     b.press();

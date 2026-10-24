@@ -16,7 +16,12 @@ import kotlinx.coroutines.withContext
 
 internal data class PolishEditor(val session: Long, val connection: InputConnection, val info: EditorInfo?)
 
-internal data class CompletedPolishResult(val operationId: Long, val text: String, val expiresAtElapsedRealtime: Long)
+internal data class CompletedPolishResult(
+    val operationId: Long,
+    val text: String,
+    val expiresAtElapsedRealtime: Long,
+    val explanation: String = "The correction could not be verified. Check the field before copying and pasting to avoid duplicates.",
+)
 
 /**
  * One applied-and-verified replacement. [before] and [after] are the complete field texts around it;
@@ -31,6 +36,7 @@ internal data class PolishUndo(
     val revised: String,
     val selectionStart: Int,
     val selectionEnd: Int,
+    val retainedFinalParagraph: Boolean = false,
 )
 
 internal class FieldPolishCoordinator(
@@ -44,6 +50,7 @@ internal class FieldPolishCoordinator(
     private val applied: (Int, Int) -> Unit,
     private val now: () -> Long = SystemClock::elapsedRealtime,
     private val recoveryTtlMs: Long = RECOVERY_TTL_MS,
+    private val diagnostic: (String) -> Unit = {},
 ) {
     init { require(recoveryTtlMs in 1..RECOVERY_TTL_MS) }
 
@@ -105,6 +112,10 @@ internal class FieldPolishCoordinator(
             return state("This field cannot finish its current edit.", false)
         val current = capture(target.connection)
         val revisedEnd = entry.rangeStart + entry.revised.length
+        if (entry.retainedFinalParagraph && current?.text != entry.after) {
+            popUndo()
+            return state("Text changed since polish. Nothing was undone.", false)
+        }
         if (current == null || !current.text.startsWith(entry.after.substring(0, revisedEnd))) {
             popUndo()
             return state(
@@ -122,7 +133,8 @@ internal class FieldPolishCoordinator(
         try {
             selected = connection.setSelection(entry.rangeStart, revisedEnd)
             if (selected) {
-                committed = connection.commitText(original, 1)
+                // This host adds the final paragraph marker itself. Sending it again would add a blank line.
+                committed = connection.commitText(if (entry.retainedFinalParagraph) original.removeSuffix("\n") else original, 1)
                 if (committed) restored = runCatching { connection.setSelection(entry.selectionStart, entry.selectionEnd) }.getOrDefault(false)
             }
         } catch (_: Exception) {
@@ -134,15 +146,32 @@ internal class FieldPolishCoordinator(
         }
         if (!selected) return state("This field rejected undo. Nothing was retried.", false)
         popUndo()
-        val active = editor()
-        val verified = committed && active != null && active.session == entry.session && active.connection === connection &&
-            EditorPolicy.permits(active.info) && capture(connection)?.text == expected
-        if (verified) {
-            applied(entry.selectionStart, entry.selectionEnd)
-            state(if (restored) "Polish undone" else "Polish undone, but cursor could not be restored.", false)
-        } else {
-            state(if (committed) "Undo delivery not verified. Nothing was retried." else "This field rejected undo. Nothing was retried.", false)
+        val id = ++generation
+        job = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                fun validTarget(): Boolean {
+                    val active = editor()
+                    return generation == id && committed && active != null && active.session == entry.session && active.connection === connection &&
+                        EditorPolicy.permits(active.info) && allowed()
+                }
+                var observed = if (validTarget()) capture(connection) else null
+                var reads = 0
+                while (observed?.text != expected && validTarget() && reads++ < 4) {
+                    delay(40)
+                    if (!validTarget()) break
+                    observed = capture(connection)
+                }
+                if (generation != id) return@launch
+                if (validTarget() && observed?.text == expected) {
+                    applied(observed!!.selectionStart, observed!!.selectionEnd)
+                    state(if (restored) "Polish undone" else "Polish undone, but cursor could not be restored.", false)
+                } else {
+                    state(if (committed) "Undo delivery not verified. Nothing was retried." else "This field rejected undo. Nothing was retried.", false)
+                }
+            } finally { if (generation == id) job = null }
         }
+        state("Undoing polish…", true)
+        job?.start()
     }
 
     fun completedResult(): CompletedPolishResult? {
@@ -170,8 +199,12 @@ internal class FieldPolishCoordinator(
     }
 
     private fun retain(id: Long, text: String) {
+        retain(id, text, "The correction could not be verified. Check the field before copying and pasting to avoid duplicates.")
+    }
+
+    private fun retain(id: Long, text: String, explanation: String) {
         expiryJob?.cancel()
-        completed.value = CompletedPolishResult(id, text, now() + recoveryTtlMs)
+        completed.value = CompletedPolishResult(id, text, now() + recoveryTtlMs, explanation)
         expiryJob = scope.launch { delay(recoveryTtlMs) }.also { timer ->
             timer.invokeOnCompletion {
                 if (completed.value?.operationId == id) completed.value = null
@@ -258,7 +291,7 @@ internal class FieldPolishCoordinator(
         return try { FieldPolishSnapshotReader.capture(current) } finally { capturing = false }
     }
 
-    private fun finish(id: Long, source: FieldPolishSnapshot, revised: String) {
+    private suspend fun finish(id: Long, source: FieldPolishSnapshot, revised: String) {
         if (generation != id) return
         if (revised.isBlank() || revised.length > FieldPolishClient.MAX_OUTPUT_LENGTH) {
             state("Polish returned an empty or oversized correction. Nothing was replaced.", false)
@@ -270,7 +303,7 @@ internal class FieldPolishCoordinator(
             runCatching { current.connection.finishComposingText() }.getOrDefault(false) != true ||
             capture(current.connection) != source || generation != id) {
             if (generation == id) {
-                retain(id, revised)
+                retain(id, revised, "The field changed before the correction could be applied. You can copy the result instead.")
                 state("Field changed. ${recoveryHint()}", false)
             }
             return
@@ -298,27 +331,61 @@ internal class FieldPolishCoordinator(
             capturing = false
         }
         if (generation != id) return
+        // Selection callbacks from our accepted edit are not changes to a pending provider target.
+        snapshot = null
         val expected = source.text.replaceRange(source.rangeStart, source.rangeEnd, revised)
-        val active = editor()
-        val verified = committed && active != null && active.session == editorSession && active.connection === target &&
-            EditorPolicy.permits(active.info) && allowed() && capture(target)?.text == expected
+        fun validTarget(): Boolean {
+            val active = editor()
+            return generation == id && committed && active != null && active.session == editorSession && active.connection === target &&
+                EditorPolicy.permits(active.info) && allowed()
+        }
+        var observed = if (validTarget()) capture(target) else null
+        fun retainedMarker() = source.text.endsWith("\n") && source.rangeEnd == source.text.length && observed?.text == expected + "\n"
+        fun matches() = observed?.text == expected || retainedMarker()
+        // A rich editor can acknowledge the write before publishing its new buffer. Re-read only;
+        // never repeat selection/replacement or the provider call after ambiguous delivery.
+        var reads = 0
+        while (!matches() && validTarget() && reads++ < 4) {
+            diagnostic("readback=pending readable=${observed != null} original=${observed?.text == source.text}")
+            delay(40)
+            if (!validTarget()) break
+            observed = capture(target)
+        }
+        if (generation != id) return
+        val actual = observed?.text
+        // Some rich editors expose an obligatory final paragraph marker and recreate it on commit.
+        // Only that one existing LF may survive a replacement reaching the end; all other text is exact.
+        val retainedFinalParagraph = retainedMarker()
+        val verified = validTarget() && matches()
         if (verified) {
+            val inserted = if (retainedFinalParagraph) revised + "\n" else revised
+            val finalSelection = source.replacementSelection(inserted)
+            val currentSelection = observed!!.selectionStart to observed!!.selectionEnd
+            val deliveredSelection = if (currentSelection == selection || currentSelection == finalSelection) finalSelection else currentSelection
+            if (deliveredSelection != currentSelection) {
+                capturing = true
+                try { restored = runCatching { target.setSelection(deliveredSelection.first, deliveredSelection.second) }.getOrDefault(false) }
+                finally { capturing = false }
+            }
             pushUndo(PolishUndo(
-                session = current.session, connection = target, before = source.text, after = expected,
-                rangeStart = source.rangeStart, revised = revised,
+                session = current.session, connection = target, before = source.text, after = actual!!,
+                rangeStart = source.rangeStart, revised = inserted,
                 selectionStart = source.selectionStart, selectionEnd = source.selectionEnd,
+                retainedFinalParagraph = retainedFinalParagraph,
             ))
-            applied(selection.first, selection.second)
+            applied(deliveredSelection.first, deliveredSelection.second)
             state(if (restored) "Text polished" else "Text polished, but cursor could not be restored.", false)
         } else {
-            retain(id, revised)
+            retain(id, revised, if (committed)
+                "The app accepted the correction, but it could not be verified. Check the field before pasting to avoid duplicates."
+                else "The app did not confirm the correction. Check the field before pasting the copied result.")
             val message = if (committed) "Correction delivery not verified. Nothing was retried."
                 else "This field rejected the correction. Nothing was retried."
             state("$message ${recoveryHint()}", false)
         }
     }
 
-    private fun recoveryHint() = "Copy completed result within ${(recoveryTtlMs + 999) / 1000} seconds, or dismiss."
+    private fun recoveryHint() = "You can copy the result or dismiss it."
 
     companion object {
         const val RECOVERY_TTL_MS = 120_000L

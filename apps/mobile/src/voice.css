@@ -1022,6 +1022,9 @@ textarea.voice-input {
   margin-top: -7px;
   color: var(--v-muted);
 }
+.voice-select[aria-expanded='true'] > svg {
+  transform: rotate(180deg);
+}
 .voice-menu {
   position: fixed;
   z-index: 200;

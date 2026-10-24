@@ -47,6 +47,8 @@ internal class KeyboardExpansion(
     /** The squeeze the host app is told about, held until a collapse has finished. */
     private var insetSqueeze = 0
     private var recovery = false
+    private var recoveryHeight = 0
+    private var insetRecoveryHeight = 0
     /** True while the host app is told about the full keyboard height. */
     private var insetExpanded = false
     private var animation: ValueAnimator? = null
@@ -76,9 +78,10 @@ internal class KeyboardExpansion(
     val isExpanded: Boolean get() = expanded
 
     fun reset() { expanded = false; render(false) }
-    fun recoveryVisible(value: Boolean) {
-        if (recovery == value) return
+    fun recoveryVisible(value: Boolean, height: Int = area.height) {
+        if (recovery == value && recoveryHeight == height) return
         recovery = value
+        recoveryHeight = height
         render(false)
     }
     fun dispose() {
@@ -90,13 +93,22 @@ internal class KeyboardExpansion(
     }
 
     /** Root-relative y of the top edge the host app must keep clear. */
-    fun contentTop(): Int = column.top + if (insetExpanded) insetSqueeze else hiddenOffset()
+    fun contentTop(): Int = column.top + when {
+        insetRecoveryHeight > 0 -> (hiddenOffset() - insetRecoveryHeight).coerceAtLeast(0)
+        insetExpanded -> insetSqueeze
+        else -> hiddenOffset()
+    }
 
     /** Root-relative y where the keyboard is drawn now, for overlays that avoid it. */
     fun visibleTop(): Int = (column.top + column.translationY).toInt()
 
     private fun shown() = expanded || recovery
     private fun hiddenOffset() = area.height
+    private fun targetReveal(): Float = when {
+        recovery -> if (hiddenOffset() > 0) recoveryHeight.toFloat().div(hiddenOffset()).coerceIn(0f, 1f) else 0f
+        expanded -> 1f
+        else -> 0f
+    }
 
     private fun finishAnimation() {
         animation?.apply { removeAllListeners(); removeAllUpdateListeners(); cancel() }
@@ -116,10 +128,11 @@ internal class KeyboardExpansion(
     }
 
     /** Both inset facts at once, so the host app is told exactly once however they change together. */
-    private fun setInsets(expandedValue: Boolean, squeezePx: Int) {
-        val changed = insetExpanded != expandedValue || (expandedValue && insetSqueeze != squeezePx)
+    private fun setInsets(expandedValue: Boolean, squeezePx: Int, recoveryPx: Int = 0) {
+        val changed = insetExpanded != expandedValue || (expandedValue && insetSqueeze != squeezePx) || insetRecoveryHeight != recoveryPx
         insetExpanded = expandedValue
         insetSqueeze = squeezePx
+        insetRecoveryHeight = recoveryPx
         if (changed) insetsChanged()
     }
 
@@ -157,11 +170,12 @@ internal class KeyboardExpansion(
     /** Final state with no motion: also the state a detached or freshly created view starts in. */
     private fun settle() {
         val show = shown()
-        present(if (show) 1f else 0f, if (expanded) 1f else 0f)
+        val typing = expanded && !recovery
+        present(targetReveal(), if (typing) 1f else 0f)
         area.visibility = if (show) View.VISIBLE else View.INVISIBLE
-        tools.visibility = if (expanded) View.VISIBLE else View.INVISIBLE
-        quick.visibility = if (expanded) View.INVISIBLE else View.VISIBLE
-        setInsets(show, if (expanded) quick.height else 0)
+        tools.visibility = if (typing) View.VISIBLE else View.INVISIBLE
+        quick.visibility = if (typing) View.INVISIBLE else View.VISIBLE
+        setInsets(show, if (typing) quick.height else 0, if (recovery) recoveryHeight.coerceAtMost(hiddenOffset()) else 0)
         root.invalidate()
     }
 
@@ -173,14 +187,14 @@ internal class KeyboardExpansion(
         swapToggleIcon(if (expanded) R.drawable.odicto_ic_keyboard_hide else R.drawable.odicto_ic_keyboard, animate)
         onPresentationChanged?.invoke(expanded && !recovery)
         val show = shown()
-        val revealTo = if (show) 1f else 0f
-        val squeezeTo = if (expanded) 1f else 0f
+        val revealTo = targetReveal()
+        val squeezeTo = if (expanded && !recovery) 1f else 0f
         val revealFrom = reveal
         val squeezeFrom = squeeze
         val enabled = Build.VERSION.SDK_INT < 26 || ValueAnimator.areAnimatorsEnabled()
         // Told before the motion starts, so the keys slide into space the app has already given up.
-        if (expanded) setInsetSqueeze(quick.height)
-        if (!animate || !column.isAttachedToWindow || !enabled || (hiddenOffset() == 0 && quick.height == 0) ||
+        if (expanded && !recovery) setInsetSqueeze(quick.height)
+        if (!animate || recovery || !column.isAttachedToWindow || !enabled || (hiddenOffset() == 0 && quick.height == 0) ||
             (revealFrom == revealTo && squeezeFrom == squeezeTo)) {
             settle()
             return

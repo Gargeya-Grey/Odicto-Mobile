@@ -14,6 +14,7 @@ apps/mobile/android/app/build/
 *.tsbuildinfo
 coverage/
 work/
+outputs/handoffs/
 .DS_Store
 Thumbs.db
 
