@@ -1,7 +1,7 @@
 ## What's changed in 1.7.1
 
 - Text polish can use Gemini or OpenRouter. Its provider is independent of AI answers and uses the matching key saved under Connections.
-- AI answers and Text polish now offer searchable Gemini model names. Opening the menu loads Google's current catalog and keeps prior or bundled choices if the lookup fails; model access depends on your Google project.
+- AI answers and Text polish now offer searchable Gemini model names, with higher model versions first. Opening the menu loads Google's current catalog and keeps prior or bundled choices if the lookup fails; model access depends on your Google project.
 - Existing Text polish settings stay on OpenRouter with their saved model until you change them.
 
 ## Install

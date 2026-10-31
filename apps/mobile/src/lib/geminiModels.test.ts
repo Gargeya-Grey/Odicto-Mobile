@@ -64,9 +64,10 @@ describe('Gemini model picker', () => {
     const groups = geminiModelGroups('', 'gemini-paid-preview', google);
     const all = groups.flatMap((group) => group.options);
     expect(groups[0]).toEqual({
-      label: 'Recent',
+      label: 'From Google',
       options: [
         { value: 'gemini-4-argon', label: 'Gemini 4 Argon from Google' },
+        { value: 'gemini-paid-preview', label: 'Gemini Paid Preview' },
       ],
     });
     expect(all).toContainEqual({
@@ -90,6 +91,68 @@ describe('Gemini model picker', () => {
     expect(
       geminiModelGroups('paid', '', google).flatMap((group) => group.options),
     ).toEqual([{ value: 'gemini-paid-preview', label: 'Gemini Paid Preview' }]);
+  });
+
+  it('sorts all live models by numeric version, including future versions', () => {
+    const ids = [
+      'gemini-3.1-pro',
+      'gemini-4-argon',
+      'gemini-3.5-flash-lite',
+      'gemini-10-pro',
+      'gemini-3.6-flash',
+      'gemini-4.1-flash',
+      'gemini-5-flash',
+      'gemini-3.8-flash',
+      'gemini-unknown',
+    ];
+    const google = ids.map((id) => ({ id, name: `Model ${id}` }));
+    const ordered = geminiModelGroups('', 'gemini-4-argon', google).flatMap(
+      (group) => group.options.map((option) => option.value),
+    );
+    expect(ordered).toEqual([
+      'gemini-10-pro',
+      'gemini-5-flash',
+      'gemini-4.1-flash',
+      'gemini-4-argon',
+      'gemini-3.8-flash',
+      'gemini-3.6-flash',
+      'gemini-3.5-flash-lite',
+      'gemini-3.1-pro',
+      'gemini-unknown',
+    ]);
+  });
+
+  it('orders same-version stable variants before previews with numeric ID ties', () => {
+    const ids = [
+      'gemini-4.1-flash-preview-2',
+      'gemini-4.1-flash',
+      'gemini-4.1-flash-preview-12',
+      'gemini-4.1-pro',
+    ];
+    const google = ids.map((id) => ({ id, name: id }));
+    const ordered = geminiModelGroups('', 'gemini-4.1-pro', google).flatMap(
+      (group) => group.options.map((option) => option.value),
+    );
+    expect(ordered).toEqual([
+      'gemini-4.1-pro',
+      'gemini-4.1-flash',
+      'gemini-4.1-flash-preview-12',
+      'gemini-4.1-flash-preview-2',
+    ]);
+  });
+
+  it('keeps numeric ordering during search, including multi-digit minor versions', () => {
+    const google = [
+      { id: 'gemini-3.9-flash', name: 'Flash 3.9' },
+      { id: 'gemini-3.10-flash', name: 'Flash 3.10' },
+      { id: 'gemini-10-pro', name: 'Pro 10' },
+    ];
+    const matches = geminiModelGroups(
+      'flash',
+      'gemini-3.9-flash',
+      google,
+    ).flatMap((group) => group.options.map((option) => option.value));
+    expect(matches).toEqual(['gemini-3.10-flash', 'gemini-3.9-flash']);
   });
 
   it('keeps the current bundled or custom model if Google did not return it', () => {
@@ -124,6 +187,12 @@ describe('Gemini model picker', () => {
       value: 'gemini-3.5-flash-lite',
       label: 'Gemini 3.5 Flash-Lite',
     });
+    expect(all.map((item) => item.value)).toEqual([
+      'gemini-4-argon',
+      'gemini-3.8-flash',
+      'gemini-3.6-flash',
+      'gemini-3.5-flash-lite',
+    ]);
   });
 
   it('ignores malformed Google entries and keeps a saved custom model', () => {
