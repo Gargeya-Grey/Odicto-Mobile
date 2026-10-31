@@ -5,7 +5,7 @@ description: Verify Odicto Mobile Android settings, text polish, keyboard, and v
 
 # Verify Odicto Mobile
 
-This is a draft until its device launch and one mapped journey have been run. Follow the steps and report their actual outcomes, including unavailable hardware or credentials; do not treat this guide as evidence of a pass. Read [features/README.md](features/README.md) and the relevant feature before driving the app.
+This guide describes checks, not evidence of a pass. Follow the relevant steps and report their actual outcomes, including unavailable hardware or credentials. Read [features/README.md](features/README.md) and the relevant feature before driving the app.
 
 ## Build and launch
 
