@@ -1,5 +1,15 @@
 /** Pure helpers for the Odicto listbox: index limits and type-to-find. */
 
+/** Resolve an active value without moving focus when options are refreshed. */
+export function indexOfActiveValue(
+  options: readonly { value: string; disabled?: boolean }[],
+  value: string | null,
+): number {
+  return value === null
+    ? -1
+    : options.findIndex((option) => option.value === value && !option.disabled);
+}
+
 /** Keep an index inside 0..count-1. An empty list has no valid index (-1). */
 export function clampIndex(index: number, count: number): number {
   if (count <= 0) return -1;

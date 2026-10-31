@@ -26,6 +26,10 @@ class FieldPolishClientTest {
         JSONObject().put("choices", org.json.JSONArray().put(JSONObject().put("finish_reason", finish)
             .put("message", JSONObject().put("content", content)))).toString()
 
+    private fun geminiReply(content: String = "Fixed text", finish: String = "STOP") =
+        JSONObject().put("candidates", org.json.JSONArray().put(JSONObject().put("finishReason", finish)
+            .put("content", JSONObject().put("parts", org.json.JSONArray().put(JSONObject().put("text", content)))))).toString()
+
     private fun client(code: Int = 200, body: String = reply(), requests: MutableList<Request> = mutableListOf()): FieldPolishClient =
         FieldPolishClient(OkHttpClient.Builder().addInterceptor { chain ->
             synchronized(requests) { requests.add(chain.request()) }
@@ -65,6 +69,49 @@ class FieldPolishClientTest {
         val reasoning = JSONObject(buffer.readUtf8()).getJSONObject("reasoning")
         assertEquals("low", reasoning.getString("effort"))
         assertTrue(reasoning.getBoolean("exclude"))
+    }
+
+    @Test fun geminiSendsSelectedTextWithItsOwnKeyAndPrompt() = runBlocking {
+        val requests = mutableListOf<Request>()
+        val result = client(body = geminiReply("  Corrected\ntext  "), requests = requests)
+            .correct("  Selected\ntext  ", model = "gemini-3.5-flash-lite", systemPrompt = "Keep the name.", apiKey = "gemini-secret", provider = "gemini")
+        assertEquals(FieldPolishResult.Success("  Corrected\ntext  "), result)
+        val request = synchronized(requests) { requests.single() }
+        assertEquals("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent", request.url.toString())
+        assertEquals("gemini-secret", request.header("x-goog-api-key"))
+        assertNull(request.header("Authorization"))
+        val buffer = Buffer()
+        request.body!!.writeTo(buffer)
+        val payload = JSONObject(buffer.readUtf8())
+        val system = payload.getJSONObject("systemInstruction").getJSONArray("parts").getJSONObject(0).getString("text")
+        assertTrue(system.startsWith(FieldPolishClient.DEFAULT_SYSTEM_PROMPT))
+        assertTrue(system.endsWith("Keep the name."))
+        assertEquals("  Selected\ntext  ", payload.getJSONArray("contents").getJSONObject(0).getJSONArray("parts").getJSONObject(0).getString("text"))
+        assertEquals(8192, payload.getJSONObject("generationConfig").getInt("maxOutputTokens"))
+        assertFalse(payload.toString().contains("gemini-secret"))
+    }
+
+    @Test fun geminiRejectsTruncatedUnsafeAndIncompleteResponses() = runBlocking {
+        val cases = listOf(
+            geminiReply("partial", "MAX_TOKENS") to FieldPolishResult.Reason.TRUNCATED,
+            geminiReply("partial", "SAFETY") to FieldPolishResult.Reason.INVALID_RESPONSE,
+            geminiReply("") to FieldPolishResult.Reason.INVALID_RESPONSE,
+            geminiReply("x".repeat(20_001)) to FieldPolishResult.Reason.INVALID_RESPONSE,
+            "{}" to FieldPolishResult.Reason.INVALID_RESPONSE,
+        )
+        for ((body, expected) in cases) {
+            val failure = client(body = body).correct("input", model = "gemini-model", apiKey = "key", provider = "gemini") as FieldPolishResult.Failure
+            assertEquals(expected, failure.reason)
+        }
+        val auth = client(401, "provider secret body").correct("input", model = "gemini-model", apiKey = "key", provider = "gemini") as FieldPolishResult.Failure
+        assertEquals(FieldPolishResult.Reason.AUTHENTICATION, auth.reason)
+        assertTrue(auth.message.contains("Gemini"))
+        assertFalse(auth.message.contains("provider secret body"))
+        val denied = client(403, "provider private body").correct("input", model = "gemini-model", apiKey = "key", provider = "gemini") as FieldPolishResult.Failure
+        assertEquals(FieldPolishResult.Reason.PROVIDER, denied.reason)
+        assertTrue(denied.message.contains("billing"))
+        assertFalse(denied.message.contains("rejected the API key"))
+        assertFalse(denied.message.contains("provider private body"))
     }
 
     @Test fun customModelAndPromptAreUsedWithoutFallbackAndFormattingIsKept() = runBlocking {

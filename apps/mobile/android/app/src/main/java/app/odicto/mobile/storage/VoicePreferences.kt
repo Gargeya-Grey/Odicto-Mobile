@@ -7,6 +7,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 
 const val DEFAULT_POLISH_MODEL = "poolside/laguna-xs-2.1"
+const val DEFAULT_GEMINI_POLISH_MODEL = "gemini-3.5-flash-lite"
 
 /**
  * Keyboard feel settings.
@@ -66,12 +67,15 @@ data class VoiceSettings(
     val systemPrompt: String = "",
     /** "append" adds [systemPrompt] after Odicto's rules; "replace" uses it instead. See [app.odicto.mobile.dictation.PromptMode]. */
     val systemPromptMode: String = "append",
+    val polishProvider: String = "openrouter",
     val polishModel: String = DEFAULT_POLISH_MODEL,
     val polishSystemPrompt: String = "",
     val polishSystemPromptMode: String = "append",
     val showTextPreview: Boolean = true,
     val paused: Boolean = false,
     val keys: KeySettings = KeySettings(),
+    /** True only for Polish settings obtained from a successful DataStore read. */
+    val polishSettingsReadable: Boolean = false,
 )
 
 object VoicePreferences {
@@ -108,54 +112,62 @@ object VoicePreferences {
         started = true
         val app = context.applicationContext
         // An unreadable store must still release ready; otherwise the overlay waits on it forever.
-        scope.launch {
-            stream(app)
-                .catch { emit(emptyPreferences()) }
-                .collect { preferences ->
-                    val haptics = preferences[booleanPreferencesKey("voice_haptics")] ?: true
-                    val savedPrompt = preferences[stringPreferencesKey("voice_system_prompt")] ?: ""
-                    val savedPolishPrompt = preferences[stringPreferencesKey("voice_polish_system_prompt")]?.takeIf { it.length <= 8_000 } ?: ""
-                    val fontChoiceRecorded = preferences[booleanPreferencesKey("voice_key_font_migrated")] ?: false
-                    val rawFont = preferences[stringPreferencesKey("voice_key_font")]
-                    val keyFont = KeySettings.resolveFont(rawFont, fontChoiceRecorded)
-                    mutable.value = VoiceSettings(
-                        enabled = preferences[booleanPreferencesKey("voice_enabled")] ?: false,
-                        mode = preferences[stringPreferencesKey("voice_mode")] ?: "raw",
-                        provider = preferences[stringPreferencesKey("voice_provider")]
-                            ?.takeIf { it == "gemini" || it == "openrouter" } ?: "gemini",
-                        model = preferences[stringPreferencesKey("voice_model")] ?: "",
-                        haptics = haptics,
-                        x = preferences[intPreferencesKey("voice_x")] ?: -1,
-                        y = preferences[intPreferencesKey("voice_y")] ?: -1,
-                        anchorX = readAnchor(preferences, "voice_anchor_fx", "voice_anchor_x"),
-                        anchorY = readAnchor(preferences, "voice_anchor_fy", "voice_anchor_y"),
-                        liveModel = preferences[stringPreferencesKey("voice_live_model")] ?: "gemini-3.5-transcribe-live",
-                        systemPrompt = savedPrompt,
-                        systemPromptMode = PromptMode.forStored(preferences[stringPreferencesKey("voice_system_prompt_mode")], savedPrompt).wire,
-                        polishModel = preferences[stringPreferencesKey("voice_polish_model")]
-                            ?.takeIf { it.isNotBlank() && it.length <= 200 } ?: DEFAULT_POLISH_MODEL,
-                        polishSystemPrompt = savedPolishPrompt,
-                        polishSystemPromptMode = PromptMode.forStored(preferences[stringPreferencesKey("voice_polish_system_prompt_mode")], savedPolishPrompt).wire,
-                        showTextPreview = preferences[booleanPreferencesKey("voice_show_text_preview")] ?: true,
-                        paused = preferences[booleanPreferencesKey("voice_paused")] ?: false,
-                        keys = KeySettings(
-                            // A store written before levels existed only has the boolean.
-                            hapticLevel = (preferences[intPreferencesKey("voice_haptic_level")]
-                                ?: if (haptics) DEFAULT_LEVEL else HAPTIC_OFF).coerceIn(HAPTIC_OFF, 3),
-                            keySize = preferences[stringPreferencesKey("voice_key_size")]
-                                ?.takeIf { it in KeySettings.SIZES } ?: KeySettings.SIZE_MEDIUM,
-                            keyFont = keyFont,
-                            tapTolerance = ((preferences.asMap().entries.firstOrNull { it.key.name == "voice_tap_tolerance" }?.value as? Int) ?: 2).coerceIn(0, 2),
-                            autocorrectEnabled = preferences[booleanPreferencesKey("voice_autocorrect_enabled")] ?: false,
-                            pinnedEmoji = readList(preferences, "voice_pinned_emoji", SEPARATOR, MAX_PINNED),
-                            recentEmoji = readList(preferences, "voice_recent_emoji", SEPARATOR, MAX_RECENT),
-                            pinnedClips = readList(preferences, "voice_pinned_clips", CLIP_SEPARATOR, MAX_PINNED),
-                            clipHistory = readList(preferences, "voice_clip_history", CLIP_SEPARATOR, MAX_CLIPS),
-                        ),
-                    )
-                    loaded.value = true
-                }
-        }
+        scope.launch { observe(stream(app), mutable, loaded) }
+    }
+
+    internal suspend fun observe(source: Flow<Preferences>, snapshot: MutableStateFlow<VoiceSettings>, isReady: MutableStateFlow<Boolean>) {
+        source
+            .map { it to true }
+            .catch { emit(emptyPreferences() to false) }
+            .collect { (preferences, storeReadable) ->
+                val haptics = preferences[booleanPreferencesKey("voice_haptics")] ?: true
+                val savedPrompt = preferences[stringPreferencesKey("voice_system_prompt")] ?: ""
+                val savedPolishPrompt = preferences[stringPreferencesKey("voice_polish_system_prompt")]?.takeIf { it.length <= 8_000 } ?: ""
+                val rawPolishProvider = preferences.asMap().entries.firstOrNull { it.key.name == "voice_polish_provider" }?.value
+                val polishProvider = (rawPolishProvider as? String)?.takeIf { it == "gemini" || it == "openrouter" }
+                val polishSettingsReadable = storeReadable && (rawPolishProvider == null || polishProvider != null)
+                val fontChoiceRecorded = preferences[booleanPreferencesKey("voice_key_font_migrated")] ?: false
+                val rawFont = preferences[stringPreferencesKey("voice_key_font")]
+                val keyFont = KeySettings.resolveFont(rawFont, fontChoiceRecorded)
+                snapshot.value = VoiceSettings(
+                    enabled = preferences[booleanPreferencesKey("voice_enabled")] ?: false,
+                    mode = preferences[stringPreferencesKey("voice_mode")] ?: "raw",
+                    provider = preferences[stringPreferencesKey("voice_provider")]
+                        ?.takeIf { it == "gemini" || it == "openrouter" } ?: "gemini",
+                    model = preferences[stringPreferencesKey("voice_model")] ?: "",
+                    haptics = haptics,
+                    x = preferences[intPreferencesKey("voice_x")] ?: -1,
+                    y = preferences[intPreferencesKey("voice_y")] ?: -1,
+                    anchorX = readAnchor(preferences, "voice_anchor_fx", "voice_anchor_x"),
+                    anchorY = readAnchor(preferences, "voice_anchor_fy", "voice_anchor_y"),
+                    liveModel = preferences[stringPreferencesKey("voice_live_model")] ?: "gemini-3.5-transcribe-live",
+                    systemPrompt = savedPrompt,
+                    systemPromptMode = PromptMode.forStored(preferences[stringPreferencesKey("voice_system_prompt_mode")], savedPrompt).wire,
+                    polishProvider = polishProvider ?: "openrouter",
+                    polishModel = preferences[stringPreferencesKey("voice_polish_model")]
+                        ?.takeIf { it.isNotBlank() && it.length <= 200 } ?: DEFAULT_POLISH_MODEL,
+                    polishSystemPrompt = savedPolishPrompt,
+                    polishSystemPromptMode = PromptMode.forStored(preferences[stringPreferencesKey("voice_polish_system_prompt_mode")], savedPolishPrompt).wire,
+                    polishSettingsReadable = polishSettingsReadable,
+                    showTextPreview = preferences[booleanPreferencesKey("voice_show_text_preview")] ?: true,
+                    paused = preferences[booleanPreferencesKey("voice_paused")] ?: false,
+                    keys = KeySettings(
+                        // A store written before levels existed only has the boolean.
+                        hapticLevel = (preferences[intPreferencesKey("voice_haptic_level")]
+                            ?: if (haptics) DEFAULT_LEVEL else HAPTIC_OFF).coerceIn(HAPTIC_OFF, 3),
+                        keySize = preferences[stringPreferencesKey("voice_key_size")]
+                            ?.takeIf { it in KeySettings.SIZES } ?: KeySettings.SIZE_MEDIUM,
+                        keyFont = keyFont,
+                        tapTolerance = ((preferences.asMap().entries.firstOrNull { it.key.name == "voice_tap_tolerance" }?.value as? Int) ?: 2).coerceIn(0, 2),
+                        autocorrectEnabled = preferences[booleanPreferencesKey("voice_autocorrect_enabled")] ?: false,
+                        pinnedEmoji = readList(preferences, "voice_pinned_emoji", SEPARATOR, MAX_PINNED),
+                        recentEmoji = readList(preferences, "voice_recent_emoji", SEPARATOR, MAX_RECENT),
+                        pinnedClips = readList(preferences, "voice_pinned_clips", CLIP_SEPARATOR, MAX_PINNED),
+                        clipHistory = readList(preferences, "voice_clip_history", CLIP_SEPARATOR, MAX_CLIPS),
+                    ),
+                )
+                isReady.value = true
+            }
     }
 
     /** The fine share, or the older thousandths share scaled up, so an existing placement is kept. */
@@ -172,6 +184,7 @@ object VoicePreferences {
             p[stringPreferencesKey("voice_live_model")] = value.liveModel
             p[stringPreferencesKey("voice_system_prompt")] = value.systemPrompt
             p[stringPreferencesKey("voice_system_prompt_mode")] = value.systemPromptMode
+            p[stringPreferencesKey("voice_polish_provider")] = value.polishProvider
             p[stringPreferencesKey("voice_polish_model")] = value.polishModel
             p[stringPreferencesKey("voice_polish_system_prompt")] = value.polishSystemPrompt
             p[stringPreferencesKey("voice_polish_system_prompt_mode")] = value.polishSystemPromptMode
@@ -186,13 +199,19 @@ object VoicePreferences {
             p[stringPreferencesKey("voice_pinned_emoji")] = value.keys.pinnedEmoji.joinToString(SEPARATOR)
             p[stringPreferencesKey("voice_recent_emoji")] = value.keys.recentEmoji.joinToString(SEPARATOR)
         }
-        mutable.value = normalized(value)
+        publishSaved(mutable, value)
+    }
+
+    internal fun publishSaved(snapshot: MutableStateFlow<VoiceSettings>, value: VoiceSettings) {
+        snapshot.update { current ->
+            normalized(value).copy(polishSettingsReadable = current.polishSettingsReadable && value.polishSettingsReadable)
+        }
     }
 
     private fun normalized(value: VoiceSettings): VoiceSettings = value.copy(keys = value.keys.copy(tapTolerance = toleranceOf(value)))
 
     fun update(context: Context, transform: (VoiceSettings) -> VoiceSettings) {
-        val value = normalized(transform(mutable.value)); mutable.value = value
+        val value = mutable.updateAndGet { normalized(transform(it)) }
         scope.launch { save(context, value) }
     }
 

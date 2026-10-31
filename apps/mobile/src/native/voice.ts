@@ -9,6 +9,7 @@ export type VoiceSettings = {
   systemPrompt: string;
   /** How the AI prompt combines with Odicto's built-in instructions. */
   systemPromptMode: 'append' | 'replace';
+  polishProvider: 'gemini' | 'openrouter';
   polishModel: string;
   polishSystemPrompt: string;
   polishSystemPromptMode: 'append' | 'replace';
@@ -34,6 +35,7 @@ export type OpenRouterModel = {
   contextLength: number;
   reasoning: boolean;
 };
+export type GeminiModel = { id: string; name: string };
 export type HistoryItem = {
   id: string;
   text: string;
@@ -43,6 +45,7 @@ export type HistoryItem = {
 export const voice = registerPlugin<{
   status(): Promise<VoiceSettings>;
   openrouterModels(): Promise<{ models: OpenRouterModel[] }>;
+  geminiModels(): Promise<{ models: GeminiModel[] }>;
   save(
     settings: Partial<VoiceSettings> & {
       geminiKey?: string;

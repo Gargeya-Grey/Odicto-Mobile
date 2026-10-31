@@ -1,10 +1,8 @@
-## What's changed in 1.7.0
+## What's changed in 1.7.1
 
-- Polish now confirms replacement when an editor returns its previous text briefly after accepting the change, including Samsung Notes. Unconfirmed delivery still offers explicit Copy recovery without automatically writing again.
-- Completed Polish results use a compact, themed card with an explanation and Copy/Dismiss controls. There is no visible countdown or forced keyboard expansion.
-- Toolbar Undo requests the focused app's text-edit history, including typing, backspace, selected-text deletion, paste and Polish. Availability and grouping depend on the app.
-- Searchable AI and Polish model lists stay open during outside taps and page scrolling. Select a model or use the expand/collapse arrow to close them.
-- Odicto Debug installs alongside the release app and keeps its own settings and keys.
+- Text polish can use Gemini or OpenRouter. Its provider is independent of AI answers and uses the matching key saved under Connections.
+- AI answers and Text polish now offer searchable Gemini model names, with higher model versions first. Opening the menu loads Google's current catalog and keeps prior or bundled choices if the lookup fails; model access depends on your Google project.
+- Existing Text polish settings stay on OpenRouter with their saved model until you change them.
 
 ## Install
 

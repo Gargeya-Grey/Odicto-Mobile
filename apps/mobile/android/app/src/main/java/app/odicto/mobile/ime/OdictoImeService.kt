@@ -601,11 +601,10 @@ class OdictoImeService : InputMethodService() {
                 if (id != null && connection != null) PolishEditor(id, connection, currentInputEditorInfo) else null
             },
             allowed = { DictationCoordinator.keyboardVisible.value && !VoiceSession.state.value.busy && DictationCoordinator.aiSelection == null },
-            readKey = { SecureCredentialStore(this).get("voice-openrouter") },
-            config = { VoicePreferences.state.value.let { it.polishModel to it.polishSystemPrompt } },
-            correct = { text, model, prompt, key ->
-                val settings = VoicePreferences.state.value
-                polishClient.correct(text, model, prompt, key, app.odicto.mobile.dictation.PromptMode.forStored(settings.polishSystemPromptMode, settings.polishSystemPrompt))
+            readKey = { provider -> SecureCredentialStore(this).get("voice-$provider") },
+            config = { VoicePreferences.state.value.let { PolishConfig(it.polishProvider, it.polishModel, it.polishSystemPrompt, app.odicto.mobile.dictation.PromptMode.forStored(it.polishSystemPromptMode, it.polishSystemPrompt), it.polishSettingsReadable) } },
+            correct = { text, config, key ->
+                polishClient.correct(text, config.model, config.prompt, key, config.promptMode, config.provider)
             },
             state = ::showPolishStatus,
             applied = { start, end -> controller?.onExternalEdit(start, end) },

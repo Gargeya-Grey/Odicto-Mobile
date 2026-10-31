@@ -2,10 +2,27 @@ import { describe, expect, it } from 'vitest';
 import {
   clampIndex,
   edgeIndex,
+  indexOfActiveValue,
   nextTypeaheadBuffer,
   stepIndex,
   typeaheadMatch,
 } from './listbox';
+
+describe('indexOfActiveValue', () => {
+  it('keeps the active option through catalog insertions and reordering', () => {
+    const before = [{ value: 'alpha' }, { value: 'beta' }];
+    const after = [{ value: 'new' }, { value: 'beta' }, { value: 'alpha' }];
+    expect(before[indexOfActiveValue(before, 'beta')].value).toBe('beta');
+    expect(after[indexOfActiveValue(after, 'beta')].value).toBe('beta');
+  });
+  it('has no active option when it is removed or disabled', () => {
+    expect(indexOfActiveValue([{ value: 'other' }], 'beta')).toBe(-1);
+    expect(
+      indexOfActiveValue([{ value: 'beta', disabled: true }], 'beta'),
+    ).toBe(-1);
+    expect(indexOfActiveValue([{ value: 'beta' }], null)).toBe(-1);
+  });
+});
 
 describe('clampIndex', () => {
   it('keeps an index inside the list', () => {

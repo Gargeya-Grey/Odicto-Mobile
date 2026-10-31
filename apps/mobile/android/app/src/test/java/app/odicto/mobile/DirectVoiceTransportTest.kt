@@ -12,6 +12,11 @@ import okio.ByteString.Companion.encodeUtf8
 import java.nio.ByteBuffer
 
 class DirectVoiceTransportTest {
+    @Test fun deniedAccessDoesNotClaimTheApiKeyIsInvalid() {
+        val message = DirectVoiceTransport.providerError("Gemini", 403)
+        assertTrue(message.contains("billing"))
+        assertFalse(message.contains("rejected the API key"))
+    }
     @Test fun finalizedLiveTextBeforeReleaseCompletesThroughFallbackOnce() {
         val events = mutableListOf<JSONObject>()
         lateinit var listener: WebSocketListener

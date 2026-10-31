@@ -58,6 +58,29 @@ class VoicePluginTest {
         assertNull(call.error)
     }
 
+    @Test fun polishProviderAndModelRoundTripIndependentlyOfAnswers() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        kotlinx.coroutines.runBlocking {
+            VoicePreferences.save(context, app.odicto.mobile.storage.VoiceSettings(provider = "openrouter", polishModel = "fixture/old-model"))
+        }
+        VoicePreferences.initialize(context)
+        val plugin = VoicePlugin()
+        fun status(): JSObject { val c = Call(); plugin.status(c); await(c); return c.result!! }
+        fun save(patch: JSObject) { val c = Call(patch); plugin.save(c); await(c) }
+
+        assertEquals("openrouter", status().getString("polishProvider"))
+        assertEquals("fixture/old-model", status().getString("polishModel"))
+        save(JSObject().put("polishProvider", "gemini").put("polishModel", "fixture-gemini"))
+        assertEquals("gemini", status().getString("polishProvider"))
+        assertEquals("fixture-gemini", status().getString("polishModel"))
+        assertEquals("openrouter", status().getString("provider"))
+        save(JSObject().put("keySize", "large"))
+        assertEquals("gemini", status().getString("polishProvider"))
+        assertEquals("fixture-gemini", status().getString("polishModel"))
+        save(JSObject().put("polishProvider", "openrouter"))
+        assertEquals("poolside/laguna-xs-2.1", status().getString("polishModel"))
+    }
+
     @Test fun autocorrectRoundTripPreservesOmittedSettingAndIndependentPolishConfiguration() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         kotlinx.coroutines.runBlocking {

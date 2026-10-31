@@ -3,6 +3,7 @@ package app.odicto.mobile.ime
 import android.os.SystemClock
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
+import app.odicto.mobile.dictation.PromptMode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -15,6 +16,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 internal data class PolishEditor(val session: Long, val connection: InputConnection, val info: EditorInfo?)
+
+internal data class PolishConfig(
+    val provider: String,
+    val model: String,
+    val prompt: String,
+    val promptMode: PromptMode = PromptMode.APPEND,
+    val settingsReadable: Boolean,
+)
 
 internal data class CompletedPolishResult(
     val operationId: Long,
@@ -43,9 +52,9 @@ internal class FieldPolishCoordinator(
     private val scope: CoroutineScope,
     private val editor: () -> PolishEditor?,
     private val allowed: () -> Boolean,
-    private val readKey: () -> String?,
-    private val config: () -> Pair<String, String>,
-    private val correct: suspend (String, String, String, String) -> FieldPolishResult,
+    private val readKey: (String) -> String?,
+    private val config: () -> PolishConfig,
+    private val correct: suspend (String, PolishConfig, String) -> FieldPolishResult,
     private val state: (String, Boolean) -> Unit,
     private val applied: (Int, Int) -> Unit,
     private val now: () -> Long = SystemClock::elapsedRealtime,
@@ -222,6 +231,9 @@ internal class FieldPolishCoordinator(
         if (!EditorPolicy.permits(target.info)) return state(
             EditorPolicy.voiceRefusal(target.info)?.replace("Voice", "Polish") ?: "Polish is unavailable in this field.", false)
         if (!allowed()) return state("Finish voice typing before polishing text.", false)
+        val requestConfig = config()
+        if (!requestConfig.settingsReadable)
+            return state("Could not load Polish settings. Restart Odicto and check Settings.", false)
         if (runCatching { target.connection.finishComposingText() }.getOrDefault(false) != true)
             return state("This field cannot finish its current edit.", false)
         val source = capture(target.connection)
@@ -234,20 +246,19 @@ internal class FieldPolishCoordinator(
             return state(if (empty) "Nothing to polish. Type some text first." else "This field does not expose its entire text safely.", false)
         }
         if (source.payload.isBlank()) return state("Nothing to polish. Select or type some text first.", false)
-        val (model, prompt) = config()
         val id = ++generation
         snapshot = source
         connection = target.connection
         editorSession = target.session
         job = scope.launch(start = CoroutineStart.LAZY) {
             try {
-                val key = withContext(Dispatchers.IO) { readKey() }.orEmpty()
+                val key = withContext(Dispatchers.IO) { readKey(requestConfig.provider) }.orEmpty()
                 if (generation != id) return@launch
                 if (key.isBlank()) {
-                    state("Add an OpenRouter key in Odicto settings.", false)
+                    state("Add ${if (requestConfig.provider == "gemini") "a Gemini" else "an OpenRouter"} key in Odicto settings.", false)
                     return@launch
                 }
-                val result = correct(source.payload, model, prompt, key)
+                val result = correct(source.payload, requestConfig, key)
                 if (generation != id) return@launch
                 when (result) {
                     is FieldPolishResult.Failure -> state(result.message, false)
