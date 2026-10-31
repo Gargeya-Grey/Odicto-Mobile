@@ -1,4 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  DEFAULT_GEMINI_MODEL,
+  geminiModelGroups,
+  geminiModelLabel,
+  validGeminiModels,
+} from '../../lib/geminiModels';
 import { modelGroups, modelLabel, MAX_MODEL_ID } from '../../lib/modelGroups';
 import type { Appearance, Point } from '../../lib/theme';
 import { PROMPT_MODE_OPTIONS, promptHint } from '../../lib/promptMode';
@@ -6,7 +12,12 @@ import { checkResultLine, updateSettingLine } from '../../lib/updateCard';
 import { formatRelativeTime } from '../../lib/relativeTime';
 import type { OnboardingStatus } from '../../native/onboarding';
 import type { UpdateStatus } from '../../native/update';
-import type { OpenRouterModel, VoiceSettings } from '../../native/voice';
+import {
+  voice,
+  type GeminiModel,
+  type OpenRouterModel,
+  type VoiceSettings,
+} from '../../native/voice';
 import { AndroidOnboarding } from '../AndroidOnboarding';
 import {
   Chip,
@@ -208,10 +219,22 @@ export function SettingsPage({
 }) {
   const now = useNow();
   const [modelSearch, setModelSearch] = useState('');
+  const [geminiModels, setGeminiModels] = useState<GeminiModel[]>([]);
+  const [geminiCatalogStatus, setGeminiCatalogStatus] = useState<
+    'idle' | 'loading' | 'loaded' | 'empty' | 'error' | 'missing-key'
+  >('idle');
+  const geminiRequest = useRef(0);
+  const resetPolishModels = draft.resetPolishModels;
+  useEffect(() => () => resetPolishModels(), [resetPolishModels]);
   const themeOrigin = useRef<Point | undefined>(undefined);
   const provider = draft.value('provider') ?? 'gemini';
   const model = draft.value('model') ?? '';
+  const polishProvider = draft.value('polishProvider') ?? 'openrouter';
   const polishModel = draft.value('polishModel') ?? 'poolside/laguna-xs-2.1';
+  const polishKeySet =
+    polishProvider === 'gemini'
+      ? settings?.geminiKeySet
+      : settings?.openrouterKeySet;
   const [polishSearch, setPolishSearch] = useState('');
   const answerGroups = useMemo<SelectGroup[]>(
     () => modelGroups(models, modelSearch, { pinned: AUTO_OPTION }),
@@ -221,6 +244,59 @@ export function SettingsPage({
     () => modelGroups(models, polishSearch, { allowCustom: true }),
     [models, polishSearch],
   );
+  const geminiAnswerGroups = useMemo<SelectGroup[]>(
+    () => geminiModelGroups(modelSearch, model, geminiModels),
+    [modelSearch, model, geminiModels],
+  );
+  const geminiPolishGroups = useMemo<SelectGroup[]>(
+    () => geminiModelGroups(polishSearch, polishModel, geminiModels),
+    [polishSearch, polishModel, geminiModels],
+  );
+  useEffect(() => {
+    if (!settings?.geminiKeySet) {
+      geminiRequest.current += 1;
+      setGeminiModels([]);
+      setGeminiCatalogStatus('idle');
+    }
+  }, [settings?.geminiKeySet]);
+  useEffect(
+    () => () => {
+      geminiRequest.current += 1;
+    },
+    [],
+  );
+  const refreshGeminiModels = async () => {
+    const request = ++geminiRequest.current;
+    if (!settings?.geminiKeySet) {
+      setGeminiCatalogStatus('missing-key');
+      return;
+    }
+    setGeminiCatalogStatus('loading');
+    try {
+      const result = await voice.geminiModels();
+      if (request !== geminiRequest.current) return;
+      const next = validGeminiModels(
+        Array.isArray(result.models) ? result.models : [],
+      );
+      setGeminiModels(next);
+      setGeminiCatalogStatus(next.length ? 'loaded' : 'empty');
+    } catch {
+      if (request === geminiRequest.current) setGeminiCatalogStatus('error');
+    }
+  };
+  const geminiMenuStatus = {
+    idle: '',
+    loading: 'Loading models from Google…',
+    loaded: 'Google models updated.',
+    empty:
+      'Google returned no matching models. Included models remain available.',
+    error: geminiModels.length
+      ? 'Could not load Google models. Showing previously loaded models.'
+      : 'Could not load Google models. Showing included models.',
+    'missing-key': 'Save a Gemini key under Connections to load Google models.',
+  }[geminiCatalogStatus];
+  const geminiHint =
+    'Opening this menu checks Google using your saved key. A listing does not guarantee access; Google determines access and quota.';
   const polishCatalogModel = models.find((item) => item.id === polishModel);
   const selectedModel = model || DEFAULT_OPENROUTER_MODEL;
   const selectedModelLabel = models.find((item) => item.id === selectedModel);
@@ -234,7 +310,7 @@ export function SettingsPage({
           : settings?.openrouterKeySet
             ? 'Could not load OpenRouter models. Save a valid key and try again.'
             : 'Save your OpenRouter key to load its live model catalog.'
-      : undefined;
+      : geminiHint;
 
   return (
     <>
@@ -395,7 +471,7 @@ export function SettingsPage({
             draft={draft}
             placeholderSet="Enter a new key to replace saved key"
             placeholderUnset="Required for Live and Gemini AI"
-            hint="Gemini powers Live transcription and Gemini AI answers."
+            hint="Gemini powers Live transcription and can provide AI answers and text polish."
             onRemove={() => void removeKey('geminiKey')}
           />
           <KeyRow
@@ -404,8 +480,8 @@ export function SettingsPage({
             isSet={settings?.openrouterKeySet ?? false}
             draft={draft}
             placeholderSet="Enter a new key to replace saved key"
-            placeholderUnset="Only needed for OpenRouter AI"
-            hint="OpenRouter powers its AI answers and text polish."
+            placeholderUnset="Only needed for OpenRouter"
+            hint="OpenRouter can provide AI answers and text polish."
             onRemove={() => void removeKey('openrouterKey')}
           />
         </Group>
@@ -513,16 +589,24 @@ export function SettingsPage({
                   }}
                 />
               ) : (
-                <input
+                <Select
                   id={id}
-                  className="voice-input"
-                  value={model}
-                  onChange={(event) =>
-                    draft.setFields({ model: event.target.value })
-                  }
-                  placeholder="gemini-3.5-flash-lite"
-                  autoCapitalize="none"
-                  spellCheck={false}
+                  labelledBy={labelId}
+                  describedBy={describedBy}
+                  groups={geminiAnswerGroups}
+                  value={model || DEFAULT_GEMINI_MODEL}
+                  valueLabel={geminiModelLabel(model, geminiModels)}
+                  disabled={off}
+                  onOpen={() => void refreshGeminiModels()}
+                  menuStatus={geminiMenuStatus}
+                  onChange={(next) => draft.setFields({ model: next })}
+                  emptyText="No matching models. You can enter a Gemini model ID."
+                  search={{
+                    value: modelSearch,
+                    onChange: setModelSearch,
+                    label: 'Search Gemini models for AI answers',
+                    placeholder: 'Search or type a model ID',
+                  }}
                 />
               )
             }
@@ -542,10 +626,28 @@ export function SettingsPage({
         <SectionLabel id="voice-polish-title" title="Text polish" />
         <Group>
           <Row
-            title="OpenRouter key"
-            badge={settings?.openrouterKeySet ? <Chip>Saved</Chip> : undefined}
+            title="Provider"
+            asLabel
+            below={({ id, labelId }) => (
+              <Select
+                id={id}
+                labelledBy={labelId}
+                groups={PROVIDERS}
+                value={polishProvider}
+                disabled={off}
+                onChange={(next) =>
+                  draft.setPolishProvider(
+                    next as VoiceSettings['polishProvider'],
+                  )
+                }
+              />
+            )}
+          />
+          <Row
+            title={`${polishProvider === 'gemini' ? 'Gemini' : 'OpenRouter'} key`}
+            badge={polishKeySet ? <Chip>Saved</Chip> : undefined}
             secondary={
-              settings?.openrouterKeySet
+              polishKeySet
                 ? 'Your key is saved securely under Connections.'
                 : 'Save a key under Connections to use text polish.'
             }
@@ -554,37 +656,63 @@ export function SettingsPage({
             title="Model"
             asLabel
             hint={
-              loadingModels
-                ? 'Loading the current OpenRouter model catalog…'
-                : models.length > 0
-                  ? 'Search by name or ID. To use a model that is not listed, type its full ID, such as vendor/model.'
-                  : 'The catalog did not load. Type a full model ID, such as vendor/model.'
+              polishProvider === 'gemini'
+                ? geminiHint
+                : loadingModels
+                  ? 'Loading the current OpenRouter model catalog…'
+                  : models.length > 0
+                    ? 'Search by name or ID. To use a model that is not listed, type its full ID, such as vendor/model.'
+                    : 'The catalog did not load. Type a full model ID, such as vendor/model.'
             }
-            below={({ id, labelId, describedBy }) => (
-              <Select
-                id={id}
-                labelledBy={labelId}
-                describedBy={describedBy}
-                groups={polishGroups}
-                value={polishModel}
-                valueLabel={
-                  polishCatalogModel
-                    ? modelLabel(polishCatalogModel)
-                    : polishModel
-                }
-                disabled={off || loadingModels}
-                onChange={(next) =>
-                  draft.setFields({ polishModel: next.slice(0, MAX_MODEL_ID) })
-                }
-                emptyText="No matching models. Type a full ID, such as vendor/model."
-                search={{
-                  value: polishSearch,
-                  onChange: setPolishSearch,
-                  label: 'Search OpenRouter models for text polish',
-                  placeholder: 'Search or type a model ID',
-                }}
-              />
-            )}
+            below={({ id, labelId, describedBy }) =>
+              polishProvider === 'gemini' ? (
+                <Select
+                  id={id}
+                  labelledBy={labelId}
+                  describedBy={describedBy}
+                  groups={geminiPolishGroups}
+                  value={polishModel}
+                  valueLabel={geminiModelLabel(polishModel, geminiModels)}
+                  disabled={off}
+                  onOpen={() => void refreshGeminiModels()}
+                  menuStatus={geminiMenuStatus}
+                  onChange={(next) => draft.setFields({ polishModel: next })}
+                  emptyText="No matching models. You can enter a Gemini model ID."
+                  search={{
+                    value: polishSearch,
+                    onChange: setPolishSearch,
+                    label: 'Search Gemini models for text polish',
+                    placeholder: 'Search or type a model ID',
+                  }}
+                />
+              ) : (
+                <Select
+                  id={id}
+                  labelledBy={labelId}
+                  describedBy={describedBy}
+                  groups={polishGroups}
+                  value={polishModel}
+                  valueLabel={
+                    polishCatalogModel
+                      ? modelLabel(polishCatalogModel)
+                      : polishModel
+                  }
+                  disabled={off || loadingModels}
+                  onChange={(next) =>
+                    draft.setFields({
+                      polishModel: next.slice(0, MAX_MODEL_ID),
+                    })
+                  }
+                  emptyText="No matching models. Type a full ID, such as vendor/model."
+                  search={{
+                    value: polishSearch,
+                    onChange: setPolishSearch,
+                    label: 'Search OpenRouter models for text polish',
+                    placeholder: 'Search or type a model ID',
+                  }}
+                />
+              )
+            }
           />
           <Row
             title="Text polish system prompt"
@@ -623,9 +751,9 @@ export function SettingsPage({
           />
         </Group>
         <Footer>
-          Tap Polish beside the keyboard mic to correct the whole text field
-          with OpenRouter. Typing alone sends nothing. Password and protected
-          fields are refused.
+          Tap Polish beside the keyboard mic to correct selected text, or the
+          whole field when nothing is selected, with your chosen provider.
+          Typing alone sends nothing. Password and protected fields are refused.
         </Footer>
       </section>
 

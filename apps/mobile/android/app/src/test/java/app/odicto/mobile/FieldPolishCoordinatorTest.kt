@@ -9,6 +9,7 @@ import android.view.inputmethod.ExtractedTextRequest
 import androidx.test.core.app.ApplicationProvider
 import app.odicto.mobile.ime.FieldPolishCoordinator
 import app.odicto.mobile.ime.FieldPolishResult
+import app.odicto.mobile.ime.PolishConfig
 import app.odicto.mobile.ime.PolishEditor
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -89,13 +90,74 @@ class FieldPolishCoordinatorTest {
 
     private val normal = EditorInfo().apply { inputType = InputType.TYPE_CLASS_TEXT }
 
+    @Test fun unreadableSettingsRefuseBeforeReadingAKeyOrContactingAProvider() = runBlocking {
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        try {
+            val editor = Editor("Helo")
+            var keyReads = 0
+            var requests = 0
+            var message = ""
+            val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true },
+                { keyReads++; "old-openrouter-key" },
+                { PolishConfig("openrouter", "model", "", settingsReadable = false) },
+                { _, _, _ -> requests++; FieldPolishResult.Success("Hello") },
+                { result, _ -> message = result }, { _, _ -> })
+            coordinator.start()
+            assertEquals("Could not load Polish settings. Restart Odicto and check Settings.", message)
+            assertEquals(0, keyReads)
+            assertEquals(0, requests)
+            assertEquals(0, editor.commits)
+            assertEquals("Helo", editor.text)
+            assertFalse(coordinator.busy)
+        } finally { scope.cancel() }
+    }
+
+    @Test fun providerAndKeyAreBoundToTheSettingsAtTheMomentPolishStarts() = runBlocking {
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        try {
+            val editor = Editor("Helo")
+            var selected = PolishConfig("gemini", "gemini-fixture", "prompt", settingsReadable = true)
+            var requestedProvider = ""
+            var sent: Triple<String, PolishConfig, String>? = null
+            val finished = CompletableDeferred<String>()
+            val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true },
+                { provider -> requestedProvider = provider; entered.countDown(); release.await(5, java.util.concurrent.TimeUnit.SECONDS); "gemini-key" },
+                { selected }, { text, config, key -> sent = Triple(text, config, key); FieldPolishResult.Success("Hello") },
+                { message, busy -> if (!busy && message.isNotEmpty()) finished.complete(message) }, { _, _ -> })
+            coordinator.start()
+            assertTrue(withContext(kotlinx.coroutines.Dispatchers.IO) { entered.await(5, java.util.concurrent.TimeUnit.SECONDS) })
+            selected = PolishConfig("openrouter", "other-model", "other-prompt", settingsReadable = true)
+            release.countDown()
+            assertEquals("Text polished", withTimeout(5_000) { finished.await() })
+            assertEquals("gemini", requestedProvider)
+            assertEquals(Triple("Helo", PolishConfig("gemini", "gemini-fixture", "prompt", settingsReadable = true), "gemini-key"), sent)
+        } finally { release.countDown(); scope.cancel() }
+    }
+
+    @Test fun missingGeminiKeyExplainsWhichKeyToAdd() = runBlocking {
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        try {
+            val editor = Editor("Helo")
+            val finished = CompletableDeferred<String>()
+            val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true },
+                { null }, { PolishConfig("gemini", "gemini-fixture", "", settingsReadable = true) },
+                { _, _, _ -> throw AssertionError("No key means no request") },
+                { message, busy -> if (!busy && message.isNotEmpty()) finished.complete(message) }, { _, _ -> })
+            coordinator.start()
+            assertEquals("Add a Gemini key in Odicto settings.", withTimeout(5_000) { finished.await() })
+            assertEquals("Helo", editor.text)
+        } finally { scope.cancel() }
+    }
+
     @Test fun wholeFieldPolishPreservesTheHostFinalLineBoundaryAndCanBeUndone() = runBlocking {
         val scope = CoroutineScope(coroutineContext + SupervisorJob())
         try {
             val editor = Editor("Helo\n").apply { keepsFinalNewline = true }
             val finished = kotlinx.coroutines.channels.Channel<String>(kotlinx.coroutines.channels.Channel.UNLIMITED)
             val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true }, { "key" },
-                { "model" to "" }, { _, _, _, _ -> FieldPolishResult.Success("Hello") },
+                { PolishConfig("openrouter", "model", "", settingsReadable = true) }, { _, _, _ -> FieldPolishResult.Success("Hello") },
                 { message, busy -> if (!busy && message.isNotEmpty()) finished.trySend(message) }, { _, _ -> })
             coordinator.start()
             assertEquals("Text polished", withTimeout(5_000) { finished.receive() })
@@ -117,7 +179,7 @@ class FieldPolishCoordinatorTest {
             val messages = kotlinx.coroutines.channels.Channel<String>(kotlinx.coroutines.channels.Channel.UNLIMITED)
             var requests = 0
             val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true }, { "key" },
-                { "model" to "" }, { _, _, _, _ -> requests++; FieldPolishResult.Success("Hello") },
+                { PolishConfig("openrouter", "model", "", settingsReadable = true) }, { _, _, _ -> requests++; FieldPolishResult.Success("Hello") },
                 { message, busy -> if (!busy && message.isNotEmpty()) messages.trySend(message) }, { _, _ -> })
             coordinator.start()
             assertEquals("Text polished", withTimeout(5_000) { messages.receive() })
@@ -140,7 +202,7 @@ class FieldPolishCoordinatorTest {
             var current = original
             val finished = CompletableDeferred<String>()
             val coordinator = FieldPolishCoordinator(scope, { PolishEditor(if (current === original) 1L else 2L, current, normal) }, { true }, { "key" },
-                { "model" to "" }, { _, _, _, _ -> FieldPolishResult.Success("Hello") },
+                { PolishConfig("openrouter", "model", "", settingsReadable = true) }, { _, _, _ -> FieldPolishResult.Success("Hello") },
                 { message, busy -> if (!busy && message.isNotEmpty()) finished.complete(message) }, { _, _ -> })
             coordinator.start()
             withTimeout(5_000) { while (original.commits == 0) kotlinx.coroutines.delay(1) }
@@ -158,7 +220,7 @@ class FieldPolishCoordinatorTest {
             val editor = Editor("Helo").apply { keepsFinalNewline = true }
             val finished = CompletableDeferred<String>()
             val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true }, { "key" },
-                { "model" to "" }, { _, _, _, _ -> FieldPolishResult.Success("Hello") },
+                { PolishConfig("openrouter", "model", "", settingsReadable = true) }, { _, _, _ -> FieldPolishResult.Success("Hello") },
                 { message, busy -> if (!busy && message.isNotEmpty()) finished.complete(message) }, { _, _ -> })
             coordinator.start()
             assertTrue(withTimeout(5_000) { finished.await() }.startsWith("Correction delivery not verified"))
@@ -176,7 +238,7 @@ class FieldPolishCoordinatorTest {
             var submitted = ""
             var calls = 0
             val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true }, { "key" },
-                { "poolside/laguna-xs-2.1" to "" }, { text, _, _, _ -> calls++; submitted = text; FieldPolishResult.Success("Hello") },
+                { PolishConfig("openrouter", "poolside/laguna-xs-2.1", "", settingsReadable = true) }, { text, _, _ -> calls++; submitted = text; FieldPolishResult.Success("Hello") },
                 { message, busy -> if (!busy && message.isNotEmpty()) finished.complete(message) }, { _, _ -> })
             coordinator.start()
             assertEquals("Text polished", withTimeout(5_000) { finished.await() })
@@ -197,7 +259,7 @@ class FieldPolishCoordinatorTest {
             var submitted = ""
             var calls = 0
             val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true }, { "key" },
-                { "model" to "" }, { text, _, _, _ -> calls++; submitted = text; FieldPolishResult.Success("Hello") },
+                { PolishConfig("openrouter", "model", "", settingsReadable = true) }, { text, _, _ -> calls++; submitted = text; FieldPolishResult.Success("Hello") },
                 { message, busy -> if (!busy && message.isNotEmpty()) finished.complete(message) }, { _, _ -> })
             coordinator.start()
             assertEquals("Text polished", withTimeout(5_000) { finished.await() })
@@ -217,7 +279,7 @@ class FieldPolishCoordinatorTest {
             val finished = CompletableDeferred<String>()
             var submitted = ""
             val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true }, { "key" },
-                { "model" to "" }, { text, _, _, _ -> submitted = text; FieldPolishResult.Success("👨‍💻") },
+                { PolishConfig("openrouter", "model", "", settingsReadable = true) }, { text, _, _ -> submitted = text; FieldPolishResult.Success("👨‍💻") },
                 { message, busy -> if (!busy && message.isNotEmpty()) finished.complete(message) }, { _, _ -> })
             coordinator.start()
             assertEquals("Text polished", withTimeout(5_000) { finished.await() })
@@ -237,7 +299,7 @@ class FieldPolishCoordinatorTest {
             var now = 1_000L
             var calls = 0
             val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true }, { "key" },
-                { "model" to "" }, { _, _, _, _ -> calls++; FieldPolishResult.Success("Hello") },
+                { PolishConfig("openrouter", "model", "", settingsReadable = true) }, { _, _, _ -> calls++; FieldPolishResult.Success("Hello") },
                 { message, busy -> if (!busy && message.isNotEmpty()) finished.trySend(message) }, { _, _ -> },
                 now = { now })
             suspend fun complete() {
@@ -278,7 +340,7 @@ class FieldPolishCoordinatorTest {
             val finished = CompletableDeferred<String>()
             var applied = 0
             val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true }, { "key" },
-                { "model" to "" }, { _, _, _, _ -> FieldPolishResult.Success("Hello") },
+                { PolishConfig("openrouter", "model", "", settingsReadable = true) }, { _, _, _ -> FieldPolishResult.Success("Hello") },
                 { message, busy -> if (!busy && message.isNotEmpty()) finished.complete(message) }, { _, _ -> applied++ })
             coordinator.start()
             assertTrue(withTimeout(5_000) { finished.await() }.contains("not verified"))
@@ -295,7 +357,7 @@ class FieldPolishCoordinatorTest {
             val editor = Editor("Helo").apply { rejectCommit = true }
             val finished = CompletableDeferred<Unit>()
             val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true }, { "key" },
-                { "model" to "" }, { _, _, _, _ -> FieldPolishResult.Success("Hello") },
+                { PolishConfig("openrouter", "model", "", settingsReadable = true) }, { _, _, _ -> FieldPolishResult.Success("Hello") },
                 { message, busy -> if (!busy && message.isNotEmpty()) finished.complete(Unit) }, { _, _ -> },
                 recoveryTtlMs = 100L)
             coordinator.start()
@@ -312,7 +374,7 @@ class FieldPolishCoordinatorTest {
             val finished = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
             var calls = 0
             val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true }, { "key" },
-                { "model" to "" }, { _, _, _, _ -> calls++; FieldPolishResult.Success("Hello $calls") },
+                { PolishConfig("openrouter", "model", "", settingsReadable = true) }, { _, _, _ -> calls++; FieldPolishResult.Success("Hello $calls") },
                 { message, busy -> if (!busy && message.isNotEmpty()) finished.trySend(Unit) }, { _, _ -> })
             coordinator.start()
             withTimeout(5_000) { finished.receive() }
@@ -340,7 +402,7 @@ class FieldPolishCoordinatorTest {
                 val states = mutableListOf<String>()
                 var calls = 0
                 val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true }, { "key" },
-                    { "model" to "" }, { _, _, _, _ ->
+                    { PolishConfig("openrouter", "model", "", settingsReadable = true) }, { _, _, _ ->
                         calls++
                         withContext(NonCancellable) {
                             called.complete(Unit)
@@ -375,7 +437,7 @@ class FieldPolishCoordinatorTest {
             val states = mutableListOf<String>()
             var calls = 0
             val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true }, { "key" },
-                { "model" to "" }, { _, _, _, _ ->
+                { PolishConfig("openrouter", "model", "", settingsReadable = true) }, { _, _, _ ->
                     calls++
                     if (calls == 1) kotlin.coroutines.suspendCoroutine { firstCall.complete(it) }
                     else FieldPolishResult.Success("Newest")
@@ -408,7 +470,7 @@ class FieldPolishCoordinatorTest {
                 val editor = Editor("Helo")
                 val finished = CompletableDeferred<String>()
                 val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true }, { "key" },
-                    { "model" to "" }, { _, _, _, _ -> FieldPolishResult.Success(output) },
+                    { PolishConfig("openrouter", "model", "", settingsReadable = true) }, { _, _, _ -> FieldPolishResult.Success(output) },
                     { message, busy -> if (!busy && message.isNotEmpty()) finished.complete(message) }, { _, _ -> })
                 coordinator.start()
                 assertTrue(withTimeout(5_000) { finished.await() }.contains("empty or oversized"))
@@ -425,7 +487,7 @@ class FieldPolishCoordinatorTest {
             val editor = Editor("Helo there").apply { start = 0; end = 4; rejectSelection = true }
             val finished = CompletableDeferred<String>()
             val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true }, { "key" },
-                { "model" to "" }, { _, _, _, _ -> FieldPolishResult.Success("Hello") },
+                { PolishConfig("openrouter", "model", "", settingsReadable = true) }, { _, _, _ -> FieldPolishResult.Success("Hello") },
                 { message, busy -> if (!busy && message.isNotEmpty()) finished.complete(message) }, { _, _ -> })
             coordinator.start()
             assertTrue(withTimeout(5_000) { finished.await() }.contains("rejected"))
@@ -443,8 +505,8 @@ class FieldPolishCoordinatorTest {
             val called = CompletableDeferred<Unit>()
             val finished = CompletableDeferred<String>()
             var active: PolishEditor? = PolishEditor(1L, editor, normal)
-            val coordinator = FieldPolishCoordinator(scope, { active }, { true }, { "key" }, { "model" to "" },
-                { _, _, _, _ -> called.complete(Unit); response.await() },
+            val coordinator = FieldPolishCoordinator(scope, { active }, { true }, { "key" }, { PolishConfig("openrouter", "model", "", settingsReadable = true) },
+                { _, _, _ -> called.complete(Unit); response.await() },
                 { message, busy -> if (!busy && message.isNotEmpty()) finished.complete(message) }, { _, _ -> })
             coordinator.start()
             withTimeout(5_000) { called.await() }
@@ -465,7 +527,7 @@ class FieldPolishCoordinatorTest {
             val response = CompletableDeferred<FieldPolishResult>()
             val finished = CompletableDeferred<String>()
             val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true }, { "key" },
-                { "model" to "" }, { _, _, _, _ -> called.complete(Unit); response.await() },
+                { PolishConfig("openrouter", "model", "", settingsReadable = true) }, { _, _, _ -> called.complete(Unit); response.await() },
                 { message, busy -> if (!busy && message.isNotEmpty()) finished.complete(message) }, { _, _ -> })
             coordinator.start()
             withTimeout(5_000) { called.await() }
@@ -484,7 +546,7 @@ class FieldPolishCoordinatorTest {
             val editor = Editor("Helo")
             val finished = CompletableDeferred<String>()
             val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true }, { null },
-                { "model" to "" }, { _, _, _, _ -> throw AssertionError("Should not call provider") },
+                { PolishConfig("openrouter", "model", "", settingsReadable = true) }, { _, _, _ -> throw AssertionError("Should not call provider") },
                 { message, busy -> if (!busy && message.isNotEmpty()) finished.complete(message) }, { _, _ -> })
             coordinator.start()
             assertEquals("Add an OpenRouter key in Odicto settings.", withTimeout(5_000) { finished.await() })
@@ -499,7 +561,7 @@ class FieldPolishCoordinatorTest {
             val editor = Editor("")
             var message = ""
             val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true }, { "key" },
-                { "model" to "" }, { _, _, _, _ -> throw AssertionError("Should not call provider") },
+                { PolishConfig("openrouter", "model", "", settingsReadable = true) }, { _, _, _ -> throw AssertionError("Should not call provider") },
                 { value, _ -> message = value }, { _, _ -> })
             coordinator.start()
             assertEquals("Nothing to polish. Type some text first.", message)
@@ -514,7 +576,7 @@ class FieldPolishCoordinatorTest {
             val password = EditorInfo().apply { inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }
             var message = ""
             val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, password) }, { true }, { "key" },
-                { "model" to "" }, { _, _, _, _ -> throw AssertionError("Should not call provider") },
+                { PolishConfig("openrouter", "model", "", settingsReadable = true) }, { _, _, _ -> throw AssertionError("Should not call provider") },
                 { value, _ -> message = value }, { _, _ -> })
             coordinator.start()
             assertTrue(message.contains("password"))
@@ -530,7 +592,7 @@ class FieldPolishCoordinatorTest {
             val called = CompletableDeferred<Unit>()
             val response = CompletableDeferred<FieldPolishResult>()
             val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true }, { "key" },
-                { "model" to "" }, { _, _, _, _ -> called.complete(Unit); response.await() }, { _, _ -> }, { _, _ -> })
+                { PolishConfig("openrouter", "model", "", settingsReadable = true) }, { _, _, _ -> called.complete(Unit); response.await() }, { _, _ -> }, { _, _ -> })
             coordinator.start()
             withTimeout(5_000) { called.await() }
             coordinator.onSelectionChanged(0, editor.text.length)
@@ -548,7 +610,7 @@ class FieldPolishCoordinatorTest {
             val called = CompletableDeferred<Unit>()
             val response = CompletableDeferred<FieldPolishResult>()
             val coordinator = FieldPolishCoordinator(scope, { PolishEditor(1L, editor, normal) }, { true }, { "key" },
-                { "model" to "" }, { _, _, _, _ -> called.complete(Unit); response.await() }, { _, _ -> }, { _, _ -> })
+                { PolishConfig("openrouter", "model", "", settingsReadable = true) }, { _, _, _ -> called.complete(Unit); response.await() }, { _, _ -> }, { _, _ -> })
             coordinator.start()
             withTimeout(5_000) { called.await() }
             coordinator.onSelectionChanged(2, 2)
@@ -564,7 +626,7 @@ class FieldPolishCoordinatorTest {
         val applied = mutableListOf<Pair<Int, Int>>()
         var replies = ArrayDeque<String>()
         val coordinator = FieldPolishCoordinator(scope, { PolishEditor(session, editor, EditorInfo().apply { inputType = InputType.TYPE_CLASS_TEXT }) },
-            allowed, { "key" }, { "model" to "" }, { _, _, _, _ -> FieldPolishResult.Success(replies.removeFirst()) },
+            allowed, { "key" }, { PolishConfig("openrouter", "model", "", settingsReadable = true) }, { _, _, _ -> FieldPolishResult.Success(replies.removeFirst()) },
             { message, busy -> if (!busy && message.isNotEmpty()) messages.trySend(message) }, { s, e -> applied += s to e })
 
         suspend fun polish(reply: String): String {

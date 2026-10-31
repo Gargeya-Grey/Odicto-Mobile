@@ -10,8 +10,8 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  clampIndex,
   edgeIndex,
+  indexOfActiveValue,
   nextTypeaheadBuffer,
   stepIndex,
   typeaheadMatch,
@@ -67,6 +67,8 @@ export function Select({
   placeholder,
   disabled,
   search,
+  onOpen,
+  menuStatus,
   emptyText = 'No matches',
 }: {
   id?: string;
@@ -80,6 +82,8 @@ export function Select({
   describedBy?: string;
   placeholder?: string;
   disabled?: boolean;
+  onOpen?: () => void;
+  menuStatus?: string;
   search?: {
     value: string;
     onChange: (next: string) => void;
@@ -98,7 +102,7 @@ export function Select({
   const typed = useRef({ buffer: '', at: 0 });
   const historyEntry = useRef<MenuEntry | null>(null);
   const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(-1);
+  const [activeValue, setActiveValue] = useState<string | null>(null);
   const [place, setPlace] = useState<Place | null>(null);
   const [host, setHost] = useState<Element | null>(null);
   const ready = place?.ready ?? false;
@@ -111,9 +115,12 @@ export function Select({
   const labels = useMemo(() => flat.map((option) => option.label), [flat]);
   const enabled = (index: number) => !flat[index]?.disabled;
   const selected = flat.findIndex((option) => option.value === value);
-  const current =
-    open && flat.length > 0 ? clampIndex(active, flat.length) : -1;
+  const current = open ? indexOfActiveValue(flat, activeValue) : -1;
   const searchValue = search?.value;
+  const activate = (index: number) =>
+    setActiveValue(
+      index >= 0 && enabled(index) ? (flat[index]?.value ?? null) : null,
+    );
 
   const shown =
     selected >= 0
@@ -125,12 +132,12 @@ export function Select({
 
   const openMenu = (edge?: 'first' | 'last', start?: number) => {
     if (disabled || historyEntry.current) return;
-    setActive(
+    activate(
       start !== undefined && start >= 0
         ? start
         : edge
           ? edgeIndex(edge, flat.length, enabled)
-          : selected >= 0
+          : selected >= 0 && enabled(selected)
             ? selected
             : edgeIndex('first', flat.length, enabled),
     );
@@ -153,6 +160,7 @@ export function Select({
       trigger.current?.focus({ preventScroll: true });
     });
     setOpen(true);
+    onOpen?.();
   };
   const closeMenu = (returnFocus = true) => {
     historyEntry.current?.release();
@@ -210,12 +218,12 @@ export function Select({
     }
     if (key === 'ArrowDown' || key === 'ArrowUp') {
       event.preventDefault();
-      setActive(
+      activate(
         stepIndex(current, key === 'ArrowDown' ? 1 : -1, flat.length, enabled),
       );
     } else if ((key === 'Home' || key === 'End') && !inSearch) {
       event.preventDefault();
-      setActive(
+      activate(
         edgeIndex(key === 'Home' ? 'first' : 'last', flat.length, enabled),
       );
     } else if (key === 'Enter' || (key === ' ' && !inSearch)) {
@@ -230,7 +238,7 @@ export function Select({
     } else if (!inSearch && printable(event)) {
       event.preventDefault();
       const index = findByTyping(key, current);
-      if (index >= 0) setActive(index);
+      if (index >= 0) activate(index);
     }
   };
 
@@ -310,7 +318,7 @@ export function Select({
       window.removeEventListener('scroll', onScroll, true);
       probe.remove();
     };
-  }, [open, host, flat.length, hasSearch]);
+  }, [open, host, flat.length, hasSearch, menuStatus]);
 
   // The menu is hidden until measured, and hidden elements cannot take focus.
   // With search the keys go to the field; without it focus follows the active option.
@@ -331,9 +339,9 @@ export function Select({
     if (!hasSearch) element.focus({ preventScroll: true });
   }, [open, ready, current, hasSearch]);
 
-  // A new search starts at the top of the matches.
-  useEffect(() => {
-    if (open) setActive(edgeIndex('first', flat.length, enabled));
+  // A new search starts at the top; refreshed options keep the active value.
+  useLayoutEffect(() => {
+    if (open) activate(edgeIndex('first', flat.length, enabled));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchValue]);
 
@@ -436,6 +444,15 @@ export function Select({
                 />
               </div>
             )}
+            {menuStatus && (
+              <div
+                className="voice-menu-group"
+                role="status"
+                aria-live="polite"
+              >
+                {menuStatus}
+              </div>
+            )}
             <div
               ref={list}
               id={listId}
@@ -471,7 +488,7 @@ export function Select({
                         aria-disabled={option.disabled || undefined}
                         onMouseMove={() => {
                           if (mine !== current && !option.disabled)
-                            setActive(mine);
+                            activate(mine);
                         }}
                         onClick={() => commit(mine)}
                       >

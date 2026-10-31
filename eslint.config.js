@@ -9,6 +9,7 @@ export default tseslint.config(
       '**/dist/**',
       '**/node_modules/**',
       'apps/mobile/android/**',
+      'work/**',
       'apps/api/legacy-server.ts',
     ],
   },

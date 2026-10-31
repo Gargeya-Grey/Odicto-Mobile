@@ -44,21 +44,31 @@ class FieldPolishClient(client: OkHttpClient? = null) {
         systemPrompt: String = "",
         apiKey: String,
         promptMode: PromptMode = PromptMode.APPEND,
+        provider: String = "openrouter",
     ): FieldPolishResult {
         if (text.isBlank()) return FieldPolishResult.Failure(FieldPolishResult.Reason.INVALID_INPUT, "Enter text to correct.")
         if (text.length > MAX_TEXT_LENGTH) return FieldPolishResult.Failure(FieldPolishResult.Reason.INVALID_INPUT, "Field exceeds 20,000 characters. Shorten it and try again.")
         if (systemPrompt.length > MAX_PROMPT_LENGTH) return FieldPolishResult.Failure(FieldPolishResult.Reason.INVALID_INPUT, "System prompt exceeds 8,000 UTF-16 units.")
-        if (model.isBlank()) return FieldPolishResult.Failure(FieldPolishResult.Reason.INVALID_INPUT, "Choose an OpenRouter model.")
-        if (apiKey.isBlank()) return FieldPolishResult.Failure(FieldPolishResult.Reason.INVALID_INPUT, "Add an OpenRouter API key.")
+        if (provider !in listOf("gemini", "openrouter")) return FieldPolishResult.Failure(FieldPolishResult.Reason.INVALID_INPUT, "Choose Gemini or OpenRouter.")
+        val name = if (provider == "gemini") "Gemini" else "OpenRouter"
+        if (model.isBlank()) return FieldPolishResult.Failure(FieldPolishResult.Reason.INVALID_INPUT, "Choose a $name model.")
+        if (apiKey.isBlank()) return FieldPolishResult.Failure(FieldPolishResult.Reason.INVALID_INPUT, "Add a $name API key.")
 
-        val body = JSONObject().put("model", model).put("max_tokens", MAX_OUTPUT_TOKENS)
+        val system = PromptComposer.compose(DEFAULT_SYSTEM_PROMPT, systemPrompt, promptMode, PromptComposer.POLISH_NOTES_INTRO)
+        val body = if (provider == "openrouter") JSONObject().put("model", model).put("max_tokens", MAX_OUTPUT_TOKENS)
             .put("messages", JSONArray()
-                .put(JSONObject().put("role", "system").put("content", PromptComposer.compose(DEFAULT_SYSTEM_PROMPT, systemPrompt, promptMode, PromptComposer.POLISH_NOTES_INTRO)))
+                .put(JSONObject().put("role", "system").put("content", system))
                 .put(JSONObject().put("role", "user").put("content", text)))
             .put("provider", JSONObject().put("sort", "latency"))
             .apply { ProviderOptions.openRouterReasoning(model)?.let { put("reasoning", it) } }
-        val request = Request.Builder().url(ENDPOINT)
-            .header("Authorization", "Bearer $apiKey")
+        else JSONObject().put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))
+            .put("contents", JSONArray().put(JSONObject().put("role", "user").put("parts", JSONArray().put(JSONObject().put("text", text)))))
+            .put("generationConfig", JSONObject().put("maxOutputTokens", MAX_OUTPUT_TOKENS)
+                .apply { ProviderOptions.geminiThinking(model)?.let { put("thinkingConfig", it) } })
+        val endpoint = if (provider == "openrouter") OPENROUTER_ENDPOINT
+            else "https://generativelanguage.googleapis.com/v1beta/models/${java.net.URLEncoder.encode(model, "UTF-8")}:generateContent"
+        val request = Request.Builder().url(endpoint)
+            .apply { if (provider == "openrouter") header("Authorization", "Bearer $apiKey") else header("x-goog-api-key", apiKey) }
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .build()
         return suspendCancellableCoroutine { continuation ->
@@ -67,29 +77,31 @@ class FieldPolishClient(client: OkHttpClient? = null) {
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
                     if (continuation.isActive) continuation.resume(
-                        FieldPolishResult.Failure(FieldPolishResult.Reason.NETWORK, "Cannot reach OpenRouter. Check your connection and try again."))
+                        FieldPolishResult.Failure(FieldPolishResult.Reason.NETWORK, "Cannot reach $name. Check your connection and try again."))
                 }
 
                 override fun onResponse(call: Call, response: Response) {
-                    val result = response.use { parseResponse(it) }
+                    val result = response.use { parseResponse(it, provider, name) }
                     if (continuation.isActive) continuation.resume(result)
                 }
             })
         }
     }
 
-    private fun parseResponse(response: Response): FieldPolishResult {
+    private fun parseResponse(response: Response, provider: String, name: String): FieldPolishResult {
         if (!response.isSuccessful) {
             val (reason, message) = when (response.code) {
-                401, 403 -> FieldPolishResult.Reason.AUTHENTICATION to "OpenRouter rejected the API key. Check your key."
-                404 -> FieldPolishResult.Reason.MODEL_UNAVAILABLE to "OpenRouter model not found. Check the model name or availability."
-                429 -> FieldPolishResult.Reason.RATE_LIMITED to "OpenRouter rate limit or quota reached. Try later or check your account."
-                else -> FieldPolishResult.Reason.PROVIDER to "OpenRouter request failed (HTTP ${response.code}). Try again."
+                401 -> FieldPolishResult.Reason.AUTHENTICATION to "$name rejected the API key. Check your key."
+                402 -> FieldPolishResult.Reason.PROVIDER to "$name requires payment. Check your provider account."
+                403 -> FieldPolishResult.Reason.PROVIDER to "$name denied access. Check your project, billing, and model availability."
+                404 -> FieldPolishResult.Reason.MODEL_UNAVAILABLE to "$name model not found. Check the model name or availability."
+                429 -> FieldPolishResult.Reason.RATE_LIMITED to "$name rate limit or quota reached. Try later or check your account."
+                else -> FieldPolishResult.Reason.PROVIDER to "$name request failed (HTTP ${response.code}). Try again."
             }
             return FieldPolishResult.Failure(reason, message)
         }
         return try {
-            val stream = response.body?.byteStream() ?: return invalidResponse()
+            val stream = response.body?.byteStream() ?: return invalidResponse(name)
             val bytes = ByteArrayOutputStream()
             val chunk = ByteArray(4096)
             while (bytes.size() <= MAX_RESPONSE_BYTES) {
@@ -97,24 +109,33 @@ class FieldPolishClient(client: OkHttpClient? = null) {
                 if (count == -1) break
                 bytes.write(chunk, 0, count)
             }
-            if (bytes.size() > MAX_RESPONSE_BYTES) return invalidResponse()
-            val choice = JSONObject(bytes.toString(Charsets.UTF_8.name()))
-                .optJSONArray("choices")?.optJSONObject(0) ?: return invalidResponse()
-            if (choice.optString("finish_reason").equals("length", ignoreCase = true))
+            if (bytes.size() > MAX_RESPONSE_BYTES) return invalidResponse(name)
+            val json = JSONObject(bytes.toString(Charsets.UTF_8.name()))
+            val choice = json.optJSONArray(if (provider == "gemini") "candidates" else "choices")?.optJSONObject(0) ?: return invalidResponse(name)
+            val finish = choice.optString(if (provider == "gemini") "finishReason" else "finish_reason")
+            if (finish.equals(if (provider == "gemini") "MAX_TOKENS" else "length", ignoreCase = true))
                 return FieldPolishResult.Failure(FieldPolishResult.Reason.TRUNCATED, "Correction was cut off. Shorten the field and try again; nothing was replaced.")
-            if (choice.optString("finish_reason") != "stop") return invalidResponse()
-            val content = choice.optJSONObject("message")?.opt("content")
-            if (content !is String || content.isBlank() || content.length > MAX_OUTPUT_LENGTH) return invalidResponse()
+            if (finish != if (provider == "gemini") "STOP" else "stop") return invalidResponse(name)
+            val content = if (provider == "openrouter") choice.optJSONObject("message")?.opt("content") as? String else {
+                val parts = choice.optJSONObject("content")?.optJSONArray("parts") ?: return invalidResponse(name)
+                val result = StringBuilder()
+                for (index in 0 until parts.length()) {
+                    val part = parts.optJSONObject(index) ?: return invalidResponse(name)
+                    if (!part.optBoolean("thought")) result.append(part.opt("text") as? String ?: return invalidResponse(name))
+                }
+                result.toString()
+            }
+            if (content == null || content.isBlank() || content.length > MAX_OUTPUT_LENGTH) return invalidResponse(name)
             FieldPolishResult.Success(content)
         } catch (_: IOException) {
-            FieldPolishResult.Failure(FieldPolishResult.Reason.NETWORK, "Cannot read OpenRouter response. Try again.")
+            FieldPolishResult.Failure(FieldPolishResult.Reason.NETWORK, "Cannot read $name response. Try again.")
         } catch (_: JSONException) {
-            invalidResponse()
+            invalidResponse(name)
         }
     }
 
-    private fun invalidResponse() = FieldPolishResult.Failure(
-        FieldPolishResult.Reason.INVALID_RESPONSE, "OpenRouter returned an empty, incomplete, or oversized correction. Nothing was replaced.")
+    private fun invalidResponse(name: String) = FieldPolishResult.Failure(
+        FieldPolishResult.Reason.INVALID_RESPONSE, "$name returned an empty, incomplete, or oversized correction. Nothing was replaced.")
 
     companion object {
         const val DEFAULT_MODEL = DEFAULT_POLISH_MODEL
@@ -151,6 +172,6 @@ class FieldPolishClient(client: OkHttpClient? = null) {
         const val MAX_OUTPUT_LENGTH = 20_000
         private const val MAX_OUTPUT_TOKENS = 8192
         private const val MAX_RESPONSE_BYTES = 128 * 1024
-        private const val ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
+        private const val OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
     }
 }

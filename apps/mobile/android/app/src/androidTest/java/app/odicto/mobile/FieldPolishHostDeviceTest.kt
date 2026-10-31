@@ -9,6 +9,7 @@ import app.odicto.mobile.ime.FieldPolishCoordinator
 import app.odicto.mobile.ime.FieldPolishResult
 import app.odicto.mobile.ime.FieldPolishSnapshotReader
 import app.odicto.mobile.ime.OdictoImeService
+import app.odicto.mobile.ime.PolishConfig
 import app.odicto.mobile.ime.PolishEditor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -148,8 +149,8 @@ class FieldPolishHostDeviceTest {
                         val current = ime.currentInputConnection
                         if (session != null && current != null) PolishEditor(session, current, ime.currentInputEditorInfo) else null
                     },
-                    allowed = { true }, readKey = { "synthetic-test-key" }, config = { "synthetic-test-model" to "" },
-                    correct = { text, _, _, _ ->
+                    allowed = { true }, readKey = { "synthetic-test-key" }, config = { PolishConfig("openrouter", "synthetic-test-model", "", settingsReadable = true) },
+                    correct = { text, _, _ ->
                         assertEquals(source, text)
                         delay(150)
                         FieldPolishResult.Success(revised)

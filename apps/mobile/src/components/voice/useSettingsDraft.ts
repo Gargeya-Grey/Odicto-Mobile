@@ -1,5 +1,10 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { VoiceSettings } from '../../native/voice';
+import {
+  switchPolishProvider,
+  type PolishModels,
+  type PolishProvider,
+} from '../../lib/polishProviderDraft';
 import {
   FORM_FIELDS,
   type FormField,
@@ -25,6 +30,7 @@ export function useSettingsDraft(
 ) {
   const [edits, setEdits] = useState<Partial<FormValues>>({});
   const [keys, setKeys] = useState<Record<KeyName, string>>(NO_KEYS);
+  const polishModels = useRef<PolishModels>({});
 
   const value = useCallback(
     <K extends FormField>(field: K): FormValues[K] =>
@@ -37,6 +43,30 @@ export function useSettingsDraft(
   const setKey = useCallback((name: KeyName, text: string) => {
     setKeys((current) => ({ ...current, [name]: text }));
   }, []);
+  const resetPolishModels = useCallback(() => {
+    polishModels.current = {};
+  }, []);
+  const setPolishProvider = useCallback(
+    (next: PolishProvider) => {
+      const current = value('polishProvider') ?? 'openrouter';
+      const currentModel = value('polishModel') ?? 'poolside/laguna-xs-2.1';
+      const result = switchPolishProvider(
+        polishModels.current,
+        current,
+        currentModel,
+        next,
+        settings
+          ? {
+              provider: settings.polishProvider ?? 'openrouter',
+              model: settings.polishModel,
+            }
+          : undefined,
+      );
+      polishModels.current = result.remembered;
+      setFields({ polishProvider: next, polishModel: result.model });
+    },
+    [setFields, settings, value],
+  );
 
   const dirty =
     Boolean(settings) &&
@@ -48,7 +78,8 @@ export function useSettingsDraft(
   const discard = useCallback(() => {
     setEdits({});
     setKeys(NO_KEYS);
-  }, []);
+    resetPolishModels();
+  }, [resetPolishModels]);
 
   const save = useCallback(async () => {
     if (!settings) return false;
@@ -79,5 +110,15 @@ export function useSettingsDraft(
     return saved;
   }, [keys, saveForm, settings, value]);
 
-  return { value, setFields, keys, setKey, dirty, discard, save };
+  return {
+    value,
+    setFields,
+    setPolishProvider,
+    resetPolishModels,
+    keys,
+    setKey,
+    dirty,
+    discard,
+    save,
+  };
 }

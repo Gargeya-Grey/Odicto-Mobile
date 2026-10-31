@@ -17,6 +17,7 @@ export const FORM_FIELDS = [
   'liveModel',
   'systemPrompt',
   'systemPromptMode',
+  'polishProvider',
   'polishModel',
   'polishSystemPrompt',
   'polishSystemPromptMode',

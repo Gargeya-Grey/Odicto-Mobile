@@ -4,6 +4,8 @@ import app.odicto.mobile.dictation.VoiceSession
 import app.odicto.mobile.ime.FieldPolishClient
 import app.odicto.mobile.ime.Haptics
 import app.odicto.mobile.network.HttpClients
+import app.odicto.mobile.network.GeminiCatalogException
+import app.odicto.mobile.network.GeminiModelCatalog
 import app.odicto.mobile.overlay.VoiceOverlayController
 import app.odicto.mobile.storage.*
 import com.getcapacitor.*
@@ -34,7 +36,7 @@ class VoicePlugin : Plugin() {
                 val keys = withContext(Dispatchers.IO) { val store = SecureCredentialStore(context); Triple(!store.get("voice-gemini").isNullOrEmpty(), !store.get("voice-openrouter").isNullOrEmpty(), !store.get("voice-groq").isNullOrEmpty()) }
                 val show = activity?.intent?.getBooleanExtra("voice_settings", false) == true; activity?.intent?.removeExtra("voice_settings")
                 val model = settings.model.ifBlank { if (settings.provider == "openrouter") "poolside/laguna-xs-2.1:free" else "" }
-                call.resolve(JSObject().put("enabled", settings.enabled).put("mode", settings.mode).put("provider", settings.provider).put("model", model).put("liveModel", settings.liveModel).put("systemPrompt", settings.systemPrompt).put("systemPromptMode", settings.systemPromptMode).put("polishModel", settings.polishModel).put("polishSystemPrompt", settings.polishSystemPrompt).put("polishSystemPromptMode", settings.polishSystemPromptMode).put("haptics", settings.haptics).put("hapticLevel", VoicePreferences.levelOf(settings)).put("keySize", settings.keys.keySize).put("keyFont", settings.keys.keyFont).put("tapTolerance", VoicePreferences.toleranceOf(settings)).put("autocorrectEnabled", settings.keys.autocorrectEnabled).put("pinnedEmoji", JSArray().apply { settings.keys.pinnedEmoji.forEach { put(it) } }).put("showTextPreview", settings.showTextPreview).put("paused", settings.paused).put("geminiKeySet", keys.first).put("openrouterKeySet", keys.second).put("groqKeySet", keys.third).put("openSettings", show))
+                call.resolve(JSObject().put("enabled", settings.enabled).put("mode", settings.mode).put("provider", settings.provider).put("model", model).put("liveModel", settings.liveModel).put("systemPrompt", settings.systemPrompt).put("systemPromptMode", settings.systemPromptMode).put("polishProvider", settings.polishProvider).put("polishModel", settings.polishModel).put("polishSystemPrompt", settings.polishSystemPrompt).put("polishSystemPromptMode", settings.polishSystemPromptMode).put("haptics", settings.haptics).put("hapticLevel", VoicePreferences.levelOf(settings)).put("keySize", settings.keys.keySize).put("keyFont", settings.keys.keyFont).put("tapTolerance", VoicePreferences.toleranceOf(settings)).put("autocorrectEnabled", settings.keys.autocorrectEnabled).put("pinnedEmoji", JSArray().apply { settings.keys.pinnedEmoji.forEach { put(it) } }).put("showTextPreview", settings.showTextPreview).put("paused", settings.paused).put("geminiKeySet", keys.first).put("openrouterKeySet", keys.second).put("groqKeySet", keys.third).put("openSettings", show))
             } catch (_: Exception) { call.reject("Could not read voice settings") }
         }
     }
@@ -67,6 +69,21 @@ class VoicePlugin : Plugin() {
             call.resolve(JSObject().put("models", models))
         } catch (error: Exception) { call.reject(error.message ?: "Could not load OpenRouter models") }
     } }
+    @PluginMethod fun geminiModels(call: PluginCall) { scope.launch {
+        try {
+            val models = withContext(Dispatchers.IO) {
+                val key = SecureCredentialStore(context).get("voice-gemini").orEmpty()
+                GeminiModelCatalog().fetch(key)
+            }
+            call.resolve(JSObject().put("models", JSArray().apply {
+                models.forEach { put(JSObject().put("id", it.id).put("name", it.name)) }
+            }))
+        } catch (failure: GeminiCatalogException) {
+            call.reject(failure.message ?: "Could not load Gemini models")
+        } catch (_: Exception) {
+            call.reject("Could not load Gemini models. Try again.")
+        }
+    } }
     @PluginMethod fun save(call: PluginCall) {
         if (VoiceSession.state.value.busy) { call.reject("Finish recording before changing settings"); return }
         val prompt = call.getString("systemPrompt") ?: VoicePreferences.state.value.systemPrompt
@@ -75,7 +92,11 @@ class VoicePlugin : Plugin() {
         if (polishPrompt.length > FieldPolishClient.MAX_PROMPT_LENGTH) { call.reject("Text polish prompt must be at most 8,000 characters"); return }
         val promptMode = call.getString("systemPromptMode")?.let { app.odicto.mobile.dictation.PromptMode.parseOrNull(it)?.wire ?: run { call.reject("Unsupported prompt mode"); return } } ?: VoicePreferences.state.value.systemPromptMode
         val polishPromptMode = call.getString("polishSystemPromptMode")?.let { app.odicto.mobile.dictation.PromptMode.parseOrNull(it)?.wire ?: run { call.reject("Unsupported prompt mode"); return } } ?: VoicePreferences.state.value.polishSystemPromptMode
-        val polishModel = (call.getString("polishModel") ?: VoicePreferences.state.value.polishModel).trim()
+        val polishProvider = call.getString("polishProvider") ?: VoicePreferences.state.value.polishProvider
+        if (polishProvider !in listOf("gemini", "openrouter")) { call.reject("Unsupported text polish provider"); return }
+        val polishModel = (call.getString("polishModel") ?: if (polishProvider != VoicePreferences.state.value.polishProvider) {
+            if (polishProvider == "gemini") app.odicto.mobile.storage.DEFAULT_GEMINI_POLISH_MODEL else app.odicto.mobile.storage.DEFAULT_POLISH_MODEL
+        } else VoicePreferences.state.value.polishModel).trim()
         if (polishModel.isBlank() || polishModel.length > 200) { call.reject("Choose a valid text polish model ID"); return }
         val mode = call.getString("mode") ?: VoicePreferences.state.value.mode
         val provider = call.getString("provider") ?: VoicePreferences.state.value.provider
@@ -111,7 +132,7 @@ class VoicePlugin : Plugin() {
                         provider == "openrouter" && provider != VoicePreferences.state.value.provider -> "poolside/laguna-xs-2.1:free"
                         else -> VoicePreferences.state.value.model
                     }
-                    VoicePreferences.save(context, VoicePreferences.state.value.copy(systemPrompt = prompt, systemPromptMode = promptMode, polishModel = polishModel, polishSystemPrompt = polishPrompt, polishSystemPromptMode = polishPromptMode, enabled = call.getBoolean("enabled") ?: VoicePreferences.state.value.enabled, paused = call.getBoolean("paused") ?: VoicePreferences.state.value.paused, keys = nextKeys, mode = mode, provider = provider, model = model, liveModel = call.getString("liveModel")?.trim()?.ifBlank { "gemini-3.5-transcribe-live" } ?: VoicePreferences.state.value.liveModel, haptics = call.getBoolean("haptics") ?: VoicePreferences.state.value.haptics, showTextPreview = call.getBoolean("showTextPreview") ?: VoicePreferences.state.value.showTextPreview))
+                    VoicePreferences.save(context, VoicePreferences.state.value.copy(systemPrompt = prompt, systemPromptMode = promptMode, polishProvider = polishProvider, polishModel = polishModel, polishSystemPrompt = polishPrompt, polishSystemPromptMode = polishPromptMode, enabled = call.getBoolean("enabled") ?: VoicePreferences.state.value.enabled, paused = call.getBoolean("paused") ?: VoicePreferences.state.value.paused, keys = nextKeys, mode = mode, provider = provider, model = model, liveModel = call.getString("liveModel")?.trim()?.ifBlank { "gemini-3.5-transcribe-live" } ?: VoicePreferences.state.value.liveModel, haptics = call.getBoolean("haptics") ?: VoicePreferences.state.value.haptics, showTextPreview = call.getBoolean("showTextPreview") ?: VoicePreferences.state.value.showTextPreview))
                 }
                 VoiceOverlayController.sync(context, scope)
                 call.resolve()
