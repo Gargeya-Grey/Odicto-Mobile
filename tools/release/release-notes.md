@@ -25,4 +25,4 @@ Found a bug or have an idea? [Open an issue](https://github.com/Gargeya-Grey/Odi
 
 This is a beta. Physical-device testing so far covers one Samsung Galaxy S24 Ultra.
 
-The new OpenAI Live integration has automated protocol, audio-conversion, credential, and settings coverage. Authenticated OpenAI transcription and full microphone/host-insertion checks for this version remain pending; please report any issues with your selected provider/model.
+The owner confirmed physical smoke tests on the exact signed 1.8.0 APK installed on a Samsung Galaxy S24 Ultra: Raw dictation inserted the phrase once correctly; Gemini Live showed words while speaking and finished without duplication; OpenAI Live passed the same test. Automated protocol, audio-conversion, credential, and settings checks also passed. These are focused smoke tests on one device, not exhaustive coverage of every model or host app.

@@ -1,5 +1,12 @@
 # S24 Ultra voice UI check
 
+## November 2: signed 1.8.0 release smoke tests
+
+- APK source: `f9cca8610b8cc73ea2c6a9719c22e3141632d960`, Android version 1.8.0/code 12, built and signed by GitHub Actions run `41403622344`. The signing certificate matches the existing release installation. The exact CI APK was installed in place without clearing app data, and its installed SHA-256 matches `b8bf8f9b0880aa753786617d3c8963efc385d58bcae50c2e01f3d73ef3d86e35`.
+- The owner confirmed these physical tests in the isolated `app.odicto.keyboardtrial` editor on the S24 Ultra: Raw inserted “Testing one two three” once correctly; Gemini Live showed words during speech and finalized without duplication; OpenAI Live passed the same test. These are owner-reported results, not observations inferred from API responses or unit tests. The selected OpenAI model was not recorded, so this does not establish coverage of both offered models.
+- `npm run verify`, the full 632-test Android unit suite, both debug APK builds, and the CI signed-release build passed. An independent source review returned ACCEPT with no release-blocking findings. Broad host-app, interruption, protected-field, and overlay matrices were not repeated in this smoke test.
+- Published beta: [Odicto v1.8.0](https://github.com/Gargeya-Grey/Odicto-Mobile/releases/tag/v1.8.0). An anonymous public-feed request finds the release, and the anonymously downloaded public APK matches the exact installed hash above. Detailed local evidence is retained in `outputs/handoffs/release-1.8.0-20261102.json`.
+
 ## October 18: light-mode scroll freeze
 
 - Report: the app screens scrolled badly in light mode and smoothly in dark. Phone: S24 Ultra, Android 16, Android System WebView 155, 120 Hz, debug build of 1.4.0.
