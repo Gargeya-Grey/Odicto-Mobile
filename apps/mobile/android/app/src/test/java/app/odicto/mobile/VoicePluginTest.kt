@@ -58,6 +58,50 @@ class VoicePluginTest {
         assertNull(call.error)
     }
 
+    @Test fun vocabularyTagsRoundTripClearAndRejectInvalidValues() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        kotlinx.coroutines.runBlocking { VoicePreferences.save(context, app.odicto.mobile.storage.VoiceSettings()) }
+        VoicePreferences.initialize(context)
+        val plugin = VoicePlugin()
+        fun status(): JSObject { val c = Call(); plugin.status(c); await(c); return c.result!! }
+        fun save(patch: JSObject) { val c = Call(patch); plugin.save(c); await(c) }
+        assertEquals(0, status().getJSONArray("vocabularyHints").length())
+        save(JSObject().put("vocabularyHints", org.json.JSONArray().put("Odicto").put("New Delhi")))
+        save(JSObject().put("spokenLanguage", "hi"))
+        assertEquals("[\"Odicto\",\"New Delhi\"]", status().getJSONArray("vocabularyHints").toString())
+        for (bad in listOf<Any>("Odicto", org.json.JSONArray().put(42), org.json.JSONArray().put("x".repeat(225)), org.json.JSONObject.NULL)) {
+            val call = Call(JSObject().put("vocabularyHints", bad))
+            plugin.save(call)
+            assertNotNull(call.error)
+            assertEquals(2, status().getJSONArray("vocabularyHints").length())
+        }
+        save(JSObject().put("vocabularyHints", org.json.JSONArray()))
+        assertEquals(0, status().getJSONArray("vocabularyHints").length())
+        assertEquals("hi", status().getString("spokenLanguage"))
+    }
+
+    @Test fun spokenLanguageRoundTripsAndRejectsInvalidPatches() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        kotlinx.coroutines.runBlocking { VoicePreferences.save(context, app.odicto.mobile.storage.VoiceSettings()) }
+        VoicePreferences.initialize(context)
+        val plugin = VoicePlugin()
+        fun status(): JSObject { val c = Call(); plugin.status(c); await(c); return c.result!! }
+        fun save(patch: JSObject) { val c = Call(patch); plugin.save(c); await(c) }
+        assertEquals("", status().getString("spokenLanguage"))
+        save(JSObject().put("spokenLanguage", "hi"))
+        assertEquals("hi", status().getString("spokenLanguage"))
+        save(JSObject().put("keySize", "large"))
+        assertEquals("hi", status().getString("spokenLanguage"))
+        for (bad in listOf<Any>("hi,en", "Hinglish", 42, org.json.JSONObject.NULL)) {
+            val call = Call(JSObject().put("spokenLanguage", bad))
+            plugin.save(call)
+            assertNotNull("invalid language rejected: $bad", call.error)
+            assertEquals("hi", status().getString("spokenLanguage"))
+        }
+        save(JSObject().put("spokenLanguage", ""))
+        assertEquals("", status().getString("spokenLanguage"))
+    }
+
     @Test fun polishProviderAndModelRoundTripIndependentlyOfAnswers() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         kotlinx.coroutines.runBlocking {

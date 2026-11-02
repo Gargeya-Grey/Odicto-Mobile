@@ -6,7 +6,7 @@ import { createSerialQueue } from '../../lib/serialQueue';
 
 export const DEFAULT_OPENROUTER_MODEL = 'poolside/laguna-xs-2.1:free';
 
-export type KeyName = 'geminiKey' | 'groqKey' | 'openrouterKey';
+export type KeyName = 'geminiKey' | 'groqKey' | 'openrouterKey' | 'openaiKey';
 export type KeyValues = Partial<Record<KeyName, string>>;
 type NativePatch = Partial<VoiceSettings> & KeyValues;
 
@@ -15,8 +15,11 @@ export const FORM_FIELDS = [
   'provider',
   'model',
   'liveModel',
+  'liveProvider',
+  'openaiLiveModel',
   'systemPrompt',
   'systemPromptMode',
+  'vocabularyHints',
   'polishProvider',
   'polishModel',
   'polishSystemPrompt',
@@ -31,9 +34,17 @@ const KEY_FLAG: Record<KeyName, keyof VoiceSettings> = {
   geminiKey: 'geminiKeySet',
   groqKey: 'groqKeySet',
   openrouterKey: 'openrouterKeySet',
+  openaiKey: 'openaiKeySet',
 };
 
 function normalize(value: VoiceSettings): VoiceSettings {
+  value = {
+    ...value,
+    vocabularyHints: value.vocabularyHints ?? [],
+    liveProvider: value.liveProvider ?? 'gemini',
+    openaiLiveModel: value.openaiLiveModel ?? 'gpt-live-transcribe',
+    openaiKeySet: value.openaiKeySet ?? false,
+  };
   const model = value.model ?? '';
   if (
     value.openrouterKeySet &&

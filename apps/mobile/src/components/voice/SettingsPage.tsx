@@ -6,6 +6,13 @@ import {
   validGeminiModels,
 } from '../../lib/geminiModels';
 import { modelGroups, modelLabel, MAX_MODEL_ID } from '../../lib/modelGroups';
+import { SPOKEN_LANGUAGE_OPTIONS } from '../../lib/spokenLanguages';
+import {
+  liveProviderOptions,
+  OPENAI_LIVE_MODELS,
+  geminiLiveModelGroups,
+  geminiLiveModelLabel,
+} from '../../lib/liveTranscription';
 import type { Appearance, Point } from '../../lib/theme';
 import { PROMPT_MODE_OPTIONS, promptHint } from '../../lib/promptMode';
 import { checkResultLine, updateSettingLine } from '../../lib/updateCard';
@@ -36,6 +43,7 @@ import {
   type useVoiceSettings,
 } from './useVoiceSettings';
 import type { useSettingsDraft } from './useSettingsDraft';
+import { VocabularyTags } from './VocabularyTags';
 
 const SECTIONS = [
   { id: 'voice-keyboard', label: 'Keyboard' },
@@ -219,6 +227,21 @@ export function SettingsPage({
 }) {
   const now = useNow();
   const [modelSearch, setModelSearch] = useState('');
+  const [languageSearch, setLanguageSearch] = useState('');
+  const [liveModelSearch, setLiveModelSearch] = useState('');
+  const geminiLiveModel =
+    draft.value('liveModel') || 'gemini-3.5-transcribe-live';
+  const spokenLanguage = settings?.spokenLanguage ?? '';
+  const liveProvider = draft.value('liveProvider') ?? 'gemini';
+  const languageGroups: SelectGroup[] = [
+    {
+      options: SPOKEN_LANGUAGE_OPTIONS.filter((option) =>
+        `${option.label} ${option.value}`
+          .toLowerCase()
+          .includes(languageSearch.trim().toLowerCase()),
+      ),
+    },
+  ];
   const [geminiModels, setGeminiModels] = useState<GeminiModel[]>([]);
   const [geminiCatalogStatus, setGeminiCatalogStatus] = useState<
     'idle' | 'loading' | 'loaded' | 'empty' | 'error' | 'missing-key'
@@ -451,7 +474,7 @@ export function SettingsPage({
         <SectionLabel
           id="voice-connections-title"
           title="Connections"
-          info="Your phone connects directly to Groq, Gemini, and OpenRouter. Add a key once, then leave its field empty to keep it saved. No computer or Odicto server is needed."
+          info="Your phone connects directly to Groq, Gemini, OpenAI, and OpenRouter. Add a key once, then leave its field empty to keep it saved. No computer or Odicto server is needed."
         />
         <Group>
           <KeyRow
@@ -464,15 +487,70 @@ export function SettingsPage({
             hint="Raw uses Groq Whisper. AI uses Groq for speech, then your selected answer provider."
             onRemove={() => void removeKey('groqKey')}
           />
+          <Row
+            title="Spoken language"
+            secondary="For Raw and AI speech. Choose your main spoken language, or use Automatic if you switch languages. Saves immediately."
+            asLabel
+            below={({ id, labelId, describedBy }) => (
+              <Select
+                id={id}
+                labelledBy={labelId}
+                describedBy={describedBy}
+                groups={languageGroups}
+                value={spokenLanguage}
+                valueLabel={
+                  SPOKEN_LANGUAGE_OPTIONS.find(
+                    (option) => option.value === spokenLanguage,
+                  )?.label ?? 'Automatic'
+                }
+                disabled={off}
+                onChange={(next) => void update({ spokenLanguage: next })}
+                search={{
+                  value: languageSearch,
+                  onChange: setLanguageSearch,
+                  label: 'Search spoken languages',
+                  placeholder: 'Find a language',
+                }}
+              />
+            )}
+          />
+          <Row
+            title="Vocabulary hints"
+            secondary="Help Raw and AI speech recognize names and specialist terms. Match the language you speak."
+            info="Saved on your phone and sent to Groq with Raw and AI speech, including when Spoken language is Automatic. These are spelling and context hints; exact wording is not guaranteed. They are separate from your AI answer prompt and do not affect Live."
+            asLabel
+            below={({ id, describedBy }) => (
+              <VocabularyTags
+                id={id}
+                describedBy={describedBy}
+                state={draft.vocabulary}
+                disabled={off || draft.saving}
+                onInput={draft.changeVocabulary}
+                onCommit={draft.addVocabulary}
+                onRemove={draft.removeVocabulary}
+                onClear={draft.clearVocabulary}
+              />
+            )}
+          />
           <KeyRow
             label="Gemini key"
             name="geminiKey"
             isSet={settings?.geminiKeySet ?? false}
             draft={draft}
             placeholderSet="Enter a new key to replace saved key"
-            placeholderUnset="Required for Live and Gemini AI"
+            placeholderUnset="Required for Gemini Live and AI"
             hint="Gemini powers Live transcription and can provide AI answers and text polish."
             onRemove={() => void removeKey('geminiKey')}
+          />
+          <KeyRow
+            label="OpenAI key"
+            name="openaiKey"
+            isSet={settings?.openaiKeySet ?? false}
+            draft={draft}
+            placeholderSet="Enter a new key to replace saved key"
+            placeholderUnset="Optional for OpenAI Live"
+            hint="Save an OpenAI key to choose OpenAI for Live transcription. Your key stays in Android Keystore and is sent only to OpenAI."
+            onRemove={() => void removeKey('openaiKey')}
           />
           <KeyRow
             label="OpenRouter key"
@@ -486,10 +564,10 @@ export function SettingsPage({
           />
         </Group>
         <Footer>
-          Your phone connects directly to Groq, Gemini, and OpenRouter, with no
-          Odicto server in between. Keys are stored using Android Keystore and
-          sent only for your selected provider over HTTPS. Audio stays only for
-          the current request.
+          Your phone connects directly to Groq, Gemini, OpenAI, and OpenRouter,
+          with no Odicto server in between. Keys are stored using Android
+          Keystore and sent only for your selected provider over HTTPS. Audio
+          stays only for the current request.
         </Footer>
       </section>
 
@@ -765,25 +843,89 @@ export function SettingsPage({
         <SectionLabel id="voice-live-title" title="Live transcription" />
         <Group>
           <Row
-            title="Gemini Live model"
+            title="Provider"
             asLabel
-            below={({ id }) => (
-              <input
+            below={({ id, labelId }) => (
+              <Select
                 id={id}
-                className="voice-input"
-                value={draft.value('liveModel') ?? ''}
-                onChange={(event) =>
-                  draft.setFields({ liveModel: event.target.value })
+                labelledBy={labelId}
+                groups={[
+                  {
+                    options: liveProviderOptions(
+                      settings?.openaiKeySet ?? false,
+                      liveProvider,
+                    ),
+                  },
+                ]}
+                value={liveProvider}
+                disabled={off}
+                onChange={(next) =>
+                  draft.setFields({
+                    liveProvider: next as VoiceSettings['liveProvider'],
+                  })
                 }
-                placeholder="gemini-3.5-transcribe-live"
-                autoCapitalize="none"
-                spellCheck={false}
               />
             )}
           />
+          {!settings?.openaiKeySet && (
+            <Footer>
+              Save an OpenAI key under Connections to enable OpenAI Live.
+            </Footer>
+          )}
+          {liveProvider === 'openai' ? (
+            <Row
+              title="OpenAI Live model"
+              secondary="Model access and quota depend on your OpenAI project."
+              asLabel
+              below={({ id, labelId, describedBy }) => (
+                <Select
+                  id={id}
+                  labelledBy={labelId}
+                  describedBy={describedBy}
+                  groups={[{ options: OPENAI_LIVE_MODELS }]}
+                  value={
+                    draft.value('openaiLiveModel') ?? 'gpt-live-transcribe'
+                  }
+                  disabled={off || !settings?.openaiKeySet}
+                  onChange={(openaiLiveModel) =>
+                    draft.setFields({ openaiLiveModel })
+                  }
+                />
+              )}
+            />
+          ) : (
+            <Row
+              title="Gemini Live model"
+              secondary="Choose a transcription model. Access and quota depend on your Google project."
+              asLabel
+              below={({ id, labelId, describedBy }) => (
+                <Select
+                  id={id}
+                  labelledBy={labelId}
+                  describedBy={describedBy}
+                  groups={geminiLiveModelGroups(
+                    liveModelSearch,
+                    geminiLiveModel,
+                  )}
+                  value={geminiLiveModel}
+                  valueLabel={geminiLiveModelLabel(geminiLiveModel)}
+                  disabled={off}
+                  onChange={(liveModel) => draft.setFields({ liveModel })}
+                  search={{
+                    value: liveModelSearch,
+                    onChange: setLiveModelSearch,
+                    label: 'Search Gemini Live models',
+                    placeholder: 'Find a model',
+                  }}
+                />
+              )}
+            />
+          )}
         </Group>
         <Footer>
-          Live streams speech directly to Gemini and updates words as you speak.
+          Live streams speech directly to your selected provider and updates
+          words as you speak. Save changes to keep your provider and model.
+          Language and vocabulary hints above apply to Raw and AI speech.
         </Footer>
       </section>
 

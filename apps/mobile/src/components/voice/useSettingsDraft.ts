@@ -1,6 +1,13 @@
 import { useCallback, useRef, useState } from 'react';
 import type { VoiceSettings } from '../../native/voice';
 import {
+  commitVocabulary,
+  editVocabulary,
+  sameVocabulary,
+  vocabularyDraft,
+  type VocabularyDraft,
+} from '../../lib/vocabularyHints';
+import {
   switchPolishProvider,
   type PolishModels,
   type PolishProvider,
@@ -17,6 +24,7 @@ const NO_KEYS: Record<KeyName, string> = {
   geminiKey: '',
   groqKey: '',
   openrouterKey: '',
+  openaiKey: '',
 };
 
 /**
@@ -30,14 +38,22 @@ export function useSettingsDraft(
 ) {
   const [edits, setEdits] = useState<Partial<FormValues>>({});
   const [keys, setKeys] = useState<Record<KeyName, string>>(NO_KEYS);
+  const [vocabulary, setVocabulary] = useState<VocabularyDraft | null>(null);
+  const [saving, setSaving] = useState(false);
+  const vocabularyState =
+    vocabulary ?? vocabularyDraft(settings?.vocabularyHints ?? []);
   const polishModels = useRef<PolishModels>({});
 
   const value = useCallback(
     <K extends FormField>(field: K): FormValues[K] =>
-      (edits[field] ?? settings?.[field]) as FormValues[K],
-    [edits, settings],
+      (field === 'vocabularyHints'
+        ? vocabularyState.tags
+        : (edits[field] ?? settings?.[field])) as FormValues[K],
+    [edits, settings, vocabularyState.tags],
   );
   const setFields = useCallback((next: Partial<FormValues>) => {
+    if (next.vocabularyHints)
+      setVocabulary(vocabularyDraft(next.vocabularyHints));
     setEdits((current) => ({ ...current, ...next }));
   }, []);
   const setKey = useCallback((name: KeyName, text: string) => {
@@ -71,29 +87,43 @@ export function useSettingsDraft(
   const dirty =
     Boolean(settings) &&
     (FORM_FIELDS.some(
-      (field) => field in edits && edits[field] !== settings?.[field],
+      (field) =>
+        field !== 'vocabularyHints' &&
+        field in edits &&
+        edits[field] !== settings?.[field],
     ) ||
+      !sameVocabulary(vocabularyState.tags, settings?.vocabularyHints ?? []) ||
+      vocabularyState.input.trim() !== '' ||
       Object.values(keys).some((text) => text.trim() !== ''));
 
   const discard = useCallback(() => {
     setEdits({});
     setKeys(NO_KEYS);
+    setVocabulary(null);
     resetPolishModels();
   }, [resetPolishModels]);
 
   const save = useCallback(async () => {
     if (!settings) return false;
+    const preparedVocabulary = commitVocabulary(vocabularyState);
+    if (preparedVocabulary.error) {
+      setVocabulary(preparedVocabulary);
+      return false;
+    }
     const fields = {} as FormValues;
     for (const field of FORM_FIELDS)
       (fields as Record<string, unknown>)[field] = value(field);
+    fields.vocabularyHints = preparedVocabulary.tags;
     const sent: KeyValues = {};
     const snapshot = { ...keys };
     for (const name of Object.keys(keys) as KeyName[]) {
       const text = keys[name].trim();
       if (text) sent[name] = text;
     }
-    const saved = await saveForm(fields, sent);
+    setSaving(true);
+    const saved = await saveForm(fields, sent).finally(() => setSaving(false));
     if (saved) {
+      setVocabulary(null);
       setEdits((current) => {
         const next = { ...current };
         for (const field of FORM_FIELDS)
@@ -108,7 +138,31 @@ export function useSettingsDraft(
       });
     }
     return saved;
-  }, [keys, saveForm, settings, value]);
+  }, [keys, saveForm, settings, value, vocabularyState]);
+
+  const changeVocabulary = (input: string, composing = false) =>
+    setVocabulary((current) =>
+      editVocabulary(
+        current ?? vocabularyDraft(settings?.vocabularyHints ?? []),
+        input,
+        composing,
+      ),
+    );
+  const addVocabulary = (text?: string) =>
+    setVocabulary((current) =>
+      commitVocabulary(
+        current ?? vocabularyDraft(settings?.vocabularyHints ?? []),
+        text,
+      ),
+    );
+  const removeVocabulary = (index: number) =>
+    setVocabulary((current) => {
+      const state = current ?? vocabularyDraft(settings?.vocabularyHints ?? []);
+      return editVocabulary(
+        { ...state, tags: state.tags.filter((_, i) => i !== index) },
+        state.input,
+      );
+    });
 
   return {
     value,
@@ -120,5 +174,11 @@ export function useSettingsDraft(
     dirty,
     discard,
     save,
+    vocabulary: vocabularyState,
+    changeVocabulary,
+    addVocabulary,
+    removeVocabulary,
+    clearVocabulary: () => setVocabulary(vocabularyDraft([])),
+    saving,
   };
 }
