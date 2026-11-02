@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { voice, type HistoryItem } from '../native/voice';
 import { onboarding } from '../native/onboarding';
 import { watchPageScrolled } from '../lib/pageScroll';
+import { commitVocabulary } from '../lib/vocabularyHints';
 import { HomePage } from './voice/HomePage';
 import { SettingsPage } from './voice/SettingsPage';
 import { HistoryPage } from './voice/HistoryPage';
@@ -208,6 +209,14 @@ export function VoiceHome() {
     [notify],
   );
   const saveChanges = async () => {
+    const vocabulary = commitVocabulary(draft.vocabulary);
+    if (vocabulary.error) {
+      notify(vocabulary.error, 'error');
+      document
+        .getElementById('voice-connections')
+        ?.scrollIntoView({ block: 'start' });
+      return;
+    }
     if (await draft.save()) void refresh();
   };
 

@@ -33,10 +33,10 @@ class VoicePlugin : Plugin() {
             try {
                 VoicePreferences.ready.first { it }
                 val settings = VoicePreferences.state.value
-                val keys = withContext(Dispatchers.IO) { val store = SecureCredentialStore(context); Triple(!store.get("voice-gemini").isNullOrEmpty(), !store.get("voice-openrouter").isNullOrEmpty(), !store.get("voice-groq").isNullOrEmpty()) }
+                val keys = withContext(Dispatchers.IO) { val store = SecureCredentialStore(context); listOf("gemini", "openrouter", "groq", "openai").map { !store.get("voice-$it").isNullOrEmpty() } }
                 val show = activity?.intent?.getBooleanExtra("voice_settings", false) == true; activity?.intent?.removeExtra("voice_settings")
                 val model = settings.model.ifBlank { if (settings.provider == "openrouter") "poolside/laguna-xs-2.1:free" else "" }
-                call.resolve(JSObject().put("enabled", settings.enabled).put("mode", settings.mode).put("provider", settings.provider).put("model", model).put("liveModel", settings.liveModel).put("systemPrompt", settings.systemPrompt).put("systemPromptMode", settings.systemPromptMode).put("polishProvider", settings.polishProvider).put("polishModel", settings.polishModel).put("polishSystemPrompt", settings.polishSystemPrompt).put("polishSystemPromptMode", settings.polishSystemPromptMode).put("haptics", settings.haptics).put("hapticLevel", VoicePreferences.levelOf(settings)).put("keySize", settings.keys.keySize).put("keyFont", settings.keys.keyFont).put("tapTolerance", VoicePreferences.toleranceOf(settings)).put("autocorrectEnabled", settings.keys.autocorrectEnabled).put("pinnedEmoji", JSArray().apply { settings.keys.pinnedEmoji.forEach { put(it) } }).put("showTextPreview", settings.showTextPreview).put("paused", settings.paused).put("geminiKeySet", keys.first).put("openrouterKeySet", keys.second).put("groqKeySet", keys.third).put("openSettings", show))
+                call.resolve(JSObject().put("enabled", settings.enabled).put("mode", settings.mode).put("provider", settings.provider).put("model", model).put("liveModel", settings.liveModel).put("liveProvider", settings.liveProvider).put("openaiLiveModel", settings.openaiLiveModel).put("spokenLanguage", settings.spokenLanguage).put("vocabularyHints", JSArray(settings.vocabularyHints)).put("systemPrompt", settings.systemPrompt).put("systemPromptMode", settings.systemPromptMode).put("polishProvider", settings.polishProvider).put("polishModel", settings.polishModel).put("polishSystemPrompt", settings.polishSystemPrompt).put("polishSystemPromptMode", settings.polishSystemPromptMode).put("haptics", settings.haptics).put("hapticLevel", VoicePreferences.levelOf(settings)).put("keySize", settings.keys.keySize).put("keyFont", settings.keys.keyFont).put("tapTolerance", VoicePreferences.toleranceOf(settings)).put("autocorrectEnabled", settings.keys.autocorrectEnabled).put("pinnedEmoji", JSArray().apply { settings.keys.pinnedEmoji.forEach { put(it) } }).put("showTextPreview", settings.showTextPreview).put("paused", settings.paused).put("geminiKeySet", keys[0]).put("openrouterKeySet", keys[1]).put("groqKeySet", keys[2]).put("openaiKeySet", keys[3]).put("openSettings", show))
             } catch (_: Exception) { call.reject("Could not read voice settings") }
         }
     }
@@ -86,6 +86,26 @@ class VoicePlugin : Plugin() {
     } }
     @PluginMethod fun save(call: PluginCall) {
         if (VoiceSession.state.value.busy) { call.reject("Finish recording before changing settings"); return }
+        val suppliedLiveProvider = call.data.opt("liveProvider")
+        if (call.data.has("liveProvider") && (suppliedLiveProvider !is String || suppliedLiveProvider !in listOf("gemini", "openai"))) {
+            call.reject("Choose Gemini or OpenAI for Live"); return
+        }
+        val liveProvider = suppliedLiveProvider as? String ?: VoicePreferences.state.value.liveProvider
+        val suppliedOpenaiModel = call.data.opt("openaiLiveModel")
+        if (call.data.has("openaiLiveModel") && (suppliedOpenaiModel !is String || suppliedOpenaiModel !in LiveProvider.openaiModels)) {
+            call.reject("Choose a supported OpenAI Live model"); return
+        }
+        val openaiLiveModel = suppliedOpenaiModel as? String ?: VoicePreferences.state.value.openaiLiveModel
+        val suppliedLanguage = call.data.opt("spokenLanguage")
+        if (call.data.has("spokenLanguage") && (suppliedLanguage !is String || !SpokenLanguage.isSupported(suppliedLanguage))) {
+            call.reject("Choose a supported spoken language or Automatic"); return
+        }
+        val spokenLanguage = suppliedLanguage as? String ?: VoicePreferences.state.value.spokenLanguage
+        val vocabularyHints = if (call.data.has("vocabularyHints")) {
+            VocabularyHints.fromJson(call.data.opt("vocabularyHints")) ?: run {
+                call.reject("Keep vocabulary hints short and use text terms only"); return
+            }
+        } else VoicePreferences.state.value.vocabularyHints
         val prompt = call.getString("systemPrompt") ?: VoicePreferences.state.value.systemPrompt
         if (prompt.length > app.odicto.mobile.dictation.AiSelection.MAX_PROMPT) { call.reject("System prompt must be at most 8,000 characters"); return }
         val polishPrompt = call.getString("polishSystemPrompt") ?: VoicePreferences.state.value.polishSystemPrompt
@@ -122,7 +142,7 @@ class VoicePlugin : Plugin() {
             try {
                 withContext(Dispatchers.IO) {
                     val keys = SecureCredentialStore(context)
-                    for (name in listOf("groq", "gemini", "openrouter")) {
+                    for (name in listOf("groq", "gemini", "openrouter", "openai")) {
                         val key = call.getString("${name}Key")
                         if (key != null) { if (key.isBlank()) keys.remove("voice-$name") else keys.put("voice-$name", key.trim()) }
                     }
@@ -132,7 +152,7 @@ class VoicePlugin : Plugin() {
                         provider == "openrouter" && provider != VoicePreferences.state.value.provider -> "poolside/laguna-xs-2.1:free"
                         else -> VoicePreferences.state.value.model
                     }
-                    VoicePreferences.save(context, VoicePreferences.state.value.copy(systemPrompt = prompt, systemPromptMode = promptMode, polishProvider = polishProvider, polishModel = polishModel, polishSystemPrompt = polishPrompt, polishSystemPromptMode = polishPromptMode, enabled = call.getBoolean("enabled") ?: VoicePreferences.state.value.enabled, paused = call.getBoolean("paused") ?: VoicePreferences.state.value.paused, keys = nextKeys, mode = mode, provider = provider, model = model, liveModel = call.getString("liveModel")?.trim()?.ifBlank { "gemini-3.5-transcribe-live" } ?: VoicePreferences.state.value.liveModel, haptics = call.getBoolean("haptics") ?: VoicePreferences.state.value.haptics, showTextPreview = call.getBoolean("showTextPreview") ?: VoicePreferences.state.value.showTextPreview))
+                    VoicePreferences.save(context, VoicePreferences.state.value.copy(liveProvider = liveProvider, openaiLiveModel = openaiLiveModel, vocabularyHints = vocabularyHints, spokenLanguage = spokenLanguage, systemPrompt = prompt, systemPromptMode = promptMode, polishProvider = polishProvider, polishModel = polishModel, polishSystemPrompt = polishPrompt, polishSystemPromptMode = polishPromptMode, enabled = call.getBoolean("enabled") ?: VoicePreferences.state.value.enabled, paused = call.getBoolean("paused") ?: VoicePreferences.state.value.paused, keys = nextKeys, mode = mode, provider = provider, model = model, liveModel = call.getString("liveModel")?.trim()?.ifBlank { "gemini-3.5-transcribe-live" } ?: VoicePreferences.state.value.liveModel, haptics = call.getBoolean("haptics") ?: VoicePreferences.state.value.haptics, showTextPreview = call.getBoolean("showTextPreview") ?: VoicePreferences.state.value.showTextPreview))
                 }
                 VoiceOverlayController.sync(context, scope)
                 call.resolve()

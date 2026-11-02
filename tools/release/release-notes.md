@@ -1,15 +1,17 @@
-## What's changed in 1.7.1
+## What's changed in 1.8.0
 
-- Text polish can use Gemini or OpenRouter. Its provider is independent of AI answers and uses the matching key saved under Connections.
-- AI answers and Text polish now offer searchable Gemini model names, with higher model versions first. Opening the menu loads Google's current catalog and keeps prior or bundled choices if the lookup fails; model access depends on your Google project.
-- Existing Text polish settings stay on OpenRouter with their saved model until you change them.
+- Choose a spoken language for Raw and AI transcription, or leave it on Automatic when switching languages.
+- Add vocabulary hints for names and specialist terms. A comma or Enter creates a removable tag; pasted lists and multiword phrases work too. Save changes to keep the hints. Hints guide Groq transcription and do not guarantee exact wording.
+- Live transcription can use Gemini or OpenAI. Save an optional OpenAI key under Connections, then choose OpenAI and its model under Live. Each provider remembers its own model. OpenAI offers GPT Live Transcribe and GPT Realtime Whisper; access and quota depend on your OpenAI project.
+- Gemini Live now has a searchable model dropdown with readable names, so you can select a transcription model without typing its ID.
+- Existing keys, settings, and history are preserved when updating. Gemini remains the default Live provider; spoken language defaults to Automatic and vocabulary hints start empty.
 
 ## Install
 
 1. On your Android phone (Android 6.0 or newer), download the `.apk` file below.
 2. Open it. If Android asks, allow your browser or file manager to install unknown apps.
 3. Open Odicto and follow the setup: enable the Odicto keyboard and grant the microphone permission.
-4. Add your own [Groq API key](https://console.groq.com/keys) in **Settings → Connections**. Gemini and OpenRouter keys are optional (AI and Live modes, Text polish).
+4. Add your own [Groq API key](https://console.groq.com/keys) in **Settings → Connections**. Gemini and OpenRouter keys are optional for AI answers and Text polish. Live uses a Gemini or OpenAI key, depending on the provider you select.
 
 Existing release users can install this APK as an update and keep their settings, keys and history. Current debug builds install separately as **Odicto Debug**. Older self-built debug versions may have used the release package name; Android refuses an update signed with a different key. Do not uninstall an existing app without backing up anything you need, since uninstalling deletes its saved data.
 
@@ -22,3 +24,5 @@ Optional: check the download against the `.sha256` file (`certutil -hashfile Odi
 Found a bug or have an idea? [Open an issue](https://github.com/Gargeya-Grey/Odicto-Mobile/issues/new/choose). Include your phone model and Android version.
 
 This is a beta. Physical-device testing so far covers one Samsung Galaxy S24 Ultra.
+
+The new OpenAI Live integration has automated protocol, audio-conversion, credential, and settings coverage. Authenticated OpenAI transcription and full microphone/host-insertion checks for this version remain pending; please report any issues with your selected provider/model.

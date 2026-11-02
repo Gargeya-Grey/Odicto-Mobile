@@ -19,6 +19,10 @@ data class DirectVoiceConfig(
     /** The user's own prompt (raw, so its limit applies to what they wrote); [systemPromptMode] says how it combines with ours. */
     val systemPrompt: String = "",
     val systemPromptMode: app.odicto.mobile.dictation.PromptMode = app.odicto.mobile.dictation.PromptMode.APPEND,
+    val spokenLanguage: String = app.odicto.mobile.storage.SpokenLanguage.AUTOMATIC,
+    val vocabularyHints: List<String> = emptyList(),
+    val liveProvider: String = app.odicto.mobile.storage.LiveProvider.GEMINI,
+    val openaiLiveModel: String = app.odicto.mobile.storage.LiveProvider.DEFAULT_OPENAI_MODEL,
 )
 
 class VoiceConfigurationException(message: String) : IllegalArgumentException(message)
@@ -35,6 +39,8 @@ class DirectVoiceTransport(
 ) {
     private val client by lazy { client ?: HttpClients.voice }
     private val socketFactory by lazy { socketFactory ?: HttpClients.live }
+    val liveFinalizationWaitMs: Long
+        get() = if (config.liveProvider == app.odicto.mobile.storage.LiveProvider.OPENAI) 15_000L else 3_000L
     @Volatile private var cancelled = false
     @Volatile private var call: Call? = null
     @Volatile private var socket: WebSocket? = null
@@ -44,10 +50,17 @@ class DirectVoiceTransport(
     @Volatile private var liveInterim = ""
     @Volatile private var finishing = false
     @Volatile private var completed = false
+    private val openaiLive by lazy {
+        if (config.mode == "live" && config.liveProvider == app.odicto.mobile.storage.LiveProvider.OPENAI)
+            OpenAiLiveSession(config.liveKey, config.openaiLiveModel, operation, editor, this.socketFactory, event)
+        else null
+    }
 
     fun open() {
         checkSetting(config.mode in listOf("raw", "ai", "live")) { "Choose Raw, AI, or Live." }
         if (config.mode != "live") {
+            checkSetting(app.odicto.mobile.storage.SpokenLanguage.isSupported(config.spokenLanguage)) { "Choose a supported spoken language or Automatic." }
+            checkSetting(app.odicto.mobile.storage.VocabularyHints.fits(config.vocabularyHints)) { "Keep vocabulary hints short." }
             checkSetting(config.groqKey.isNotBlank()) { "Add your Groq key in Voice settings." }
             if (config.mode == "ai") {
                 checkSetting(config.selectedText.length <= app.odicto.mobile.dictation.AiSelection.MAX_TEXT && config.systemPrompt.length <= app.odicto.mobile.dictation.AiSelection.MAX_PROMPT) { "Selection or system prompt is too long." }
@@ -58,7 +71,13 @@ class DirectVoiceTransport(
             emit(JSONObject().put("type", "ready").put("operationId", operation).put("editorSession", editor))
             return
         }
-        checkSetting(config.liveKey.isNotBlank()) { "Add your Gemini key for Live in Voice settings." }
+        checkSetting(config.liveProvider in listOf("gemini", "openai")) { "Choose Gemini or OpenAI for Live." }
+        checkSetting(config.liveKey.isNotBlank()) { "Add your ${if (config.liveProvider == "openai") "OpenAI" else "Gemini"} key for Live in Voice settings." }
+        if (config.liveProvider == "openai") {
+            checkSetting(config.openaiLiveModel in app.odicto.mobile.storage.LiveProvider.openaiModels) { "Choose a supported OpenAI Live model." }
+            openaiLive?.open()
+            return
+        }
         val request = Request.Builder()
             .url("https://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent")
             .header("x-goog-api-key", config.liveKey).build()
@@ -107,22 +126,26 @@ class DirectVoiceTransport(
         synchronized(this) { socket = ws; if (cancelled) ws.cancel() }
     }
 
-    @Synchronized fun sendAudio(bytes: ByteArray, count: Int): Boolean {
-        if (cancelled || finishing) return false
-        if (config.mode == "live") {
-            val ws = socket ?: return false
-            if (ws.queueSize() > 320_000) return false
-            val audio = JSONObject().put("mimeType", "audio/pcm;rate=16000")
-                .put("data", bytes.toByteString(0, count).base64())
-            return ws.send(JSONObject().put("realtimeInput", JSONObject().put("audio", audio)).toString())
+    fun sendAudio(bytes: ByteArray, count: Int): Boolean {
+        openaiLive?.let { return it.sendAudio(bytes, count) }
+        return synchronized(this) {
+            if (cancelled || finishing) return false
+            if (config.mode == "live") {
+                val ws = socket ?: return false
+                if (ws.queueSize() > 320_000) return false
+                val audio = JSONObject().put("mimeType", "audio/pcm;rate=16000")
+                    .put("data", bytes.toByteString(0, count).base64())
+                return ws.send(JSONObject().put("realtimeInput", JSONObject().put("audio", audio)).toString())
+            }
+            if (flac.sampleCount * 2 + count > MAX_PCM_BYTES) return false
+            flac.append(bytes, 0, count)
+            true
         }
-        if (flac.sampleCount * 2 + count > MAX_PCM_BYTES) return false
-        flac.append(bytes, 0, count)
-        return true
     }
 
     /** Called on IO after the capture loop has stopped. */
     fun finish() {
+        openaiLive?.let { it.finish(); return }
         val audio = synchronized(this) {
             if (cancelled || finishing) return
             finishing = true
@@ -137,6 +160,8 @@ class DirectVoiceTransport(
             val form = MultipartBody.Builder().setType(MultipartBody.FORM)
                 .addFormDataPart("model", "whisper-large-v3-turbo")
                 .addFormDataPart("response_format", "json")
+                .apply { if (config.spokenLanguage.isNotEmpty()) addFormDataPart("language", config.spokenLanguage) }
+                .apply { app.odicto.mobile.storage.VocabularyHints.prompt(config.vocabularyHints).takeIf { it.isNotEmpty() }?.let { addFormDataPart("prompt", it) } }
                 .addFormDataPart("file", "recording.flac", audio.toRequestBody("audio/flac".toMediaType())).build()
             val response = try { execute(Request.Builder().url("https://api.groq.com/openai/v1/audio/transcriptions")
                 .header("Authorization", "Bearer ${config.groqKey}").post(form).build(), "Groq") } finally { audio.fill(0) }
@@ -209,18 +234,25 @@ class DirectVoiceTransport(
     }
     private fun emit(value: JSONObject) { if (!cancelled) event(value) }
     private fun fail(message: String) { if (!completed) emit(JSONObject().put("type", "error").put("message", message)) }
-    @Synchronized fun finishLiveFallback() {
-        if (config.mode == "live" && finishing && !completed && !cancelled) {
-            if (liveInterim.isNotBlank()) fail("Live finalization timed out. Words already typed were kept.") else result(transcript)
+    fun finishLiveFallback() {
+        openaiLive?.let { it.timeout(); return }
+        synchronized(this) {
+            if (config.mode == "live" && finishing && !completed && !cancelled) {
+                if (liveInterim.isNotBlank()) fail("Live finalization timed out. Words already typed were kept.") else result(transcript)
+            }
         }
     }
-    @Synchronized fun cancel() {
-        if (cancelled) return
-        cancelled = true; flac.clear(); transcript = ""
+    fun cancel() {
+        val connections = synchronized(this) {
+            if (cancelled) return
+            cancelled = true; flac.clear(); transcript = ""
+            call to socket
+        }
+        openaiLive?.cancel()
         // Cancellation silences callbacks immediately. TLS socket close may write close_notify bytes, so teardown stays
         // off the caller (often the UI thread). Only this session's call and socket close: the pool is shared, and its
         // warm connections serve the next dictation.
-        val active = call; val live = socket
+        val (active, live) = connections
         if (active != null || live != null) client.dispatcher.executorService.execute { active?.cancel(); live?.cancel() }
     }
     private fun checkSetting(valid: Boolean, message: () -> String) { if (!valid) throw VoiceConfigurationException(message()) }

@@ -64,6 +64,10 @@ data class VoiceSettings(
     val anchorX: Int = -1,
     val anchorY: Int = -1,
     val liveModel: String = "gemini-3.5-transcribe-live",
+    val liveProvider: String = LiveProvider.GEMINI,
+    val openaiLiveModel: String = LiveProvider.DEFAULT_OPENAI_MODEL,
+    val spokenLanguage: String = SpokenLanguage.AUTOMATIC,
+    val vocabularyHints: List<String> = emptyList(),
     val systemPrompt: String = "",
     /** "append" adds [systemPrompt] after Odicto's rules; "replace" uses it instead. See [app.odicto.mobile.dictation.PromptMode]. */
     val systemPromptMode: String = "append",
@@ -141,6 +145,10 @@ object VoicePreferences {
                     anchorX = readAnchor(preferences, "voice_anchor_fx", "voice_anchor_x"),
                     anchorY = readAnchor(preferences, "voice_anchor_fy", "voice_anchor_y"),
                     liveModel = preferences[stringPreferencesKey("voice_live_model")] ?: "gemini-3.5-transcribe-live",
+                    liveProvider = LiveProvider.forStored(preferences.asMap().entries.firstOrNull { it.key.name == "voice_live_provider" }?.value as? String),
+                    openaiLiveModel = LiveProvider.openaiModelForStored(preferences.asMap().entries.firstOrNull { it.key.name == "voice_openai_live_model" }?.value as? String),
+                    spokenLanguage = SpokenLanguage.forStored(preferences.asMap().entries.firstOrNull { it.key.name == "voice_spoken_language" }?.value),
+                    vocabularyHints = VocabularyHints.forStored(preferences.asMap().entries.firstOrNull { it.key.name == "voice_vocabulary_hints" }?.value),
                     systemPrompt = savedPrompt,
                     systemPromptMode = PromptMode.forStored(preferences[stringPreferencesKey("voice_system_prompt_mode")], savedPrompt).wire,
                     polishProvider = polishProvider ?: "openrouter",
@@ -176,12 +184,17 @@ object VoicePreferences {
             ?: (preferences[intPreferencesKey(legacy)] ?: -1).coerceIn(-1, 1000).let { if (it < 0) -1 else it * 1000 }
 
     suspend fun save(context: Context, value: VoiceSettings) {
+        require(VocabularyHints.fits(value.vocabularyHints)) { "Keep vocabulary hints short" }
         context.applicationContext.dataStore.edit { p ->
             p[booleanPreferencesKey("voice_enabled")] = value.enabled; p[stringPreferencesKey("voice_mode")] = value.mode
             p[stringPreferencesKey("voice_provider")] = value.provider; p[stringPreferencesKey("voice_model")] = value.model
             p[booleanPreferencesKey("voice_haptics")] = value.haptics; p[intPreferencesKey("voice_x")] = value.x; p[intPreferencesKey("voice_y")] = value.y
             p[intPreferencesKey("voice_anchor_fx")] = value.anchorX; p[intPreferencesKey("voice_anchor_fy")] = value.anchorY
             p[stringPreferencesKey("voice_live_model")] = value.liveModel
+            p[stringPreferencesKey("voice_live_provider")] = LiveProvider.forStored(value.liveProvider)
+            p[stringPreferencesKey("voice_openai_live_model")] = LiveProvider.openaiModelForStored(value.openaiLiveModel)
+            p[stringPreferencesKey("voice_spoken_language")] = SpokenLanguage.forStored(value.spokenLanguage)
+            p[stringPreferencesKey("voice_vocabulary_hints")] = org.json.JSONArray(VocabularyHints.normalize(value.vocabularyHints)).toString()
             p[stringPreferencesKey("voice_system_prompt")] = value.systemPrompt
             p[stringPreferencesKey("voice_system_prompt_mode")] = value.systemPromptMode
             p[stringPreferencesKey("voice_polish_provider")] = value.polishProvider
@@ -208,7 +221,7 @@ object VoicePreferences {
         }
     }
 
-    private fun normalized(value: VoiceSettings): VoiceSettings = value.copy(keys = value.keys.copy(tapTolerance = toleranceOf(value)))
+    private fun normalized(value: VoiceSettings): VoiceSettings = value.copy(liveProvider = LiveProvider.forStored(value.liveProvider), openaiLiveModel = LiveProvider.openaiModelForStored(value.openaiLiveModel), vocabularyHints = VocabularyHints.normalize(value.vocabularyHints).takeIf(VocabularyHints::fits).orEmpty(), spokenLanguage = SpokenLanguage.forStored(value.spokenLanguage), keys = value.keys.copy(tapTolerance = toleranceOf(value)))
 
     fun update(context: Context, transform: (VoiceSettings) -> VoiceSettings) {
         val value = mutable.updateAndGet { normalized(transform(it)) }

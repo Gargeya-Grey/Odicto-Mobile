@@ -239,6 +239,49 @@ class DirectVoiceTransportTest {
         transport.cancel()
         return requests to events
     }
+    @Test fun vocabularyIsOnlySentToGroqAndOmittedWhenEmpty() {
+        for (mode in listOf("raw", "ai")) {
+            for (terms in listOf(emptyList(), listOf("Odicto", "Gargeya", "नमस्ते"))) {
+                val responses = mutableListOf(200 to "{\"text\":\"Hello\"}")
+                if (mode == "ai") responses.add(200 to "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hi\"}]}}]}")
+                val (requests, _) = runRequest(DirectVoiceConfig(mode, groqKey = "test", answerKey = "test", vocabularyHints = terms), responses)
+                val parts = (requests.first().body as MultipartBody).parts
+                val prompts = parts.filter { it.headers!!["Content-Disposition"]!!.contains("name=\"prompt\"") }
+                assertEquals(if (terms.isEmpty()) 0 else 1, prompts.size)
+                if (terms.isNotEmpty()) {
+                    val buffer = okio.Buffer(); prompts.single().body.writeTo(buffer)
+                    assertEquals("Odicto, Gargeya, नमस्ते", buffer.readUtf8())
+                }
+                if (mode == "ai") {
+                    val buffer = okio.Buffer(); requests[1].body!!.writeTo(buffer)
+                    val body = buffer.readUtf8()
+                    assertFalse(body.contains("Gargeya"))
+                    assertFalse(body.contains("नमस्ते"))
+                }
+            }
+        }
+        val rejected = DirectVoiceTransport(DirectVoiceConfig("raw", groqKey = "test", vocabularyHints = listOf("x".repeat(225))), "op", 1, {})
+        try { rejected.open(); fail("Oversized prompt accepted") } catch (_: IllegalArgumentException) {} finally { rejected.cancel() }
+        assertFalse(DirectVoiceTransport.liveSetup("gemini-3.5-transcribe-live").toString().contains("vocabularyHints"))
+    }
+
+    @Test fun spokenLanguageIsIncludedOnlyWhenSelectedForRawAndAi() {
+        for (mode in listOf("raw", "ai")) {
+            for (language in listOf("", "hi", "en")) {
+                val responses = mutableListOf(200 to "{\"text\":\"Hello\"}")
+                if (mode == "ai") responses.add(200 to "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hi\"}]}}]}")
+                val (requests, _) = runRequest(DirectVoiceConfig(mode, groqKey = "test", answerKey = "test", spokenLanguage = language), responses)
+                val parts = (requests.first().body as MultipartBody).parts
+                val languageParts = parts.filter { it.headers!!["Content-Disposition"]!!.contains("name=\"language\"") }
+                assertEquals(if (language.isEmpty()) 0 else 1, languageParts.size)
+                if (language.isNotEmpty()) {
+                    val buffer = okio.Buffer(); languageParts.single().body.writeTo(buffer)
+                    assertEquals(language, buffer.readUtf8())
+                }
+            }
+        }
+    }
+
     @Test fun rawCallsOnlyGroqAndKeepsEditorIdentity() {
         val (requests, events) = runRequest(DirectVoiceConfig("raw", groqKey = "groq-test"), listOf(200 to "{\"text\":\"Hello world\"}"))
         assertEquals(1, requests.size)

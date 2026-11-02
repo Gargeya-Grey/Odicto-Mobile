@@ -6,6 +6,11 @@ export type VoiceSettings = {
   provider: 'gemini' | 'openrouter';
   model: string;
   liveModel: string;
+  liveProvider: 'gemini' | 'openai';
+  openaiLiveModel: string;
+  openaiKeySet: boolean;
+  spokenLanguage: string;
+  vocabularyHints: string[];
   systemPrompt: string;
   /** How the AI prompt combines with Odicto's built-in instructions. */
   systemPromptMode: 'append' | 'replace';
@@ -51,6 +56,7 @@ export const voice = registerPlugin<{
       geminiKey?: string;
       groqKey?: string;
       openrouterKey?: string;
+      openaiKey?: string;
     },
   ): Promise<void>;
   history(): Promise<{ entries: HistoryItem[] }>;

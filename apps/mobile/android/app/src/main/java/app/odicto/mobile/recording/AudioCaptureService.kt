@@ -77,12 +77,15 @@ class AudioCaptureService : Service() {
                     val settings = VoicePreferences.state.value
                     val mode = VoiceSession.state.value.mode
                     DirectVoiceConfig(mode = mode, provider = settings.provider, model = settings.model, liveModel = settings.liveModel,
+                        liveProvider = settings.liveProvider, openaiLiveModel = settings.openaiLiveModel,
+                        spokenLanguage = settings.spokenLanguage,
+                        vocabularyHints = settings.vocabularyHints,
                         selectedText = if (mode == "ai") selectedText else "",
                         systemPrompt = if (mode == "ai") settings.systemPrompt else "",
                         systemPromptMode = app.odicto.mobile.dictation.PromptMode.forStored(settings.systemPromptMode, settings.systemPrompt),
                         groqKey = if (mode != "live") credentials.get("voice-groq").orEmpty() else "",
                         answerKey = if (mode == "ai") credentials.get("voice-${settings.provider}").orEmpty() else "",
-                        liveKey = if (mode == "live") credentials.get("voice-gemini").orEmpty() else "")
+                        liveKey = if (mode == "live") credentials.get("voice-${settings.liveProvider}").orEmpty() else "")
                 }
                 if (ended || (operation.isNotEmpty() && !VoiceSession.owns(operation))) return@launch
                 val created = DirectVoiceTransport(config, operation, editor, { event -> scope.launch { receive(event.toString()) } }, log = { if (verbose) android.util.Log.i(TAG, "transport: $it") })
@@ -220,7 +223,7 @@ class AudioCaptureService : Service() {
         scope.launch(Dispatchers.IO) { transport?.finish() }
         timeout?.cancel(); timeout = scope.launch {
             if (VoiceSession.state.value.mode == "live") {
-                delay(3_000); transport?.finishLiveFallback()
+                delay(transport?.liveFinalizationWaitMs ?: 3_000L); transport?.finishLiveFallback()
                 delay(1_000)
             } else delay(50_000)
             if (!ended) error("Could not finish in time. Try again.")

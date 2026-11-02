@@ -1,5 +1,11 @@
 # Android development
 
+## Live transcription providers
+
+Settings > Connections accepts an optional OpenAI key, stored with the other BYOK credentials through Android Keystore. After saving it, Settings > Live offers OpenAI alongside Gemini. Gemini remains the default for existing and new installations; switching providers preserves the separate Gemini and OpenAI model choices. Removing a selected provider's key requires the user to add it again or explicitly choose another provider; there is no automatic fallback.
+
+OpenAI uses a transcription-only Realtime WebSocket with a manual audio commit on microphone release. Capture remains 16 kHz PCM16 mono; a stateful converter sends 24 kHz PCM16 to OpenAI without changing recording-tail or editor guards. `gpt-live-transcribe` is the default and `gpt-realtime-whisper` is the other offered model. These bundled choices describe API support, not the user's project access or quota. See [OpenAI's transcription guide](https://developers.openai.com/api/docs/guides/realtime-transcription). Actual provider output, latency, composing behavior, and host insertion require dedicated device and authenticated checks.
+
 ## Requirements
 
 Install Android Studio, its JDK 21 runtime (required by Capacitor 7), Android SDK/platform 35, and platform tools. Open `apps/mobile/android` after running `npm run android:sync`.
