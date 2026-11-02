@@ -5,4 +5,4 @@ Read the entry matching the changed user journey. Every journey requires the dev
 - [Settings and providers](settings-providers.md) covers independent AI Answers and Text Polish choices, spoken language, vocabulary tags, Gemini/OpenAI Live selection, and persistence.
 - [Text Polish](text-polish.md) covers selected and whole-field correction, recovery, and provider failures.
 - [Keyboard and protected fields](keyboard.md) covers visible typing, emoji, and protected-field refusal.
-- [Voice dictation](voice.md) covers Raw, AI, and Live through the keyboard and optional floating microphone.
+- [Voice dictation](voice.md) covers Raw, AI, and Live through the keyboard and optional floating microphone, including the lock target's listening halo.

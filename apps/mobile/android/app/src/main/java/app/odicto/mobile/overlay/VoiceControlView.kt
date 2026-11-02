@@ -260,6 +260,8 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
         val previous = ui
         ui = value
         if (keyboard) { renderKeyboard(value, previous); return }
+        lock.listeningOnLock = value.phase == "recording" && !value.locked
+        lock.level = if (lock.listeningOnLock) value.level else 0f
         OverlayPresentation.observe(value)
         val terminalVisible = OverlayPresentation.visible()
         expanded = OverlayPresentation.options
@@ -746,6 +748,8 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
     private class Icon(context: Context, kind: String, description: String) : View(context) {
         private val palette = InkColors(context)
         var compactSurface = false
+        var listeningOnLock = false
+            set(value) { if (field == value) return; field = value; invalidate() }
         var kind = kind
             set(value) {
                 if (field == value) return
@@ -848,7 +852,7 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
          */
         private fun drawOverlay(c: Canvas) {
             val cx = width / 2f; val cy = height / 2f
-            val radius = minOf(width, height) / 2f - density
+            val radius = minOf(width, height) / 2f - (if (kind == "lock") 5f else 1f) * density
             fun icon(id: Int, color: Int, size: Float = 0.21f) {
                 val half = (minOf(width, height) * size).toInt()
                 glyph(id)?.apply { setBounds((cx - half).toInt(), (cy - half).toInt(), (cx + half).toInt(), (cy + half).toInt()); setTint(color); draw(c) }
@@ -877,6 +881,21 @@ class VoiceControlView(context: Context, private val keyboard: Boolean = false) 
                 paint.style = Paint.Style.STROKE; paint.strokeWidth = density; paint.color = palette.hairline
                 c.drawCircle(cx, cy, radius - density / 2f, paint)
                 paint.style = Paint.Style.FILL
+            }
+            if (kind == "lock" && listeningOnLock) {
+                val animate = Build.VERSION.SDK_INT < 26 || ValueAnimator.areAnimatorsEnabled()
+                val strength = if (animate) kotlin.math.sqrt(((meter - 0.03f) * 1.8f).coerceIn(0f, 1f)) else 0.35f
+                val haloRadius = radius + strength * 3f * density
+                paint.style = Paint.Style.STROKE
+                paint.color = palette.halo
+                paint.strokeWidth = (2f + strength * 2f) * density
+                paint.alpha = (20 + strength * 40).toInt()
+                c.drawCircle(cx, cy, haloRadius, paint)
+                paint.strokeWidth = (1f + strength * 0.5f) * density
+                paint.alpha = (65 + strength * 170).toInt()
+                c.drawCircle(cx, cy, haloRadius, paint)
+                paint.style = Paint.Style.FILL
+                paint.alpha = 255
             }
             when (kind) {
                 // The idle bubble wears the Odicto mark, not a microphone; the mark is wider than tall, so it is drawn larger.
