@@ -230,8 +230,7 @@ class OdictoKeyboardLayoutTest {
                 for (column in 0 until line.childCount) caps.add(line.getChildAt(column))
             }
             assertTrue("page $page built no keys", caps.isNotEmpty())
-            // The spacebar must exist on every page, because the gesture depends on it.
-            assertTrue("page $page has no spacebar", caps.any { it.contentDescription == "Space" })
+            if (!page.isNumpad) assertTrue("page $page has no spacebar", caps.any { it.contentDescription == "Space" })
         }
         assertTrue(pressed.isEmpty())
     }
@@ -292,12 +291,13 @@ class OdictoKeyboardLayoutTest {
             keyboard.measure(widthSpec, heightSpec)
             keyboard.layout(0, 0, 1080, 200)
 
-            val expectedRows = 5
+            val expectedRows = if (page.isNumpad) 4 else 5
             assertEquals("page $page row count", expectedRows, keyboard.childCount)
             val rowHeights = (0 until keyboard.childCount).map { keyboard.getChildAt(it).height }
             val letterRows = rowHeights.dropLast(1)
             assertEquals("page $page letter rows must share the height", 1, letterRows.distinct().size)
-            assertTrue("page $page space row must be thicker", rowHeights.last() > letterRows.first())
+            if (page.isNumpad) assertEquals("page $page keypad rows must share the height", 1, rowHeights.distinct().size)
+            else assertTrue("page $page space row must be thicker", rowHeights.last() > letterRows.first())
 
             for (row in 0 until keyboard.childCount) {
                 val line = keyboard.getChildAt(row) as LinearLayout
@@ -373,10 +373,11 @@ class OdictoKeyboardLayoutTest {
             info.initialSelEnd = -1
             controller.onStartInput(info)
             measure(keyboard)
-            val (qx, qy) = centerOf(keyboard, "q")
+            val numeric = (info.inputType and InputType.TYPE_MASK_CLASS) in setOf(InputType.TYPE_CLASS_NUMBER, InputType.TYPE_CLASS_PHONE)
+            val (qx, qy) = centerOf(keyboard, if (numeric) "1" else "q")
             dispatch(keyboard, MotionEvent.ACTION_DOWN, qx, qy)
             dispatch(keyboard, MotionEvent.ACTION_UP, qx, qy)
-            val (sx, sy) = centerOf(keyboard, "Space")
+            val (sx, sy) = centerOf(keyboard, if (numeric) "2" else "Space")
             dispatch(keyboard, MotionEvent.ACTION_DOWN, sx, sy)
             dispatch(keyboard, MotionEvent.ACTION_UP, sx, sy)
             val (bx, by) = centerOf(keyboard, "Backspace")

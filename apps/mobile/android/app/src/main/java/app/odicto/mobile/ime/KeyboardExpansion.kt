@@ -78,6 +78,12 @@ internal class KeyboardExpansion(
     val isExpanded: Boolean get() = expanded
 
     fun reset() { expanded = false; render(false) }
+    fun setEditor(info: android.view.inputmethod.EditorInfo?) {
+        val numpad = EditorKeyboard.usesNumpad(info)
+        toggle.isEnabled = !numpad
+        toggle.alpha = if (numpad) 0.4f else 1f
+        if (numpad) { expanded = true; render(false) }
+    }
     fun recoveryVisible(value: Boolean, height: Int = area.height) {
         if (recovery == value && recoveryHeight == height) return
         recovery = value

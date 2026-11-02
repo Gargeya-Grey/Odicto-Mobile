@@ -101,6 +101,7 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
     private var punctualShow: Runnable? = null
     private var enterKind = ImeActions.Kind.NEWLINE
     private var enterLabel: String? = null
+    private var activePage: Page = Page.LETTERS
     // Read once from this view's own context, which is built for the day or night palette; a theme change
     // rebuilds the keyboard, so nothing here needs to repaint live.
     private val bubbleFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = context.getColor(R.color.odicto_bubble_fill) }
@@ -221,7 +222,6 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
         relabel()
     }
 
-    private var activePage: Page = Page.LETTERS
     private var enterMatched = false
 
     /**
@@ -230,6 +230,8 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
      */
     fun showPage(page: Page) {
         cancelTouch()
+        if (activePage.isNumpad != page.isNumpad) geometryInputs = null
+        if (page.isNumpad) split = false
         removeAllViews()
         cells.clear()
         releaseActive()
@@ -241,7 +243,11 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
         requestLayout()
     }
 
-    enum class Page { LETTERS, NUMBERS, SYMBOLS }
+    enum class Page {
+        LETTERS, NUMBERS, SYMBOLS, NUMPAD, NUMPAD_SIGNED, NUMPAD_DECIMAL, NUMPAD_SIGNED_DECIMAL, PHONE;
+
+        val isNumpad: Boolean get() = this != LETTERS && this != NUMBERS && this != SYMBOLS
+    }
 
     private var quick = false
 
@@ -267,6 +273,7 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
         Page.LETTERS -> LAYOUT
         Page.NUMBERS -> NUMBERS_LAYOUT
         Page.SYMBOLS -> SYMBOLS_LAYOUT
+        else -> numpadLayout(page)
     }
 
     private fun addRow(row: List<KeySpec>) {
@@ -283,7 +290,11 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
         // Nine letters in a ten-column grid: half a key of space on each side, so a–l match q–p.
         val centeredNine = row.size == 9 && row.all { it.key == Key.CHARACTER }
         fun addKey(spec: KeySpec, weight: Float = spec.weight) {
-            val cap = KeyCap(context, spec, quick)
+            if (spec.label.isEmpty()) {
+                line.addView(gapView(), keyParams(weight))
+                return
+            }
+            val cap = KeyCap(context, spec, quick, activePage.isNumpad && !quick)
             cap.setOnClickListener { cancelTouch(); press(spec) }
             if (spec.key == Key.CHARACTER && spec.output.singleOrNull()?.isLetter() == true) {
                 cap.setOnLongClickListener {
@@ -699,6 +710,7 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
      * key, opens the neighbours. Releasing on a different symbol replaces the one just inserted.
      */
     private fun armPunctuation(cell: Cell) {
+        if (activePage.isNumpad) return
         val options = Punctuation.options(cell.spec.output) ?: return
         val home = Punctuation.homeIndex(cell.spec.output)
         punctual = ActivePunct(options, Rect(cell.rect), home, false, cell.spec.output)
@@ -874,7 +886,7 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
                 else content / density - PORTRAIT_UNSPLIT_DP
             val gapDp = budget.coerceIn(0f, if (landscape) SPLIT_GAP_DP else PORTRAIT_GAP_DP)
                 .let { if (it < MIN_SPLIT_GAP_DP) 0f else it }
-            split = gapDp > 0f && !quick
+            split = gapDp > 0f && !quick && !activePage.isNumpad
             val gap = if (split) (gapDp * density).toInt() else 0
             splitEdge = if (split) (content - gap) / SPLIT_PITCH_BUDGET else 0
             splitPitch = (content - gap - splitEdge * 2) / (SPLIT_COLUMNS * 2)
@@ -896,13 +908,14 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
             }
             return
         }
-        val naturalHeight = rowHeightPx * (childCount - 1 + SPACE_ROW_SCALE)
+        val naturalHeight = if (activePage.isNumpad) rowHeightPx * NUMPAD_ROW_SCALE * childCount
+            else rowHeightPx * (childCount - 1 + SPACE_ROW_SCALE)
         val heightLimit = if (MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.UNSPECIFIED) naturalHeight
             else (MeasureSpec.getSize(heightMeasureSpec) - paddingTop - paddingBottom).coerceAtLeast(0).toFloat()
         val scale = min(1f, heightLimit / naturalHeight.coerceAtLeast(1f))
         for (index in 0 until childCount) {
             val row = getChildAt(index)
-            val factor = if (index == childCount - 1) SPACE_ROW_SCALE else 1f
+            val factor = if (activePage.isNumpad) NUMPAD_ROW_SCALE else if (index == childCount - 1) SPACE_ROW_SCALE else 1f
             val rowHeight = (rowHeightPx * factor * scale).toInt()
             if (row.layoutParams.height != rowHeight) {
                 cancelTouch()
@@ -1024,7 +1037,7 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
         val spaceTick = context.getColor(R.color.odicto_space_tick)
         val spaceCue = context.getColor(R.color.odicto_space_cue)
     }
-    private class KeyCap(context: Context, val spec: KeySpec, private val quick: Boolean = false) : View(context) {
+    private class KeyCap(context: Context, val spec: KeySpec, private val quick: Boolean = false, private val numpad: Boolean = false) : View(context) {
         private val colors = KeyColors(context)
         private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
         private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -1147,7 +1160,7 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
                 return
             }
             // Size and typeface follow the user's key preference rather than a fixed value baked in.
-            val scale = if (spec.control) 0.78f else 1f
+            val scale = if (numpad) 1.45f else if (spec.control) 0.78f else 1f
             text.textSize = glyphSp() * density * scale
             text.typeface = typefaceFor(context)
             val baseline = height / 2f - (text.descent() + text.ascent()) / 2f
@@ -1279,6 +1292,20 @@ class OdictoKeyboardView(context: Context, attrs: AttributeSet? = null) : Linear
         private const val SPACE_WEIGHT = 6.13f
         /** The bottom row is the letter-key height times 1.2. Q and the spacebar share that rule. */
         private const val SPACE_ROW_SCALE = 1.2f
+        private const val NUMPAD_ROW_SCALE = 1.3f
+
+        private fun numpadLayout(page: Page): List<List<KeySpec>> {
+            val phone = page == Page.PHONE
+            val signed = page == Page.NUMPAD_SIGNED || page == Page.NUMPAD_SIGNED_DECIMAL
+            val decimal = page == Page.NUMPAD_DECIMAL || page == Page.NUMPAD_SIGNED_DECIMAL
+            return listOf(
+                listOf(char("1"), char("2"), char("3"), icon(Key.BACKSPACE, "Backspace", 1f, R.drawable.odicto_ic_backspace)),
+                listOf(char("4"), char("5"), char("6"), char(if (phone) "+" else if (signed) "-" else "")),
+                listOf(char("7"), char("8"), char("9"), char(if (decimal) "." else "")),
+                listOf(char(if (phone) "*" else ""), char("0"), char(if (phone) "#" else ""),
+                    icon(Key.ENTER, "Enter", 1f, R.drawable.odicto_ic_enter)),
+            )
+        }
 
         private fun char(c: String) = KeySpec(Key.CHARACTER, c, c, 1f)
         private fun icon(key: Key, description: String, weight: Float, drawable: Int) =

@@ -169,8 +169,9 @@ class AutocorrectKeyboardTest {
         for (type in guardedTypes) {
             Fixture(type = type or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS,
                 options = EditorInfo.IME_ACTION_SEARCH).use { f ->
-                f.type("teh ")
-                assertEquals("guarded search type $type", "seed teh ", f.host.text())
+                val input = if (type and InputType.TYPE_MASK_CLASS in listOf(InputType.TYPE_CLASS_NUMBER, InputType.TYPE_CLASS_PHONE)) "123" else "teh "
+                f.type(input)
+                assertEquals("guarded search type $type", "seed $input", f.host.text())
                 assertNull(f.button("Undo autocorrect"))
             }
         }
@@ -397,8 +398,9 @@ class AutocorrectKeyboardTest {
             InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS)
         types.forEach { type ->
             Fixture(type = type).use { f ->
-                f.type("teh ")
-                assertEquals("seed teh ", f.host.text())
+                val input = if (type and InputType.TYPE_MASK_CLASS in listOf(InputType.TYPE_CLASS_NUMBER, InputType.TYPE_CLASS_PHONE)) "123" else "teh "
+                f.type(input)
+                assertEquals("seed $input", f.host.text())
                 assertEquals(View.GONE, f.root.findViewById<View>(R.id.ime_suggestions).visibility)
                 if (type and InputType.TYPE_MASK_CLASS != InputType.TYPE_CLASS_TEXT || type and InputType.TYPE_MASK_VARIATION == InputType.TYPE_TEXT_VARIATION_PASSWORD) assertEquals(0, f.host.reads)
             }

@@ -14,6 +14,23 @@ import org.robolectric.annotation.LooperMode
 class KeyboardInteractionReplayTest {
     private val paragraph = (1..200).joinToString(" ") { "word$it" }
 
+    @Test fun ownFieldHoldSurvivesTypingAndFirstDeleteSharingOneCursorReport() {
+        DelayedEditorReplayFixture("abcdefghijklmnopqrstuvwxyz").use { f ->
+            f.restart(editorPackage = app.odicto.mobile.BuildConfig.APPLICATION_ID)
+            f.tap("q")
+            f.press("Backspace")
+            f.advance(4000)
+            f.release("Backspace")
+            f.advance(200)
+            assertTrue("hold must continue after a coalesced typing/delete report", f.editor.submittedDeletes > 10)
+            assertEquals("", f.editor.text)
+            val submitted = f.editor.submittedDeletes
+            f.advance(500)
+            assertEquals("release ends deletion", submitted, f.editor.submittedDeletes)
+            assertEquals(0, f.editor.readCount)
+            assertTrue(f.editor.maxPendingDeletes <= 2)
+        }
+    }
     @Test fun sustainedHoldSurvivesDelayedApplicationAndLatestOnlyNotifications() {
         DelayedEditorReplayFixture(paragraph).use { f ->
             f.press("Backspace")

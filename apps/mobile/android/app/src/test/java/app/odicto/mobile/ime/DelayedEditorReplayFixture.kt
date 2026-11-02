@@ -31,10 +31,11 @@ internal class DelayedEditorReplayFixture(initial: String) : AutoCloseable {
 
     init { restart() }
 
-    fun restart(type: Int = InputType.TYPE_CLASS_TEXT) {
+    fun restart(type: Int = InputType.TYPE_CLASS_TEXT, editorPackage: String? = null) {
         notified = connection.cursor
         controller.onStartInput(EditorInfo().apply {
             inputType = type
+            packageName = editorPackage
             initialSelStart = connection.cursor
             initialSelEnd = connection.selectionEnd
         })

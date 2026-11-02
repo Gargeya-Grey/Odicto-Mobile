@@ -34,3 +34,7 @@ Preconditions: the candidate is running on the isolated target in the main skill
 
 - A UI selection before `Save changes` is an unsaved draft. Reopening is the persistence check.
 - A mock bridge or browser preview cannot prove Android DataStore persistence.
+
+- Vocabulary keyboard continuity: expand the keyboard in Vocabulary hints, type at least 20 characters, add a comma, and type another phrase. The grid must remain expanded through input-view refreshes. Move to a new editor and verify it starts collapsed. Record physical-device evidence separately from lifecycle unit tests.
+
+- With Android autofill enabled (including NordPass), focus Vocabulary hints, type two letters and then at least 20 characters, add a comma to create a tag, and continue a second phrase. Verify no autofill popup takes focus or hides the keyboard. The settings WebView does not expose virtual credential fields to Android autofill services; API keys are managed explicitly by the app. Discard the synthetic draft afterward.

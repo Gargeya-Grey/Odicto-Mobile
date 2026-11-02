@@ -161,7 +161,7 @@ class KeyboardController(
         enterKind = ImeActions.resolve(info)
         val enterLabel = ImeActions.displayLabel(info, enterKind)
         keyViews.forEach { it.setEnterAction(enterKind, enterLabel) }
-        show(OdictoKeyboardView.Page.LETTERS)
+        show(EditorKeyboard.page(info))
         closePanels()
         hideNotice()
         syncMicButton()
@@ -779,6 +779,13 @@ class KeyboardController(
             cancelTouch()
             return false
         }
+        // A typed character erased by the first delete can leave the host cursor unchanged,
+        // so no selection callback arrives. Spend only the existing second-delete allowance.
+        if (EditorPolicy.ownEditor(editorInfo) && EditorPolicy.manualPermits(editorInfo) &&
+            deleteRepeat.nextOrdinal == 1 && editorSession.typingMayHaveBeenErased) {
+            deleteRepeat.ready(-1)
+            return true
+        }
         val now = SystemClock.uptimeMillis()
         val assist = EditorPolicy.typingAssistPermits(editorInfo)
         val word = assist && BackspacePace.removesWord(deleteRepeat.nextOrdinal)
@@ -855,7 +862,7 @@ class KeyboardController(
         val cursor = if (count > 0) editorTail.afterDelete(if (selectionStart == selectionEnd) selectionStart else -1, count) else null
         if (count < 0) editorTail.clear()
         selectionStart = cursor ?: -1; selectionEnd = cursor ?: -1
-        editorSession.submitted(EditorSessionState.Snapshot(selectionStart, selectionEnd, editorTail.knownSuffix(), editorTail.complete), count.coerceAtLeast(1), BackspacePace.removesWord(ordinal), SystemClock.uptimeMillis())
+        editorSession.submitted(EditorSessionState.Snapshot(selectionStart, selectionEnd, editorTail.knownSuffix(), editorTail.complete), count.coerceAtLeast(1), assist && BackspacePace.removesWord(ordinal), SystemClock.uptimeMillis())
         if (ordinal > 0) deleteRepeat.dispatched()
     }
 

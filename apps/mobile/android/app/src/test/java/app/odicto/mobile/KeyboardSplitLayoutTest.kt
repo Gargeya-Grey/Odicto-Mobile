@@ -63,7 +63,7 @@ class KeyboardSplitLayoutTest {
     @Test fun allSplitPagesShareColumnsSpacesAndOuterControls() {
         for (landscape in listOf(false, true)) for ((width, dpi) in listOf(640 to 160, 824 to 160, 1318 to 160, 1752 to 340, 2800 to 340, 1753 to 340)) {
             val view = keyboard(landscape, dpi)
-            for (page in OdictoKeyboardView.Page.entries) {
+            for (page in OdictoKeyboardView.Page.entries.filterNot { it.isNumpad }) {
                 view.showPage(page)
                 layout(view, width)
                 val rendered = mutableListOf<Pair<View, OdictoKeyboardView.KeySpec>>()

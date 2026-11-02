@@ -145,6 +145,13 @@ public final class TrialActivity extends Activity {
         second.setImeOptions(EditorInfo.IME_ACTION_NONE | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
         prepare("seed ");
     }
+    void prepareNumeric(int type) {
+        active = first;
+        first.setSingleLine(true);
+        first.setInputType(type);
+        first.setImeOptions(EditorInfo.IME_ACTION_DONE | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+        prepare("");
+    }
     String report(String scenario, boolean exact, int expected) {
         String value = probe.finish(scenario, exact, expected, active.length());
         results.setText(value);

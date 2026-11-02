@@ -1,10 +1,10 @@
-## What's changed in 1.8.0
+## What's changed in 1.9.0
 
-- Choose a spoken language for Raw and AI transcription, or leave it on Automatic when switching languages.
-- Add vocabulary hints for names and specialist terms. A comma or Enter creates a removable tag; pasted lists and multiword phrases work too. Save changes to keep the hints. Hints guide Groq transcription and do not guarantee exact wording.
-- Live transcription can use Gemini or OpenAI. Save an optional OpenAI key under Connections, then choose OpenAI and its model under Live. Each provider remembers its own model. OpenAI offers GPT Live Transcribe and GPT Realtime Whisper; access and quota depend on your OpenAI project.
-- Gemini Live now has a searchable model dropdown with readable names, so you can select a transcription model without typing its ID.
-- Existing keys, settings, and history are preserved when updating. Gemini remains the default Live provider; spoken language defaults to Automatic and vocabulary hints start empty.
+- Number, PIN, and phone fields open directly to a large numeric keypad. Decimal, signed, and phone symbols follow the field's requirements.
+- Vocabulary hints keep the keyboard open during editing and tag creation. The settings screen no longer offers its fields to Android autofill services, preventing password-manager popups from interrupting typing.
+- Held Backspace recovers when a typed character and its deletion leave the cursor unchanged. Character deletion in Odicto's own fields also continues past the word-acceleration threshold.
+- The floating microphone's lock target responds visibly while listening.
+- Existing release keys, settings, and history are preserved by an in-place update. Debug remains a separate app.
 
 ## Install
 
@@ -24,5 +24,3 @@ Optional: check the download against the `.sha256` file (`certutil -hashfile Odi
 Found a bug or have an idea? [Open an issue](https://github.com/Gargeya-Grey/Odicto-Mobile/issues/new/choose). Include your phone model and Android version.
 
 This is a beta. Physical-device testing so far covers one Samsung Galaxy S24 Ultra.
-
-The owner confirmed physical smoke tests on the exact signed 1.8.0 APK installed on a Samsung Galaxy S24 Ultra: Raw dictation inserted the phrase once correctly; Gemini Live showed words while speaking and finished without duplication; OpenAI Live passed the same test. Automated protocol, audio-conversion, credential, and settings checks also passed. These are focused smoke tests on one device, not exhaustive coverage of every model or host app.

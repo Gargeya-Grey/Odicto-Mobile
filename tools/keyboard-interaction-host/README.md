@@ -31,6 +31,12 @@ Repeat the two instrument commands for baseline/candidate comparisons under the 
 
 ## Controls and workloads
 
+### Numeric keypad trial
+
+Run `adb -s $serial shell am instrument -w -r -e scenario numpad -e imePackage $imePackage app.odicto.keyboardtrial/.TrialInstrumentation` with the intended installed Odicto keyboard selected. This supports both release and debug package names. Inspect `status` and `summary`, since ADB can exit zero for a failed trial.
+
+The trial focuses six generated native fields (integer, signed, decimal, signed decimal, numeric password, phone), requires the large keypad immediately without tapping the expand control, checks each field's visible symbols, injects real key taps, and compares exact host text and selection before and after Backspace. It checks balanced batches and zero submission/Enter calls, then focuses the text editor and verifies the compact start and expanded letters. The compact header's quick-edit Space is allowed. It exports only Boolean checks and key widths, and never presses voice, clipboard, provider or submission controls. It does not change the selected keyboard or app preferences. The parent restores any keyboard selection used for a release/debug comparison.
+
 - **Seed:** reset both fields and populate the focused field with 160 generated multiword Unicode phrases, including a combining accent and emoji sequence; move the caret to the end; restart input and measurement.
 - **Clear/reset:** clear both generated fields and restart the focused editor and measurements.
 - **Restart:** call `restartInput` on the same editor without replacing its contents.

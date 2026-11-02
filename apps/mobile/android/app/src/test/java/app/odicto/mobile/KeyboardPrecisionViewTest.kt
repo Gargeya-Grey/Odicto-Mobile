@@ -58,7 +58,7 @@ class KeyboardPrecisionViewTest {
         val view = OdictoKeyboardView(context)
         val pressed = mutableListOf<String>()
         view.setOnKeyListener { pressed += it.output }
-        for (page in OdictoKeyboardView.Page.entries) {
+        for (page in OdictoKeyboardView.Page.entries.filterNot { it.isNumpad }) {
             view.showPage(page)
             layout(view, 616)
             val spaces = keys(view).filter { it.contentDescription == "Space" }

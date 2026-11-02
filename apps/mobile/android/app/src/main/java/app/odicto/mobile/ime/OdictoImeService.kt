@@ -355,6 +355,7 @@ class OdictoImeService : InputMethodService() {
         }
         controller?.attachVoiceControl(voice)
         controller?.onStartInput(currentInputEditorInfo)
+        expansion?.setEditor(currentInputEditorInfo)
         clipboardCapture?.error?.value?.let { controller?.showClipboardNotice(it) }
         renderRecovery()
         updatePolishButton(currentInputEditorInfo)
@@ -380,6 +381,7 @@ class OdictoImeService : InputMethodService() {
         control?.visibility = View.VISIBLE
         control?.render(VoiceSession.state.value)
         controller?.onStartInput(attribute)
+        expansion?.setEditor(attribute)
         updatePolishButton(attribute)
         renderUndoButton()
         renderRecovery()
@@ -809,10 +811,11 @@ class OdictoImeService : InputMethodService() {
     }
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
-        if (!restarting) expansion?.reset()
+        // onStartInput owns new-editor collapse; a host can refresh this view while typing.
         statusViewActive = true
         renderTopStatus()
         controller?.onStartInput(info)
+        expansion?.setEditor(info)
         controller?.onExternalEdit(selectionStart, selectionEnd)
         renderRecovery()
     }

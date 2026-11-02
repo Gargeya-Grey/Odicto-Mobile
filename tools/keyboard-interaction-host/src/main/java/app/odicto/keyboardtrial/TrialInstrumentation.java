@@ -35,8 +35,9 @@ public final class TrialInstrumentation extends Instrumentation {
             imePackage = arguments.getString("imePackage", "app.odicto.mobile");
             if ((!imePackage.startsWith("app.odicto.") && !imePackage.equals("com.samsung.android.honeyboard")) || imePackage.equals("app.odicto.keyboardtrial")) throw new IllegalArgumentException();
             String scenario = arguments.getString("scenario", "hold");
+            boolean numpadScenario = scenario.equals("numpad");
             boolean correctionScenario = scenario.equals("autocorrect") || scenario.equals("autocorrectoff");
-            if (!scenario.equals("hold") && !scenario.equals("typing") && !scenario.equals("status") && !scenario.equals("geometry") && !scenario.equals("targets") && !scenario.equals("boundary") && !scenario.equals("voicefirst") && !correctionScenario) throw new IllegalArgumentException();
+            if (!numpadScenario && !scenario.equals("hold") && !scenario.equals("typing") && !scenario.equals("status") && !scenario.equals("geometry") && !scenario.equals("targets") && !scenario.equals("boundary") && !scenario.equals("voicefirst") && !correctionScenario) throw new IllegalArgumentException();
             if ((scenario.equals("voicefirst") || correctionScenario) && !imePackage.equals("app.odicto.mobile")) throw new IllegalArgumentException();
             automation = getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);
             AccessibilityServiceInfo info = automation.getServiceInfo();
@@ -56,8 +57,8 @@ public final class TrialInstrumentation extends Instrumentation {
                 host.transientReads = "transient".equals(arguments.getString("profile", "normal"));
             });
             SystemClock.sleep(1000);
-            if (!scenario.equals("voicefirst") && !correctionScenario) expandKeyboardIfCollapsed();
-            if (correctionScenario) autocorrect(result, scenario.equals("autocorrect")); else if (scenario.equals("voicefirst")) voicefirst(result); else if (scenario.equals("boundary")) boundary(result); else if (scenario.equals("targets")) targets(result); else if (scenario.equals("geometry")) geometry(result); else if (scenario.equals("status")) status(result); else if (scenario.equals("hold")) hold(result); else typing(result);
+            if (!numpadScenario && !scenario.equals("voicefirst") && !correctionScenario) expandKeyboardIfCollapsed();
+            if (numpadScenario) numpad(result); else if (correctionScenario) autocorrect(result, scenario.equals("autocorrect")); else if (scenario.equals("voicefirst")) voicefirst(result); else if (scenario.equals("boundary")) boundary(result); else if (scenario.equals("targets")) targets(result); else if (scenario.equals("geometry")) geometry(result); else if (scenario.equals("status")) status(result); else if (scenario.equals("hold")) hold(result); else typing(result);
             boolean passed = result.getBoolean("passed", false);
             result.putString("status", passed ? "passed" : "failed");
             finish(passed ? Activity.RESULT_OK : Activity.RESULT_CANCELED, result);
@@ -332,6 +333,43 @@ public final class TrialInstrumentation extends Instrumentation {
 
     private void voiceCount(Bundle result, String name, int count) {
         result.putString("summary", result.getString("summary") + " " + name + "=" + count);
+    }
+
+    private void numpad(Bundle result) {
+        result.putString("summary", "scenario=numpad hostTextExported=false");
+        int number = android.text.InputType.TYPE_CLASS_NUMBER;
+        int signed = android.text.InputType.TYPE_NUMBER_FLAG_SIGNED;
+        int decimal = android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL;
+        int[] types = {number, number | signed, number | decimal, number | signed | decimal,
+            number | android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD, android.text.InputType.TYPE_CLASS_PHONE};
+        String[] names = {"integer", "signed", "decimal", "signedDecimal", "pin", "phone"};
+        String[] values = {"1234567890", "-123", "12.34", "-12.34", "1234", "+12*3#"};
+        for (int i = 0; i < types.length; i++) {
+            final int type = types[i];
+            runOnMainSync(() -> host.prepareNumeric(type));
+            SystemClock.sleep(700);
+            String name = names[i];
+            if (!voiceCheck(result, name + "Immediate", awaitDescription("1") && !hasStatus("q") && !hasStatus("Q") && !hasStatus("ABC") && !hasStatus("Space"))) return;
+            boolean phone = type == android.text.InputType.TYPE_CLASS_PHONE;
+            if (!voiceCheck(result, name + "Symbols", hasStatus(".") == (!phone && (type & decimal) != 0)
+                && hasStatus("-") == (!phone && (type & signed) != 0)
+                && hasStatus("+") == phone && hasStatus("*") == phone && hasStatus("#") == phone)) return;
+            Rect digit = locate("1");
+            Rect next = locate("2");
+            voiceCount(result, name + "KeyWidthPx", digit.width());
+            if (!voiceCheck(result, name + "LargeKeys", digit.width() >= host.dp(60) && next.left > digit.right)) return;
+            for (char key : values[i].toCharArray()) tap(locate(String.valueOf(key)));
+            if (!voiceCheck(result, name + "ExactInsertion", awaitFixtureEquals(values[i]))) return;
+            tap(locate("Backspace"));
+            if (!voiceCheck(result, name + "Backspace", awaitFixtureEquals(values[i].substring(0, values[i].length() - 1)))) return;
+            if (!noSubmission(result, name + "NoSubmissionAndBalanced")) return;
+        }
+        runOnMainSync(() -> host.focus(host.second));
+        SystemClock.sleep(700);
+        if (!voiceCheck(result, "TextReturnsCollapsed", hasStatus("Show keyboard") && !hasStatus("q") && !hasStatus("Q") && !hasStatus("1"))) return;
+        tap(locate("Show keyboard"));
+        if (!voiceCheck(result, "TextLettersReturn", awaitDescription("q") || awaitDescription("Q"))) return;
+        result.putBoolean("passed", true);
     }
 
     private boolean collapsed() {

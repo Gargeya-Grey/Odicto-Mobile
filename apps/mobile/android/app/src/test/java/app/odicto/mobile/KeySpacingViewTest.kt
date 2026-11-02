@@ -112,7 +112,7 @@ class KeySpacingViewTest {
 
     @Test fun allSpacingChoicesPreserveInertTabletGapsAndEqualSpaces() {
         val view = OdictoKeyboardView(context)
-        for (spacing in 0..2) for (page in OdictoKeyboardView.Page.entries) {
+        for (spacing in 0..2) for (page in OdictoKeyboardView.Page.entries.filterNot { it.isNumpad }) {
             gap(spacing)
             view.showPage(page)
             layout(view, 824)

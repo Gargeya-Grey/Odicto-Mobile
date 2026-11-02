@@ -115,3 +115,7 @@ There is a single build — no product flavors. `app.odicto.mobile` ships the IM
 - Play distribution is not current. The build ships no AccessibilityService, so a future Play release would not need that declaration; the `specialUse` overlay still needs its disclosure.
 - Still required before an upload: the data safety form (microphone, network processing by the selected AI providers, device-only history, optional BYOK), the `FOREGROUND_SERVICE_MICROPHONE` and `FOREGROUND_SERVICE_SPECIAL_USE` declarations, and a target API check. The project targets 35 and the test device runs Android 16 (API 36).
 - The pause control exists because banks and other protected apps refuse to run with an overlay drawn. It is not a way to bypass those checks and should never be described as one.
+
+### Numeric keyboard
+
+Number and phone fields open directly to a four-row keypad with larger digit keys instead of the letter grid. Number fields add minus and decimal-point keys only when requested by their signed and decimal flags. Phone fields expose +, * and #. Backspace and the field's Enter action use the existing input handlers. Numeric-password fields also use the keypad. The keypad stays unsplit on wide screens, and its collapse toggle is disabled so the text quick-edit row cannot replace it. Text fields retain the compact voice-first start. Voice, emoji, clipboard and editor-read policies are unchanged.

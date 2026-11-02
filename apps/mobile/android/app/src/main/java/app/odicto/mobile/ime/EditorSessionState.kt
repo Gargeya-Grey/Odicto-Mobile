@@ -88,11 +88,24 @@ internal class EditorSessionState {
      * own [oldStart] when it gives one, else the last observed cursor; with neither, the report is
      * accepted, since a blind delete removes text wherever the cursor is.
      */
+    val typingMayHaveBeenErased: Boolean get() {
+        val typing = edits.firstOrNull() ?: return false
+        val deletion = edits.getOrNull(1) ?: return false
+        return !ambiguous && edits.size == 2 && typing.units == 0 && typing.after.start == typing.after.end &&
+            observed.start >= 0 && observed.start == observed.end &&
+            typing.after.start - observed.start in 1..2 &&
+            deletion.units == 1 && !deletion.word && deletion.after.start < 0 && deletion.after.suffix == null
+    }
     fun acknowledgeBlindDelete(oldStart: Int, oldEnd: Int, start: Int, end: Int): Boolean {
-        val edit = edits.firstOrNull() ?: return false
+        val typing = edits.firstOrNull()?.takeIf { it.units == 0 }
+        val edit = edits.getOrNull(if (typing != null) 1 else 0) ?: return false
+        if (typing != null && (observed.start < 0 || observed.start != observed.end ||
+                typing.after.start != typing.after.end || typing.after.start - observed.start !in 1..2 ||
+                typing.after.start - start !in 1..2)) return false
         if (start != end || start < 0 || edit.units == 0 || edit.after.start >= 0 || edit.after.suffix != null) return false
-        val previous = if (oldStart >= 0) Snapshot(oldStart, oldEnd, null) else observed
+        val previous = typing?.after ?: if (oldStart >= 0) Snapshot(oldStart, oldEnd, null) else observed
         if (previous.start >= 0 && (previous.start != previous.end || previous.start - start !in 1..2)) return false
+        if (typing != null) edits.removeFirst()
         edits.removeFirst()
         observed = Snapshot(start, end, null)
         if (edits.isEmpty()) predicted = observed

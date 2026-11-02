@@ -265,6 +265,17 @@ class KeyboardExpansionTest {
         }
     }
 
+    @Test fun inputViewRefreshKeepsTypingExpanded() {
+        Fixture().use { f ->
+            f.toggle.performClick(); f.finish()
+            assertTrue(f.expansion.isExpanded)
+            val service = Robolectric.buildService(OdictoImeService::class.java).get()
+            val expansionField = OdictoImeService::class.java.getDeclaredField("expansion").apply { isAccessible = true }
+            expansionField.set(service, f.expansion)
+            service.onStartInputView(android.view.inputmethod.EditorInfo(), false)
+            assertTrue("A refreshed input view must retain the user's expanded keyboard", f.expansion.isExpanded)
+        }
+    }
     @Test fun disabledSystemAnimationsSettleImmediately() {
         val field = ValueAnimator::class.java.getDeclaredField("sDurationScale").apply { isAccessible = true }
         val previous = field.getFloat(null)
